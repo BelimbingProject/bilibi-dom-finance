@@ -16,7 +16,7 @@ pub(super) struct Detail {
     dispose: Draft,
     reverse: Draft,
     void: Draft,
-    pending_void: Option<(Draft, String, serde_json::Value)>,
+    pending_void: Option<(Draft, serde_json::Value)>,
     flash: Option<(StatusKind, String)>,
 }
 #[derive(Template)]
@@ -453,7 +453,7 @@ impl Detail {
             return Ok(());
         }
         if event == "confirm_void" {
-            let Some((mut draft, code, input)) = self.pending_void.take() else {
+            let Some((mut draft, input)) = self.pending_void.take() else {
                 return Ok(());
             };
             match self
@@ -466,7 +466,6 @@ impl Detail {
                         event,
                         "finance.fixed_assets.acquisition.void",
                     ),
-                    &code,
                     input,
                 )
                 .await
@@ -490,11 +489,10 @@ impl Detail {
                     let fields=result["results"][0]["error"]["fields"].clone();
                     return Err(contract_error(bilibi_agent_api::Error::InvalidInput(serde_json::from_value(fields).unwrap_or_else(|_|std::collections::BTreeMap::from([("base".into(),vec!["The acquisition could not be reviewed. Check its source and permissions.".into()])])))));
                 }
-                let code=result["plan_code"].as_str().ok_or(Error::Internal)?.to_owned();
-                Ok((code,input))
+                Ok(input)
             }.await;
             match review {
-                Ok((code, input)) => self.pending_void = Some((draft.clone(), code, input)),
+                Ok(input) => self.pending_void = Some((draft.clone(), input)),
                 Err(e) => {
                     draft.refused(&e);
                     self.flash = Some((StatusKind::Error, refusal(e)));

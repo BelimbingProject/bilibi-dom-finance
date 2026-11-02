@@ -26,7 +26,6 @@ struct Actions {
     buttons: Html,
 }
 struct Review {
-    code: String,
     input: Value,
     facts: Value,
 }
@@ -78,14 +77,8 @@ impl Opening {
                         .into(),
                 )
             }
-            ContractError::StalePlan
-            | ContractError::PlanExpired
-            | ContractError::InvalidPlanCode
-            | ContractError::PlanMismatch
-            | ContractError::PlanAlreadyUsed => {
-                self.message = Some(
-                    "The figures changed or the review expired. Preview the source again.".into(),
-                )
+            ContractError::Backend(Error::Conflict) => {
+                self.message = Some("The figures changed. Preview the source again.".into())
             }
             _ => {
                 self.message = Some(
@@ -454,15 +447,9 @@ impl Opening {
                     Ok(answer) => {
                         let result = &answer["results"][0];
                         if result["valid"] == true {
-                            if let Some(code) = answer["plan_code"].as_str() {
-                                let facts = result["preview"]["result"]["changes"].clone();
-                                self.review = Some(Review {
-                                    code: code.into(),
-                                    input,
-                                    facts,
-                                });
-                                self.open = false;
-                            }
+                            let facts = result["preview"]["result"]["changes"].clone();
+                            self.review = Some(Review { input, facts });
+                            self.open = false;
                         } else {
                             self.fields = serde_json::from_value(result["error"]["fields"].clone())
                                 .unwrap_or_else(|_| {
@@ -485,11 +472,7 @@ impl Opening {
                         event: "import_opening",
                         contract: IMPORT,
                     };
-                    match pages
-                        .contracts
-                        .commit(&call, &review.code, review.input)
-                        .await
-                    {
+                    match pages.contracts.commit(&call, review.input).await {
                         Ok(_) => {
                             self.open = false;
                             self.values = json!({});

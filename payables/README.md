@@ -159,7 +159,7 @@ The `finance/payables/payment` attachment source describes a payment request fro
 
 ## Reviewed agent operations (H3)
 
-The `finance.payables` guide is contributed to Base Agent API. Reads cover vendors and supplier-key mappings, settings, tax codes, document pages and records, payment requests, payments, aging, opening context, credit choices and control tie-outs. Reviewed writes cover vendor setup and mapping, payables setup, tax codes, bills and debit notes, document decisions, payments, opening imports, credit applications, supplier refunds and settlement reversals. Prefix each with `finance.payables.`. Authentication and single-use consent plans belong to the host; an agent cannot call a write directly. Capability keys remain those of the facade, including additional Ledger checks. See [guide.md](guide.md) for exact fields, omissions, clear flags and the workflow.
+The `finance.payables` guide is contributed to Base Agent API. Reads cover vendors and supplier-key mappings, settings, tax codes, document pages and records, payment requests, payments, aging, opening context, credit choices and control tie-outs. Reviewed writes cover vendor setup and mapping, payables setup, tax codes, bills and debit notes, document decisions, payments, opening imports, credit applications, supplier refunds and settlement reversals. Prefix each with `finance.payables.`. The host runs the dry check, shows it for explicit approval, then sends the unchanged operations to the write; an agent cannot call a write directly. Capability keys remain those of the facade, including additional Ledger checks. See [guide.md](guide.md) for exact fields, omissions, clear flags and the workflow.
 
 Reads use stable `after_id` cursors and `page_size` 1–100, not the facade's date/request-number cursors. They list oldest first; `payment_request.list` and `payment.list` take `newest_first` to start from the newest, the cursor then being the lowest ID seen (omit it for the first page), and `next_after_id` is null when no more exist. Document reads omit the potentially unbounded `debit_note_ids` collection; traverse `document.list` with `corrects_document_id` instead. They expose bounded `match_context` (the latest match event and its approved hold, at most two), not complete match history. Immutable document lines/tax groups and payment allocations are bounded by their recording contracts. Agent operations add no pages or assets.
 
@@ -179,7 +179,7 @@ cargo run -p bilibi-finance-walkthrough-fixture --bin agent-operations
 python3 apps/domains/finance/fixtures/walkthrough/payables-operations.py
 ```
 
-The bootstrap creates real OAuth API and resource-bound PKCE MCP credentials in a new private 0600 file. The proof never prints tokens or plan codes, and SQL only observes effects. The existing facade walkthrough and H1 wire walkthrough run on separate fresh databases. No unit tests or mocks are introduced.
+The bootstrap creates real OAuth API and resource-bound PKCE MCP credentials in a new private 0600 file. The proof never prints tokens, and SQL only observes effects. The existing facade walkthrough and H1 wire walkthrough run on separate fresh databases. No unit tests or mocks are introduced.
 
 `evidence_page_on` is the same authorized evidence contract on a caller-supplied PostgreSQL client or transaction. Use it for every page of one repeatable-read export (Reports auditor pack); the pooled `evidence_page` wrapper is a live read per page. Schema helpers remain private.
 

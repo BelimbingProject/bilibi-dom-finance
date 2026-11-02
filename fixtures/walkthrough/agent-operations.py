@@ -2,7 +2,7 @@
 """Live HTTP/MCP walkthrough, not a unit-test runner. Use only the disposable
 database and private credentials provisioned by the agent-operations binary.
 Every mutation goes through the real wire edge; SQL observes its effects.
-Tokens and plan codes never appear in output. See the ledger README.
+Tokens never appear in output. See the ledger README.
 """
 import json
 import os
@@ -78,7 +78,7 @@ def plan(channel, ops, who="manager"):
 
 
 def commit(channel, ops, review, who="manager"):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    return invoke(channel, "commit", {"operations": ops}, who)
 
 
 def write(channel, key, company, who="manager", **values):
@@ -92,7 +92,7 @@ def write(channel, key, company, who="manager", **values):
 
 def refused(channel, key, company, contains, who="manager", **values):
     body = plan(channel, [operation(key, company, **values)], who)
-    require(body.get("valid") is False and "plan_code" not in body and contains in json.dumps(body), f"{key}: expected refusal {contains}")
+    require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}")
 
 
 unavailable_proved = False
@@ -141,9 +141,8 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     require(preview.get("valid") is True, "book preview failed")
     require(sql(f"SELECT count(*) FROM finance_ledger_books WHERE company_id={company}") == "0", "preview wrote a book")
     require("results" in commit(channel, ops, preview), "book commit failed")
-    require(commit(channel, ops, preview).get("error") == "plan_already_used", "code replay accepted")
     require(read(channel, "book.get", company)["book"]["currency_code"] == "MYR", "currency not normalized")
-    print("book preview wrote no business rows; commit normalized currency; direct write and code replay refused")
+    print("book preview wrote no business rows; commit normalized currency; direct write refused")
 
     asset = write(channel, "account.create", company, code="A", name="Asset", account_type="asset")
     income = write(channel, "account.create", company, code="I", name="Income", account_type="income")
@@ -283,15 +282,12 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     review = plan(channel, doubles)
     require(review.get("valid") is True, "composition setup preview failed")
     before = sql(f"SELECT count(*) FROM finance_ledger_fiscal_years WHERE company_id={company}")
-    used = sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL")
     body = commit(channel, doubles, review)
-    require(body.get("error") == "stale_plan", "within-plan default drift was not fenced")
+    require(body.get("error") == "record_changed", "within-plan default drift was not fenced")
     require(sql(f"SELECT count(*) FROM finance_ledger_fiscal_years WHERE company_id={company}") == before, "partial first operation survived rollback")
-    require(sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL") == used, "failed code was consumed")
-    require(commit(channel, doubles, review).get("error") == "stale_plan", "failed code cannot retry unchanged state")
+    require(commit(channel, doubles, review).get("error") == "record_changed", "invalid batch changed outcome on retry")
     require("results" in commit(channel, [operation("fiscal_year.open", company)], plan(channel, [operation("fiscal_year.open", company)])), "fresh plan after rollback failed")
-    require(int(sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL")) == int(used) + 1, "failed code was consumed")
-    print("two defaulted years refused as stale; first insert rolled back; failed code unconsumed; fresh plan succeeds")
+    print("two defaulted years refused as stale; first insert rolled back; corrected write succeeds")
 
     foreign = invoke(channel, "read", operation("book.get", company), "other")
     require("error" in foreign and "result" not in foreign, "cross-tenant disclosure")

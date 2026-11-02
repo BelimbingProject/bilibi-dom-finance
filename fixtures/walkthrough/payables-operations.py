@@ -74,7 +74,7 @@ def plan(channel, ops, who="manager"):
 
 
 def commit(channel, ops, review, who="manager"):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    return invoke(channel, "commit", {"operations": ops}, who)
 
 
 def record(body):
@@ -91,7 +91,7 @@ def write(channel, key, company, who="manager", **values):
 
 def refused(channel, key, company, contains, who="manager", **values):
     review = plan(channel, [op(key, company, **values)], who)
-    require(review.get("valid") is False and "plan_code" not in review and contains in json.dumps(review), f"{key}: expected refusal {contains}, got {review.get('results', review.get('error'))}")
+    require(review.get("valid") is False and contains in json.dumps(review), f"{key}: expected refusal {contains}, got {review.get('results', review.get('error'))}")
 
 
 def changes(review):
@@ -103,7 +103,7 @@ def entry_lines(entry):
 
 
 def counters(company):
-    return sql(f"SELECT (SELECT count(*) FROM finance_payables_settings_changes WHERE company_id={company}), (SELECT count(*) FROM finance_ledger_entries WHERE company_id={company}), (SELECT count(*) FROM base_audit_mutations), (SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL)")
+    return sql(f"SELECT (SELECT count(*) FROM finance_payables_settings_changes WHERE company_id={company}), (SELECT count(*) FROM finance_ledger_entries WHERE company_id={company}), (SELECT count(*) FROM base_audit_mutations)")
 
 
 def control(*args):
@@ -164,7 +164,6 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     require(sql("SELECT last_value,is_called FROM finance_payables_documents_id_seq") == sequence, "preview consumed sequence")
     require(changes(review)["document"]["total_tax"] == "5.01", "tax did not round once per group")
     bill = record(commit(channel, ops, review))
-    require(commit(channel, ops, review).get("error") == "plan_already_used", "successful code replay accepted")
     require(bill["status"] == "draft" and bill["entry_id"] is None and bill["total"] == "105.11" and bill["due_date"] == "2026-01-10", "draft snapshots differ")
     refused(channel, "bill.create", company, "already recorded", **draft)
     write(channel, "tax_code.update", company, tax_code_id=tax["id"], rate="9", active=False)
@@ -246,9 +245,9 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     review = plan(channel, ops)
     require(review.get("valid") is True, "same-plan setup failed")
     before = counters(company)
-    require(commit(channel, ops, review).get("error") == "stale_plan", "earlier setting change escaped review fence")
-    require(counters(company) == before, "settings/history/entry/audit/code survived rollback")
-    require(commit(channel, ops, review).get("error") == "stale_plan", "failed code consumed")
+    require(commit(channel, ops, review).get("error") == "record_changed", "earlier setting change escaped review fence")
+    require(counters(company) == before, "settings/history/entry/audit survived rollback")
+    require(commit(channel, ops, review).get("error") == "record_changed", "invalid batch changed outcome on retry")
     require(read(channel, "settings.get", company)["settings"]["payable_account_id"] == accounts["M"], "settings survived failed plan")
     write(channel, "document.post", company, document_id=later["id"])
     # Same-plan payment approvals: capacity still sufficient for the second,
@@ -259,9 +258,9 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     review = plan(channel, ops, "approver")
     require(review.get("valid") is True, "competing approval previews failed")
     before = counters(company)
-    require(commit(channel, ops, review, "approver").get("error") == "stale_plan", "capacity drift accepted")
-    require(counters(company) == before and read(channel, "payment_request.get", company, request_id=a["id"])["status"] == "submitted", "first payment/audit/code escaped rollback")
-    print("future minimum, not current balance, enforced; changed control and competing capacity plans roll back every row/audit/code; failed codes remain usable", flush=True)
+    require(commit(channel, ops, review, "approver").get("error") == "record_changed", "capacity drift accepted")
+    require(counters(company) == before and read(channel, "payment_request.get", company, request_id=a["id"])["status"] == "submitted", "first payment/audit escaped rollback")
+    print("future minimum, not current balance, enforced; changed control and competing capacity plans roll back every row and audit", flush=True)
 
     notes = []
     for amount in ["10", "20"]:
@@ -272,18 +271,18 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     review = plan(channel, ops)
     require(review.get("valid") is True and changes(review)["capacity"]["lowest_outstanding"] == "95", "note review omitted dated capacity")
     before = counters(company)
-    require(commit(channel, ops, review).get("error") == "stale_plan" and counters(company) == before, "two-note capacity drift escaped rollback while both still fit")
+    require(commit(channel, ops, review).get("error") == "record_changed" and counters(company) == before, "two-note capacity drift escaped rollback while both still fit")
     ops = [op("document.post", company, document_id=notes[0]["id"])]
     review = plan(channel, ops)
     write(channel, "payment.approve", company, who="approver", request_id=a["id"])
     before = counters(company)
-    require(commit(channel, ops, review).get("error") == "stale_plan" and counters(company) == before, "note-post review ignored intervening payment")
+    require(commit(channel, ops, review).get("error") == "record_changed" and counters(company) == before, "note-post review ignored intervening payment")
     ops = [op("debit_note.create", company, bill_id=bill["id"], document_date="2026-02-10", lines=[{"description": "Creation capacity", "account_id": accounts["X"], "amount": "1"}])]
     review = plan(channel, ops)
     require(changes(review)["capacity"]["lowest_outstanding"] == "85", "note-create capacity is not independently expected 85")
     write(channel, "payment.approve", company, who="approver", request_id=b["id"])
     before = counters(company)
-    require(commit(channel, ops, review).get("error") == "stale_plan" and counters(company) == before, "note-create review ignored intervening payment")
+    require(commit(channel, ops, review).get("error") == "record_changed" and counters(company) == before, "note-create review ignored intervening payment")
     corrections, cursor = [], 0
     while True:
         page = read(channel, "document.list", company, corrects_document_id=bill["id"], page_size=1, after_id=cursor)

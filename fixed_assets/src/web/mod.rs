@@ -299,7 +299,7 @@ fn contract_error(error: bilibi_agent_api::Error) -> FixedAssetsError {
                 })
                 .collect(),
         ),
-        E::StalePlan => crate::invalid(
+        E::Backend(Error::Conflict) => crate::invalid(
             "base",
             "The reviewed facts changed. Refresh and review this action again.",
         ),

@@ -64,11 +64,11 @@ def plan(operations, who):
 
 
 def commit(operations, review, who):
-    return invoke("commit", {"operations": operations, "plan_code": review["plan_code"]}, who)
+    return invoke("commit", {"operations": operations}, who)
 
 
 def refused(body):
-    return "error" in body or (body.get("valid") is False and "plan_code" not in body)
+    return "error" in body or (body.get("valid") is False)
 
 
 def control(action):

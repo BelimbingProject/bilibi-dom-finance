@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """H2 live HTTP/MCP walkthrough against the disposable agent-operations
 bootstrap. All business writes use the wire API; SQL observes and injects one
-late audit failure. No tokens, credentials or plan codes are printed.
+late audit failure. No tokens or credentials are printed.
 """
 import json
 import os
@@ -73,7 +73,7 @@ def plan(channel, ops):
 
 
 def commit(channel, ops, review):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]})
+    return invoke(channel, "commit", {"operations": ops})
 
 
 def reviewed(channel, ops):
@@ -91,7 +91,7 @@ def write(channel, key, company, **values):
 
 def refused(channel, key, company, contains, **values):
     body = plan(channel, [op(key, company, **values)])
-    require(body.get("valid") is False and "plan_code" not in body and contains in json.dumps(body), f"{key}: expected refusal {contains}; got {body}")
+    require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}; got {body}")
 
 
 def control(action, value):
@@ -117,14 +117,12 @@ def sequences():
     return sql("SELECT jsonb_agg(jsonb_build_array(sequencename,last_value) ORDER BY sequencename) FROM pg_sequences WHERE schemaname='public' AND (sequencename LIKE 'finance_receivables_%' OR sequencename LIKE 'finance_ledger_entries_%')")
 
 
-def rollback(channel, company, ops, expected="stale_plan"):
+def rollback(channel, company, ops, expected="record_changed"):
     review = reviewed(channel, ops)
     before = state(company)
-    used = sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL")
     result = commit(channel, ops, review)
     require(result.get("error") == expected, f"expected {expected}, got {result.get('error')}")
     require(state(company) == before, "partial business, posting, audit or job survived plan rollback")
-    require(sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL") == used, "failed code was consumed")
     return review
 
 
@@ -212,7 +210,6 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     require("results" in result, f"issuance failed: {result.get('error')}")
     invoice = result["results"][0]["result"]["result"]["record"]
     require(invoice["document_reference"] == "INV-001" and invoice["party_name"] == party_name and invoice["party_tax_identifier"] == customer["party"]["tax_id"] and invoice["due_date"] == "2026-01-17", "issue snapshots differ")
-    require(commit(channel, ops, review).get("error") == "plan_already_used", "code replay accepted")
     entry = read(channel, "ledger.entry.get", company, entry_id=invoice["ledger_entry_id"])
     require([(l["account_id"], l["debit"], l["credit"]) for l in entry["lines"]] == [(accounts["control"], "47.85", "0"), (accounts["income"], "0", "45.07"), (accounts["tax"], "0", "2.78")], "owned posting sides/amounts differ")
     sql("UPDATE companies SET legal_name='Customer after issue' WHERE tenant_id=1 AND id=25")
@@ -223,7 +220,7 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     one, two = draft("1", None), draft("2", None)
     combined = [op("document.issue", company, document_id=d["id"]) for d in [one, two]]
     failed = rollback(channel, company, combined)
-    require(commit(channel, combined, failed).get("error") == "stale_plan", "failed code no longer reusable")
+    require(commit(channel, combined, failed).get("error") == "record_changed", "invalid batch changed outcome on retry")
     one = write(channel, "document.issue", company, document_id=one["id"])
     two = write(channel, "document.issue", company, document_id=two["id"])
     require([one["document_reference"], two["document_reference"]] == ["INV-002", "INV-003"], "rollback consumed series numbers")
@@ -284,20 +281,19 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     ops[0] = op("customer.update", company, customer_id=independent["id"], payment_terms_days=9)
     review = reviewed(channel, ops)
     before = state(company)
-    used = sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL")
     sql("CREATE FUNCTION h2_fail_capture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.document' AND NEW.event='updated' THEN RAISE EXCEPTION 'H2 disposable capture failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER h2_fail_capture BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION h2_fail_capture()")
     try:
         result = commit(channel, ops, review)
         require("error" in result, "audit failure accepted")
     finally:
         sql("DROP TRIGGER h2_fail_capture ON base_audit_mutations; DROP FUNCTION h2_fail_capture()")
-    require(state(company) == before and sql("SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL") == used, "late capture failure escaped outer transaction")
-    require("results" in commit(channel, ops, review), "same failed code did not recover after capture repair")
+    require(state(company) == before, "late capture failure escaped outer transaction")
+    require("results" in commit(channel, ops, review), "same operations did not recover after capture repair")
 
     # A successful interleaving exercises both FIFOs without shared facts.
     ops = [op("customer.update", company, customer_id=independent["id"], payment_terms_days=1), op("ledger.account.create", company, code="independent", name="Independent", account_type="asset"), op("customer.update", company, customer_id=customer["id"], payment_terms_days=2)]
     require(len(commit(channel, ops, reviewed(channel, ops))["results"]) == 3, "independent mixed-module batching failed")
-    print("late audit failure rolls back earlier independent step and owned posting; same code recovers; independent interleaved H1/H2 plan succeeds", flush=True)
+    print("late audit failure rolls back earlier independent step and owned posting; same operations recover; independent interleaved H1/H2 plan succeeds", flush=True)
 
     # Real second-session authority changes via the fixture's normal facades.
     pending = write(channel, "draft.create", company, kind="invoice", series_id=series["invoice"], customer_id=customer["id"], issue_date="2026-01-20", lines=[{"description": "Authority check", "quantity": "1", "unit_price": "3.21"}])

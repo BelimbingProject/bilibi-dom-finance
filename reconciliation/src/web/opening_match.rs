@@ -22,7 +22,6 @@ struct Actions {
     buttons: Html,
 }
 struct Review {
-    code: String,
     input: Value,
     facts: Value,
 }
@@ -228,14 +227,11 @@ impl OpeningMatch {
                     Ok(answer) => {
                         let result = &answer["results"][0];
                         if result["valid"] == true {
-                            if let Some(code) = answer["plan_code"].as_str() {
-                                self.review = Some(Review {
-                                    code: code.into(),
-                                    input,
-                                    facts: result["preview"]["result"]["changes"].clone(),
-                                });
-                                self.message = None;
-                            }
+                            self.review = Some(Review {
+                                input,
+                                facts: result["preview"]["result"]["changes"].clone(),
+                            });
+                            self.message = None;
                         } else {
                             self.message = Some(result["error"]["fields"].to_string());
                         }
@@ -252,11 +248,7 @@ impl OpeningMatch {
                         event: "commit_opening_match",
                         contract: CONTRACT,
                     };
-                    match pages
-                        .contracts
-                        .commit(&call, &review.code, review.input)
-                        .await
-                    {
+                    match pages.contracts.commit(&call, review.input).await {
                         Ok(_) => {
                             self.item = None;
                             self.line = None;

@@ -36,7 +36,6 @@ pub struct Kept {
     pub bank_id: i64,
     pub opening_item_id: i64,
     pub content: Value,
-    pub pending: Value,
 }
 const COMPANY: i64 = 3;
 const VIEWS: &[&str] = &[
@@ -115,16 +114,7 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     )];
     let review = plans.preview(&authority, &first).await?;
     assert_eq!(review["valid"], true, "{review}");
-    plans
-        .commit(
-            &s,
-            &authority,
-            review["plan_code"]
-                .as_str()
-                .ok_or("no opening review code")?,
-            &first,
-        )
-        .await?;
+    plans.commit(&s, &authority, &first).await?;
     let first_bridge = registry
         .read(
             db,
@@ -144,16 +134,7 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     )];
     let review = plans.preview(&authority, &corrected).await?;
     assert_eq!(review["valid"], true, "{review}");
-    plans
-        .commit(
-            &s,
-            &authority,
-            review["plan_code"]
-                .as_str()
-                .ok_or("no correction review code")?,
-            &corrected,
-        )
-        .await?;
+    plans.commit(&s, &authority, &corrected).await?;
     let opening = registry
         .read(
             db,
@@ -214,16 +195,7 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     }];
     let review = plans.preview(&authority, &opening_match).await?;
     assert_eq!(review["valid"], true, "{review}");
-    plans
-        .commit(
-            &s,
-            &authority,
-            review["plan_code"]
-                .as_str()
-                .ok_or("no opening match code")?,
-            &opening_match,
-        )
-        .await?;
+    plans.commit(&s, &authority, &opening_match).await?;
     let opened = reconciliation
         .open_reconciliation(
             &s,
@@ -340,12 +312,10 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     let op = [issue()];
     let review = plans.preview(&authority, &op).await?;
     assert_eq!(review["valid"], true, "{review}");
-    let code = review["plan_code"].as_str().ok_or("no review code")?;
-    let done = plans.commit(&s, &authority, code, &op).await?;
+    let done = plans.commit(&s, &authority, &op).await?;
     let id = done["results"][0]["result"]["result"]["id"]
         .as_i64()
         .ok_or_else(|| format!("missing issued result: {done}"))?;
-    assert!(plans.commit(&s, &authority, code, &op).await.is_err());
     let kept = reports.get_issued_report(&s, COMPANY, id).await?;
     assert_eq!(kept.kind, "conversion");
     assert_eq!(
@@ -353,23 +323,12 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
         preview["source_trial_balance"]["rows"]
     );
     assert!(kept.content.get("accounts").is_none());
-    let second = plans.preview(&authority, &op).await?;
-    assert_eq!(second["valid"], true, "{second}");
-    let second = plans
-        .commit(
-            &s,
-            &authority,
-            second["plan_code"]
-                .as_str()
-                .ok_or("no second review code")?,
-            &op,
-        )
-        .await?;
+    let second_review = plans.preview(&authority, &op).await?;
+    assert_eq!(second_review["valid"], true, "{second_review}");
+    let second = plans.commit(&s, &authority, &op).await?;
     let second_id = second["results"][0]["result"]["result"]["id"]
         .as_i64()
         .ok_or("second issued conversion report")?;
-    let pending = plans.preview(&authority, &op).await?;
-    assert_eq!(pending["valid"], true);
     grants
         .set_direct(&s, 2, bilibi_finance_reports::ISSUE, Some(false))
         .await?;
@@ -427,13 +386,12 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     ] {
         assert!(c.execute(sql, &[&id]).await.is_err());
     }
-    println!("PASS conversion report: shared contract issuance, replay refusal, exact source/target facts, source-grant revocation and immutable issued copy");
+    println!("PASS conversion report: shared contract issuance, exact source/target facts, source-grant revocation and immutable issued copy");
     Ok(Kept {
         id,
         bank_id: bank.id,
         opening_item_id: later_opening_item,
         content: kept.content,
-        pending,
     })
 }
 pub async fn after(db: &Db, services: &Services, kept: Kept) -> Outcome<()> {
@@ -487,11 +445,6 @@ pub async fn after(db: &Db, services: &Services, kept: Kept) -> Outcome<()> {
             .await?
             .content,
         kept.content
-    );
-    let old = kept.pending["plan_code"].as_str().ok_or("no review code")?;
-    assert!(
-        plans.commit(&s, &issuer, old, &[issue()]).await.is_err(),
-        "stale source review committed"
     );
     let deposit = ledger
         .post_entry(
@@ -640,16 +593,7 @@ pub async fn after(db: &Db, services: &Services, kept: Kept) -> Outcome<()> {
     }];
     let review = plans.preview(&issuer, &opening_match).await?;
     assert_eq!(review["valid"], true, "{review}");
-    plans
-        .commit(
-            &s,
-            &issuer,
-            review["plan_code"]
-                .as_str()
-                .ok_or("no later opening match code")?,
-            &opening_match,
-        )
-        .await?;
+    plans.commit(&s, &issuer, &opening_match).await?;
     let current = reports
         .conversion_report(&s, COMPANY, date(2026, 8, 1), &Default::default())
         .await?;
@@ -775,14 +719,7 @@ pub async fn after(db: &Db, services: &Services, kept: Kept) -> Outcome<()> {
         .as_str()
         .ok_or("missing reviewed sign-off attestation")?
         .to_owned();
-    let done = plans
-        .commit(
-            &scope,
-            &signer,
-            preview["plan_code"].as_str().ok_or("no sign code")?,
-            &sign,
-        )
-        .await?;
+    let done = plans.commit(&scope, &signer, &sign).await?;
     let sign_id = done["results"][0]["result"]["result"]["id"]
         .as_i64()
         .ok_or("missing signoff")?;

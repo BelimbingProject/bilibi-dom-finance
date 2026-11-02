@@ -87,7 +87,6 @@ pub(crate) struct Pages {
 }
 struct Review {
     input: Value,
-    code: String,
     facts: Value,
 }
 struct State {
@@ -699,7 +698,7 @@ impl LiveState<Scope, Error> for State {
                             contract: IMPORT,
                         };
                         match self.pages.contracts.preview(&call,input.clone()).await {
-                            Ok(answer) => { let result=&answer["results"][0]; if result["valid"]==true { if let Some(code)=answer["plan_code"].as_str() {self.review=Some(Review {input,code:code.into(),facts:result["preview"]["result"]["changes"].clone()});} } else {self.errors=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_default();self.message=Some("Check the fields and preview again.".into());} },
+                            Ok(answer) => { let result=&answer["results"][0]; if result["valid"]==true {self.review=Some(Review {input,facts:result["preview"]["result"]["changes"].clone()});} else {self.errors=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_default();self.message=Some("Check the fields and preview again.".into());} },
                             Err(_) => self.message=Some("The schedule could not be reviewed. Check your access and try again.".into()),
                         }
                     }
@@ -712,20 +711,15 @@ impl LiveState<Scope, Error> for State {
                                 event: "do_confirm",
                                 contract: IMPORT,
                             };
-                            match self
-                                .pages
-                                .contracts
-                                .commit(&call, &review.code, review.input)
-                                .await
-                            {
+                            match self.pages.contracts.commit(&call, review.input).await {
                                 Ok(_) => {
                                     self.values.clear();
                                     self.message=Some("The source schedule was retained. Open it to attach its supporting report.".into());
                                 }
-                                Err(_) => self.message = Some(
-                                    "The review expired or the schedule changed. Preview it again."
-                                        .into(),
-                                ),
+                                Err(_) => {
+                                    self.message =
+                                        Some("The schedule changed. Preview it again.".into())
+                                }
                             }
                         }
                     }

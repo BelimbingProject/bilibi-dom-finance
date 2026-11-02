@@ -1,6 +1,6 @@
 # Receivables
 
-All operations take `company_id`; identity and tenant come from the credential. Use `/api/v1` or MCP to search, describe and read. Writes require a plan, the person's review and consent, then the exact ordered inputs and single-use plan code. The code proves what was reviewed, not consent. Never call a write directly.
+All operations take `company_id`; identity and tenant come from the credential. Use `/api/v1` or MCP to search, describe and read. Before a write, run the dry check, show the complete review to the person, wait for explicit approval, then commit the exact ordered inputs. Never call a write directly.
 
 1. Through `finance.ledger`, open the book, create asset/income/liability accounts and open a fiscal year. New books use controlled bookkeeping; closed or missing periods refuse posting.
 2. `setup.configure` selects default receivable (asset) and income accounts; both are initially required. Receivable accounts used for deposits are refused. Later omitted accounts stay unchanged. `setup.get` returns null before setup; `setup.changes` reads its immutable history.

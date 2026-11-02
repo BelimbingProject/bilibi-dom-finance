@@ -4,7 +4,7 @@
 Fresh disposable database only: agent-operations bootstrap, then the
 einvoice-operations binary, then start the real app and run this script.
 BILIBI_AGENT_CREDENTIALS and BILIBI_EINVOICE_FIXTURE name their output files.
-No secrets or plan codes are printed. SQL observes except the explicitly
+No secrets are printed. SQL observes except the explicitly
 guarded, finally-cleaned late audit fault below. Never run on shared data.
 """
 import copy
@@ -79,7 +79,7 @@ def plan(channel, operations):
 
 def commit(channel, operations, review):
     require(review.get("valid") is True, "positive preview refused: " + str(review.get("results", review.get("error"))))
-    result = invoke(channel, "commit", {"operations": operations, "plan_code": review["plan_code"]})
+    result = invoke(channel, "commit", {"operations": operations})
     if "error" not in result and "results" in result:
         for operation, preview, written in zip(operations, review["results"], result["results"], strict=True):
             if operation["key"] == "finance.einvoice.document.issue":
@@ -111,10 +111,10 @@ TABLES = ["documents", "document_lines", "status_events", "source_links", "submi
 
 
 def state():
-    # Snapshot complete rows (not just counts) and consumed plans. Preview
-    # legitimately stores an unused review; it must not allocate business IDs.
+    # Snapshot complete rows (not just counts). Preview must not allocate
+    # business IDs.
     queries = [f"(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.id),'[]'::jsonb) FROM finance_einvoice_{table} t)" for table in TABLES]
-    queries += ["(SELECT count(*) FROM finance_ledger_entries)", "(SELECT count(*) FROM finance_ledger_accounts)", "(SELECT count(*) FROM base_queue_jobs)", "(SELECT count(*) FROM base_audit_mutations)", "(SELECT count(*) FROM base_audit_actions)", "(SELECT count(*) FROM base_agent_api_plans WHERE used_at IS NOT NULL)"]
+    queries += ["(SELECT count(*) FROM finance_ledger_entries)", "(SELECT count(*) FROM finance_ledger_accounts)", "(SELECT count(*) FROM base_queue_jobs)", "(SELECT count(*) FROM base_audit_mutations)", "(SELECT count(*) FROM base_audit_actions)"]
     return sql("SELECT jsonb_build_array(" + ",".join(queries) + ")")
 
 
@@ -129,7 +129,7 @@ def passive():
 def refused(channel, data, field=None):
     before = state(), sequences()
     review = plan(channel, [op(data)])
-    require(review.get("valid") is False and "plan_code" not in review, "invalid issue preview accepted")
+    require(review.get("valid") is False, "invalid issue preview accepted")
     if field:
         require(field in json.dumps(review), "refusal omitted expected field " + field)
     require((state(), sequences()) == before, "refused preview allocated or mutated")
@@ -236,7 +236,6 @@ for channel, fixture in zip(["api", "mcp"], FIXTURE, strict=True):
     verify(first, inputs[0])
     require(passive() == quiet, "issue added ledger entry/submission/job")
     require(read(channel, company, "get", document_id=first["document"]["id"])["result"] == first, "get differs from committed full view")
-    require(commit(channel, operations, review).get("error") == "plan_already_used", "replay accepted")
     for target, who in [(3 - company, "manager"), (company, "other")]:
         require("error" in read(channel, target, "get", who, document_id=first["document"]["id"]), "cross-company/tenant get disclosed")
     require("error" in read(channel, company, "list", "other"), "cross-tenant list disclosed")
@@ -261,10 +260,10 @@ for channel, fixture in zip(["api", "mcp"], FIXTURE, strict=True):
     operations = [op(inputs[3])]
     review = plan(channel, operations)
     control("profile", company, "Changed after review")
-    failed_commit(channel, operations, review, "stale_plan")
+    failed_commit(channel, operations, review, "record_changed")
     control("profile", company, "Retail")
     control("environment", company, "production")
-    failed_commit(channel, operations, review, "stale_plan")
+    failed_commit(channel, operations, review, "record_changed")
     control("environment", company, "sandbox")
     # Same unconsumed code recovers when its reviewed setting is restored.
     verify(records(commit(channel, operations, review))[0], inputs[3])
