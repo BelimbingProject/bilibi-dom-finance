@@ -1,6 +1,6 @@
 //! Real manual-journal approval proof on a fresh disposable database. Pass
 //! --serve to keep the composed app open for the shared waiting list and the
-//! Finance approval exceptions page. No credentials or plan codes are printed.
+//! Finance approval exceptions page. No credentials are printed.
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_core::agent_access::{
     code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange,
@@ -544,10 +544,10 @@ async fn main() -> Outcome<()> {
     ledger
         .withdraw_journal(&manager, COMPANY, stale.id, None)
         .await?;
-    let code = preview["plan_code"].as_str().ok_or("no plan issued")?;
     assert!(matches!(
-        plans.commit(&live, &browser, code, &ops).await,
-        Err(bilibi_agent_api::Error::PlanRejected(_) | bilibi_agent_api::Error::StalePlan)
+        plans.commit(&live, &browser, &ops).await,
+        Err(bilibi_agent_api::Error::PlanRejected(_)
+            | bilibi_agent_api::Error::Backend(bilibi_database::Error::Conflict))
     ));
     assert_eq!(
         ledger

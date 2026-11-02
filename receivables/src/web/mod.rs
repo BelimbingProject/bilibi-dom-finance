@@ -410,9 +410,8 @@ impl Pages {
             Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
                 Ok(Written::Refused(DENIED.into()))
             }
-            Err(ContractError::StalePlan | ContractError::PlanExpired) => Ok(Written::Refused(
-                "The details changed or this review expired. Review them again before saving."
-                    .into(),
+            Err(ContractError::Backend(Error::Conflict)) => Ok(Written::Refused(
+                "The details changed. Review them again before saving.".into(),
             )),
             Err(ContractError::NotFound | ContractError::Backend(Error::NotFound)) => Ok(
                 Written::Refused("That record no longer exists. Reload the page.".into()),
@@ -421,10 +420,6 @@ impl Pages {
             Err(ContractError::Backend(
                 error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
             )) => Err(error),
-            Err(ContractError::Backend(Error::Conflict)) => Ok(Written::Refused(
-                "Someone changed this while you were working. Reload the page and try again."
-                    .into(),
-            )),
             Err(error) => {
                 eprintln!("receivables page: {contract} from {event} failed: {error:?}");
                 Ok(Written::Refused(

@@ -82,7 +82,9 @@ async fn fence(c: &dyn OperationClient, v: &Value, consume: bool) -> bilibi_agen
         serde_json::from_value(row.get(1)).map_err(|_| Error::Internal)?;
     if consume {
         if pending.first() != Some(&hash) {
-            return Err(bilibi_agent_api::Error::StalePlan);
+            return Err(bilibi_agent_api::Error::Backend(
+                bilibi_database::Error::Conflict,
+            ));
         }
         pending.remove(0);
     } else {

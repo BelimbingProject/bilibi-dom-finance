@@ -26,7 +26,6 @@ pub(crate) struct Pages {
     pub parties: Arc<PartyProofs>,
 }
 struct Review {
-    code: String,
     input: Value,
     contract: &'static str,
     instance: Value,
@@ -787,7 +786,7 @@ impl LiveState<Scope, Error> for State {
                             };
                             match self.pages.contracts.preview(&call, input.clone()).await {
                                 Ok(review) => {
-                                    if let Some(code) = review["plan_code"].as_str() {
+                                    if review["valid"] == true {
                                         let result = &review["results"][0]["preview"]["result"];
                                         let attestation = if contract == SIGN {
                                             Some(
@@ -807,7 +806,6 @@ impl LiveState<Scope, Error> for State {
                                         self.path.clear();
                                         self.offset = 0;
                                         self.review = Some(Review {
-                                            code: code.into(),
                                             input,
                                             contract,
                                             instance: review["instance"].clone(),
@@ -833,12 +831,7 @@ impl LiveState<Scope, Error> for State {
                                 event,
                                 contract: review.contract,
                             };
-                            match self
-                                .pages
-                                .contracts
-                                .commit(&call, &review.code, review.input)
-                                .await
-                            {
+                            match self.pages.contracts.commit(&call, review.input).await {
                                 Ok(done) => {
                                     let result = &done["results"][0]["result"]["result"];
                                     if review.contract == ISSUE {

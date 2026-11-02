@@ -2,7 +2,7 @@
 """Live opening-balance MCP walkthrough, not a unit-test runner. Use only the disposable
 database and private credentials provisioned by the agent-operations binary.
 Every mutation goes through the real wire edge; SQL observes its effects.
-Tokens and plan codes never appear in output. See the ledger README.
+Tokens never appear in output. See the ledger README.
 """
 import json
 from decimal import Decimal
@@ -89,7 +89,7 @@ def plan(channel, ops, who="manager"):
 
 
 def commit(channel, ops, review, who="manager"):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    return invoke(channel, "commit", {"operations": ops}, who)
 
 
 def write(channel, key, company, who="approver", **values):
@@ -103,7 +103,7 @@ def write(channel, key, company, who="approver", **values):
 
 def refused(channel, key, company, contains, who="manager", **values):
     body = plan(channel, [operation(key, company, **values)], who)
-    require(body.get("valid") is False and "plan_code" not in body and contains in json.dumps(body), f"{key}: expected refusal {contains}")
+    require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}")
 
 
 def opening_classifications(context):
@@ -189,7 +189,7 @@ refused(channel,"finance.receivables.opening.import",company,"separation",who="m
 ops=[operation("finance.receivables.opening.import",company,**inputs["receivables"])]
 review=plan(channel,ops+ops,"approver")
 require(review.get("valid") is True,"double-plan initial review")
-require(commit(channel,ops+ops,review,"approver").get("error")=="stale_plan","dependent import plan must roll back")
+require(commit(channel,ops+ops,review,"approver").get("error")=="record_changed","dependent import plan must roll back")
 require(sql("SELECT count(*) FROM finance_receivables_opening_batches WHERE company_id=2")=="0","dependent plan left import")
 print("MCP: schemas and guides discovered; two-account opening reviews and omissions proved; all three mismatches and same-preparer approval refused; dependent import plan rolled back")
 for module,values in inputs.items():

@@ -240,7 +240,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     handler.preview(tx.sql(), &manager, &explicit).await?;
     handler.commit(&mut tx, &manager, &empty).await?;
     match handler.commit(&mut tx, &manager, &explicit).await {
-        Err(bilibi_agent_api::Error::StalePlan) => println!(
+        Err(bilibi_agent_api::Error::Backend(bilibi_database::Error::Conflict)) => println!(
             "two layout steps reviewed before execution: stale second step rolls the shared transaction back"
         ),
         _ => return Err(Error::Internal.into()),

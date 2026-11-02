@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Opening-credit MCP proof against the same disposable launcher fixture as the browser.
 Prepare with conversion prepare-credits-launcher and launcher-credentials.
-Credentials and plan codes stay in memory and never appear in proof output.
+Credentials stay in memory and never appear in proof output.
 """
 import concurrent.futures
 import json
@@ -56,7 +56,7 @@ def preview(op):
 
 
 def commit(op, review):
-    return invoke("commit", {"operations": [op], "plan_code": review["plan_code"]})
+    return invoke("commit", {"operations": [op]})
 
 
 def succeeded(result):

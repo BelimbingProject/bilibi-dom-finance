@@ -2,7 +2,7 @@
 
 Read the book and accounts through `finance.ledger` before configuring payables. Supply an explicit company ID on every operation. The authenticated person, tenant and impersonator are never inputs. Use decimal strings in the book's minor units, not JSON numbers; rates and quantities are decimal strings too.
 
-Every write uses the shared preview and single-use commit plan. Show the review to the person and obtain their consent before commit. Consent is not accounting approval: document and payment approval still require their own capability and the ledger's separation of duties. An override reason does not bypass same-person refusal while separation is required.
+Before every write, run the shared dry check, show the review to the person and obtain their consent before commit. Consent is not accounting approval: document and payment approval still require their own capability and the ledger's separation of duties. An override reason does not bypass same-person refusal while separation is required.
 
 1. Set the company's liability control account with `finance.payables.settings.put`. First configuration needs `payable_account_id`. Later omissions preserve values. Set tolerances as `{kind: "percent" | "amount", value: "…"}` or clear them with `clear_quantity_tolerance` / `clear_price_tolerance`. Never set and clear the same value together. These are Payables business settings, not authority administration.
 2. Create company-defined tax codes with `tax_code.create`; `tax_code.update` preserves omitted fields and cannot change the code. Inactivate with `active: false`. Existing documents retain their captured tax code, rate and account.

@@ -391,7 +391,7 @@ If a submission is wrong, there are three ways to correct it while it waits for 
 
 ### Prepare and review through MCP
 
-Describe `finance.ledger.opening_balances.submit` and read `book.get`, the complete paged `account.list`, `fiscal_year.list` and `trial_balance.get`. Use the same `conversion_date`, `currency_code`, `source_reference` and `csv` as the UI, plus `company_id`. Preview one plan, inspect all `changes.rows`, totals and exclusions, obtain consent and commit the exact inputs. Keep the source reference for a fresh plan if the response is lost. Plans and plan codes remain single-use; source retries are separate from replaying a consumed code.
+Describe `finance.ledger.opening_balances.submit` and read `book.get`, the complete paged `account.list`, `fiscal_year.list` and `trial_balance.get`. Use the same `conversion_date`, `currency_code`, `source_reference` and `csv` as the UI, plus `company_id`. Run one dry check, inspect all `changes.rows`, totals and exclusions, obtain consent and commit the exact inputs. Keep the source reference and read back before retrying if the response is lost.
 
 Approval uses `finance.ledger.journal.approve` in a **separate plan and review** with an eligible reviewer. Book opening, account creation, fiscal-year opening, opening submission and journal approval cannot rely on hypothetical earlier plan results. Respect the installation's plan bounds and read generated identifiers before the next dependent step. Never send database credentials or source-system passwords in CSV, descriptions or references.
 

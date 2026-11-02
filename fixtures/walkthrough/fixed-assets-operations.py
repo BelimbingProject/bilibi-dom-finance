@@ -2,7 +2,7 @@
 """Live Fixed Assets lifecycle MCP walkthrough, not a unit-test runner. Use only the disposable
 database and private credentials provisioned by the agent-operations binary.
 Every mutation goes through the real wire edge; SQL observes its effects.
-Tokens and plan codes never appear in output. See the ledger README.
+Tokens never appear in output. See the ledger README.
 """
 import json
 from decimal import Decimal
@@ -99,7 +99,7 @@ def plan(channel, ops, who="manager"):
 
 
 def commit(channel, ops, review, who="manager"):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    return invoke(channel, "commit", {"operations": ops}, who)
 
 
 def write(channel, key, company, who="approver", **values):
@@ -113,7 +113,7 @@ def write(channel, key, company, who="approver", **values):
 
 def refused(channel, key, company, contains, who="manager", **values):
     body = plan(channel, [operation(key, company, **values)], who)
-    require(body.get("valid") is False and "plan_code" not in body and contains in json.dumps(body), f"{key}: expected refusal {contains}")
+    require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}")
 
 
 # Use the conversion fixture's clean Company 002; browser proof uses Company 001.
@@ -204,7 +204,7 @@ try:
             if result.get("isError") is True:
                 require(body == {"error": "rejected", "reason": "record_changed"}, f"{key}: expected typed retryable plan refusal")
             else:
-                require(body.get("valid") is False and "plan_code" not in body and "record_changed" in json.dumps(body) and "error" not in body, f"{key}: lock contention must be a nonfatal retryable record_changed refusal")
+                require(body.get("valid") is False and "record_changed" in json.dumps(body) and "error" not in body, f"{key}: lock contention must be a nonfatal retryable record_changed refusal")
 finally:
     holder.kill()
     holder.wait()
@@ -216,14 +216,14 @@ print("PASS MCP contention: authorized write previews refuse a busy company and 
 ops = [operation(prefix + "run.post", company, period="2026-07-01")] * 2
 review = plan(channel, ops, "approver")
 require(review.get("valid") is True, "duplicate-run plan review")
-require(commit(channel, ops, review, "approver").get("error") == "stale_plan", "dependent run fence")
+require(commit(channel, ops, review, "approver").get("error") == "record_changed", "dependent run fence")
 require(read(channel, prefix + "run.list", company, "approver")["records"] == [], "dependent plan leaked run")
 require(report() == initial, "dependent plan leaked ledger or register state")
 # A category revision changes the report boundaries even before its assets change.
 ops = [operation(prefix + "category.save", company, **revised), operation(prefix + "run.post", company, period="2026-07-01")]
 review = plan(channel, ops, "approver")
 require(review.get("valid") is True, "category/run plan review")
-require(commit(channel, ops, review, "approver").get("error") == "stale_plan", "dependent category/run fence")
+require(commit(channel, ops, review, "approver").get("error") == "record_changed", "dependent category/run fence")
 require(report() == initial, "dependent category/run plan leaked state")
 run = write(channel, prefix + "run.post", company, period="2026-07-01")
 require(Decimal(run["total"]) == Decimal("106.25"), "monthly opening continuation charge")

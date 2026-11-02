@@ -27,7 +27,6 @@ struct Draft {
     review: Option<Review>,
 }
 struct Review {
-    code: String,
     input: Value,
     facts: Value,
     banner: Html,
@@ -500,19 +499,16 @@ impl Credits {
                 Ok(answer) => {
                     let result = &answer["results"][0];
                     if result["valid"] == true {
-                        if let Some(code) = answer["plan_code"].as_str() {
-                            d.review = Some(Review {
-                                code: code.into(),
-                                input,
-                                facts: result["preview"]["result"]["changes"].clone(),
-                                banner: pages
-                                    .plans
-                                    .instance()
-                                    .await?
-                                    .banner("credit-instance", "")
-                                    .map_err(|_| Error::Internal)?,
-                            });
-                        }
+                        d.review = Some(Review {
+                            input,
+                            facts: result["preview"]["result"]["changes"].clone(),
+                            banner: pages
+                                .plans
+                                .instance()
+                                .await?
+                                .banner("credit-instance", "")
+                                .map_err(|_| Error::Internal)?,
+                        });
                     } else {
                         d.fields=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_else(|_|BTreeMap::from([("base".into(),vec!["The settlement could not be reviewed. Check access and try again.".into()])]));
                     }
@@ -540,11 +536,7 @@ impl Credits {
                         event: "commit_credit",
                         contract: contract(&d.action),
                     };
-                    match pages
-                        .contracts
-                        .commit(&call, &review.code, review.input)
-                        .await
-                    {
+                    match pages.contracts.commit(&call, review.input).await {
                         Ok(_) => {
                             self.draft = None;
                             self.message =

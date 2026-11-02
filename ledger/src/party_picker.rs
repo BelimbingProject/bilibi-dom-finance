@@ -274,11 +274,11 @@ impl PartyChooser {
             input["record_kind"] = json!(selected.reference.kind);
             input["record_id"] = json!(selected.id.parse::<i64>().map_err(|_| Error::Invalid)?);
         }
-        let (code, review) = match pages
+        let review = match pages
             .review_core(scope, credential, event, contract, input.clone())
             .await?
         {
-            Reviewed::Valid { code, review } => (code, review),
+            Reviewed::Valid { review } => review,
             Reviewed::Invalid(fields) => {
                 return Ok(PartySubmission::Invalid(composed_errors(fields)));
             }
@@ -306,7 +306,7 @@ impl PartyChooser {
         }
         Ok(
             match pages
-                .commit_core(scope, credential, event, contract, &code, input)
+                .commit_core(scope, credential, event, contract, input)
                 .await?
             {
                 Written::Done(record) => PartySubmission::Done(record),
@@ -844,8 +844,7 @@ impl PartyPickerContext {
         Self::written(contract, event, answer)
     }
 
-    /// The review half of a confirmation on another module's contract: the
-    /// owner's review and the code that commits exactly that input.
+    /// The review half of a confirmation on another module's contract.
     pub async fn review_core(
         &self,
         scope: &Scope,
@@ -862,12 +861,9 @@ impl PartyPickerContext {
             Ok(value) => {
                 let result = &value["results"][0];
                 if result["valid"].as_bool() == Some(true) {
-                    if let Some(code) = value["plan_code"].as_str() {
-                        return Ok(Reviewed::Valid {
-                            code: code.to_owned(),
-                            review: result["preview"]["result"].clone(),
-                        });
-                    }
+                    return Ok(Reviewed::Valid {
+                        review: result["preview"]["result"].clone(),
+                    });
                 }
                 let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
                 if let Some(map) = result["error"]["fields"].as_object() {
@@ -902,7 +898,7 @@ impl PartyPickerContext {
         }
     }
 
-    /// Commits a reviewed confirmation with the same input and its code. A
+    /// Commits a reviewed confirmation with the same input. A
     /// commit answers the plan's envelope (`results[0].result`), where a
     /// submit answers the one result itself.
     pub async fn commit_core(
@@ -911,12 +907,11 @@ impl PartyPickerContext {
         credential: &str,
         event: &str,
         contract: &'static str,
-        code: &str,
         input: Value,
     ) -> Result<Written> {
         let answer = self
             .contracts
-            .commit(&self.call(scope, credential, event, contract), code, input)
+            .commit(&self.call(scope, credential, event, contract), input)
             .await
             .map(|mut value| value["results"][0]["result"].take());
         Self::written(contract, event, answer)
@@ -933,9 +928,8 @@ impl PartyPickerContext {
             Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
                 Ok(Written::Refused(DENIED.into()))
             }
-            Err(ContractError::StalePlan | ContractError::PlanExpired) => Ok(Written::Refused(
-                "The details changed or this review expired. Review them again before saving."
-                    .into(),
+            Err(ContractError::Backend(Error::Conflict)) => Ok(Written::Refused(
+                "The details changed. Review them again before saving.".into(),
             )),
             Err(ContractError::NotFound | ContractError::Backend(Error::NotFound)) => Ok(
                 Written::Refused("That record no longer exists. Reload the page.".into()),
@@ -944,10 +938,6 @@ impl PartyPickerContext {
             Err(ContractError::Backend(
                 error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
             )) => Err(error),
-            Err(ContractError::Backend(Error::Conflict)) => Ok(Written::Refused(
-                "Someone changed this while you were working. Reload the page and try again."
-                    .into(),
-            )),
             Err(error) => {
                 eprintln!("receivables page: {contract} from {event} failed: {error:?}");
                 Ok(Written::Refused(
@@ -976,10 +966,9 @@ pub enum Written {
     Refused(String),
 }
 
-/// What a review came to: the owner's review with the code that commits
-/// it, or the refusal.
+/// What a review came to: the owner's review or the refusal.
 pub enum Reviewed {
-    Valid { code: String, review: Value },
+    Valid { review: Value },
     Invalid(BTreeMap<String, Vec<String>>),
     Refused(String),
 }

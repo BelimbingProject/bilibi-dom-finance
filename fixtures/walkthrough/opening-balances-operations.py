@@ -2,7 +2,7 @@
 """Live opening-balance MCP walkthrough, not a unit-test runner. Use only the disposable
 database and private credentials provisioned by the agent-operations binary.
 Every mutation goes through the real wire edge; SQL observes its effects.
-Tokens and plan codes never appear in output. See the ledger README.
+Tokens never appear in output. See the ledger README.
 """
 import json
 from decimal import Decimal
@@ -89,7 +89,7 @@ def plan(channel, ops, who="manager"):
 
 
 def commit(channel, ops, review, who="manager"):
-    return invoke(channel, "commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    return invoke(channel, "commit", {"operations": ops}, who)
 
 
 def write(channel, key, company, who="manager", **values):
@@ -103,7 +103,7 @@ def write(channel, key, company, who="manager", **values):
 
 def refused(channel, key, company, contains, who="manager", **values):
     body = plan(channel, [operation(key, company, **values)], who)
-    require(body.get("valid") is False and "plan_code" not in body and contains in json.dumps(body), f"{key}: expected refusal {contains}")
+    require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}")
 
 
 # Run after agent-operations on its own fresh database, never after the full
@@ -132,7 +132,7 @@ require(len(facts["rows"]) == 6 and Decimal(facts["debit"]) == Decimal("15000") 
 double = ops + ops
 review = plan(channel, double)
 require(review.get("valid") is True, "independent initial previews")
-require(commit(channel, double, review).get("error") == "stale_plan", "dependent duplicate did not roll back")
+require(commit(channel, double, review).get("error") == "record_changed", "dependent duplicate did not roll back")
 require(sql("SELECT count(*) FROM finance_ledger_opening_balances") == "0", "plan rollback left evidence")
 committed = commit(channel, ops, preview)
 require("results" in committed, "reviewed opening commit failed")
@@ -140,7 +140,6 @@ journal = committed["results"][0]["result"]["result"]["record"]
 opening_rows = read(channel, "journals.list", company, source="opening", status="submitted")["records"]
 require(len(opening_rows) == 1 and opening_rows[0]["id"] == journal["id"] and opening_rows[0]["kind"] == "journal", "opening source did not find the waiting journal")
 require(not read(channel, "journals.list", company, source="manual")["records"], "opening leaked into manual source")
-require(commit(channel, ops, preview).get("error") == "plan_already_used", "consumed plan was replayed")
 require(read(channel, "trial_balance.get", company, as_of="2026-07-01")["through_entry_number"] == 0, "submission posted")
 retry = write(channel, "opening_balances.submit", company, **source)
 require(retry["id"] == journal["id"], "retry duplicated journal")

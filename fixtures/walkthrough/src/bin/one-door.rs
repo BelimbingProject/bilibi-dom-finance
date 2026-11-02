@@ -1,6 +1,6 @@
 //! Provision real OAuth credentials for the HTTP/MCP ledger walkthrough on
 //! an explicitly disposable database. No book is opened here: the wire proof
-//! starts from an empty ledger. Never print credentials or plan codes.
+//! starts from an empty ledger. Never print credentials.
 use bilibi_core::agent_access::{
     code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange, Decision,
     CLIENT_ID,

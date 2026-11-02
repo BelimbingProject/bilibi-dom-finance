@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Live MCP proof on bad-debt's disposable database, with agent-operations OAuth.
-Tokens and plan codes stay private. Start bad-debt serve, run agent-operations
+Tokens stay private. Start bad-debt serve, run agent-operations
 with BILIBI_AGENT_PROOF=disposable and a new BILIBI_AGENT_CREDENTIALS path, then
 run this script with the same path and BILIBI_AGENT_URL set to that host.
 """
@@ -53,7 +53,7 @@ def write(key, who="manager", **values):
     ops = [op(key, **values)]
     review = invoke("plan", {"operations": ops}, who)
     require(review.get("valid") is True, "review refused: " + key)
-    result = invoke("commit", {"operations": ops, "plan_code": review["plan_code"]}, who)
+    result = invoke("commit", {"operations": ops}, who)
     require("results" in result, "commit refused: " + key)
     return result["results"][0]["result"]["result"]["record"]
 
@@ -71,7 +71,7 @@ proposal = dict(document_id=invoice["id"], entry_date="2026-10-28", amount="10",
                 offset_account_id=expense, reason="MCP specimen collection assessment",
                 evidence="Original invoice source documents; MCP proof")
 bad = invoke("plan", {"operations": [op("write_off.submit", **{**proposal, "amount": "100000"})]})
-require(bad.get("valid") is False and "plan_code" not in bad, "excess amount was reviewable")
+require(bad.get("valid") is False, "excess amount was reviewable")
 created = write("write_off.submit", **proposal)
 require(read("document.get", document_id=invoice["id"])["outstanding"] == initial, "proposal posted")
 decision = dict(write_off_id=created["id"], reason="MCP independent review")
@@ -90,8 +90,8 @@ before = read("document.get", document_id=invoice["id"])
 ops = [op("write_off.submit", **proposal), op("write_off.submit", **proposal)]
 review = invoke("plan", {"operations": ops})
 require(review.get("valid") is True, "multi-step review refused too early")
-result = invoke("commit", {"operations": ops, "plan_code": review["plan_code"]})
-require(result.get("error") == "stale_plan", "second step did not reject changed invoice")
+result = invoke("commit", {"operations": ops})
+require(result.get("error") == "record_changed", "second step did not reject changed invoice")
 require(read("document.get", document_id=invoice["id"]) == before, "plan rollback lost atomicity")
 other = invoke("read", op("document.get", document_id=invoice["id"]), who="other")
 require("result" not in other, "other tenant read invoice")

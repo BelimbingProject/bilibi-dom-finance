@@ -46,7 +46,6 @@ struct Actions {
 }
 struct Review {
     contract: &'static str,
-    code: String,
     input: Value,
     facts: Value,
 }
@@ -149,15 +148,10 @@ impl Opening {
                         .into(),
                 ))
             }
-            ContractError::StalePlan
-            | ContractError::PlanExpired
-            | ContractError::InvalidPlanCode
-            | ContractError::PlanMismatch
-            | ContractError::PlanAlreadyUsed => {
+            ContractError::Backend(Error::Conflict) => {
                 self.message = Some((
                     StatusKind::Error,
-                    "The reviewed figures changed or the review expired. Preview the source again."
-                        .into(),
+                    "The reviewed figures changed. Preview the source again.".into(),
                 ))
             }
             e => {
@@ -725,20 +719,17 @@ impl Opening {
                         Ok(answer) => {
                             let result = &answer["results"][0];
                             if result["valid"] == true {
-                                if let Some(code) = answer["plan_code"].as_str() {
-                                    let facts = result["preview"]["result"]["changes"].clone();
-                                    if let Some(rows) = facts["rows"].as_array() {
-                                        self.columns.load(rows, |r| {
-                                            r["source_id"].as_str().unwrap_or("").to_owned()
-                                        });
-                                    }
-                                    self.review = Some(Review {
-                                        contract,
-                                        code: code.into(),
-                                        input,
-                                        facts,
+                                let facts = result["preview"]["result"]["changes"].clone();
+                                if let Some(rows) = facts["rows"].as_array() {
+                                    self.columns.load(rows, |r| {
+                                        r["source_id"].as_str().unwrap_or("").to_owned()
                                     });
                                 }
+                                self.review = Some(Review {
+                                    contract,
+                                    input,
+                                    facts,
+                                });
                             } else {
                                 self.fields=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_else(|_|BTreeMap::from([("base".into(),vec!["The opening source could not be reviewed. Check permissions and source data.".into()])]));
                             }
@@ -755,12 +746,7 @@ impl Opening {
                             event: "import_opening",
                             contract: review.contract,
                         };
-                        match self
-                            .pages
-                            .contracts
-                            .commit(&call, &review.code, review.input)
-                            .await
-                        {
+                        match self.pages.contracts.commit(&call, review.input).await {
                             Ok(_) => {
                                 self.completed = review.contract != STAGE;
                                 self.message = Some((

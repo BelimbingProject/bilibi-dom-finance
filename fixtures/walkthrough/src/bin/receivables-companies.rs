@@ -398,7 +398,12 @@ async fn main() -> Outcome<()> {
         .await?;
     let changed = issue.commit(&mut review_tx, &manager, &stale_input).await;
     assert!(
-        matches!(changed, Err(bilibi_agent_api::Error::StalePlan)),
+        matches!(
+            changed,
+            Err(bilibi_agent_api::Error::Backend(
+                bilibi_database::Error::Conflict
+            ))
+        ),
         "changed billing must require a fresh issue review"
     );
     review_tx.rollback().await?;

@@ -133,7 +133,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     ensure(
         matches!(
             save.commit(&mut tx, &manager, &stale_input).await,
-            Err(bilibi_agent_api::Error::StalePlan)
+            Err(bilibi_agent_api::Error::Backend(
+                bilibi_database::Error::Conflict
+            ))
         ),
         "same-plan source edit refuses unreviewed publication",
     )?;

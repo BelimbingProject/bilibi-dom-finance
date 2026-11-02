@@ -61,7 +61,7 @@ pub(super) struct Document {
     statuses: CommitStates,
     flash: Flash,
     dialog: Option<Dialog>,
-    issue_review: Option<(String, Value)>,
+    issue_review: Option<Value>,
     issue_banner: Html,
     editing: Option<Lines>,
     lines_cols: ListColumns,
@@ -877,7 +877,7 @@ impl Document {
                     let party = self
                         .issue_review
                         .as_ref()
-                        .map(|(_, review)| &review["changes"]["after"]);
+                        .map(|review| &review["changes"]["after"]);
                     let items = [
                         ("party_code", "Core code"),
                         ("party_name", "Name"),
@@ -1236,7 +1236,7 @@ impl Document {
                         )
                         .await?
                     {
-                        PartyReview::Valid { code, review } => {
+                        PartyReview::Valid { review } => {
                             self.issue_banner = self
                                 .pages
                                 .plans
@@ -1244,7 +1244,7 @@ impl Document {
                                 .await?
                                 .banner("receivables-issue-instance", "mb-4")
                                 .map_err(|_| Error::Internal)?;
-                            self.issue_review = Some((code, review));
+                            self.issue_review = Some(review);
                             self.dialog = Some(Dialog::Issue);
                         }
                         PartyReview::Invalid(fields) => {
@@ -1278,7 +1278,7 @@ impl Document {
                     ("discard", "finance.receivables.draft.discard")
                 };
                 let written = if issue {
-                    let Some((code, _)) = self.issue_review.take() else {
+                    let Some(_) = self.issue_review.take() else {
                         self.flash
                             .set(StatusKind::Error, "Review this invoice before issuing it.");
                         return Ok(());
@@ -1287,11 +1287,7 @@ impl Document {
                     let answer = self
                         .pages
                         .contracts
-                        .commit(
-                            &Pages::call(scope, credential, event, contract),
-                            &code,
-                            input,
-                        )
+                        .commit(&Pages::call(scope, credential, event, contract), input)
                         .await
                         .map(|mut value| value["results"][0]["result"].take());
                     Pages::written(contract, event, answer)?

@@ -363,7 +363,7 @@ impl Pages {
     }
 
     /// The review half of a confirmation: the contract's own summary of what
-    /// will change, and the code that commits exactly that.
+    /// will change.
     pub(crate) async fn review(
         &self,
         scope: &Scope,
@@ -394,13 +394,10 @@ impl Pages {
             Ok(value) => {
                 let result = &value["results"][0];
                 if result["valid"].as_bool() == Some(true) {
-                    if let Some(code) = value["plan_code"].as_str() {
-                        return Ok(Ok(Review {
-                            code: code.to_owned(),
-                            input,
-                            facts: result["preview"]["result"]["changes"].clone(),
-                        }));
-                    }
+                    return Ok(Ok(Review {
+                        input,
+                        facts: result["preview"]["result"]["changes"].clone(),
+                    }));
                 }
                 Ok(Err(Failure::Refused(Refusal::from_review(result))))
             }
@@ -471,11 +468,7 @@ impl Pages {
         review: Review,
     ) -> Result<std::result::Result<Value, Failure>> {
         let call = self.call(scope, credential, event, contract);
-        match self
-            .contracts
-            .commit(&call, &review.code, review.input)
-            .await
-        {
+        match self.contracts.commit(&call, review.input).await {
             Ok(value) => Ok(Ok(value)),
             Err(error) => Ok(Err(failure(error)?)),
         }
@@ -636,7 +629,6 @@ pub(crate) enum Read {
 /// A reviewed confirmation waiting for the person's answer.
 #[derive(Clone)]
 pub(crate) struct Review {
-    pub code: String,
     pub input: Value,
     pub facts: Value,
 }
@@ -775,11 +767,7 @@ fn failure(error: ContractError) -> Result<Failure> {
         ContractError::InvalidInput(fields) => Failure::Refused(Refusal {
             fields: fields.into_iter().collect(),
         }),
-        ContractError::Backend(Error::Conflict)
-        | ContractError::StalePlan
-        | ContractError::PlanExpired
-        | ContractError::PlanAlreadyUsed
-        | ContractError::PlanMismatch => Failure::Changed,
+        ContractError::Backend(Error::Conflict) => Failure::Changed,
         ContractError::PlanRejected(results) => Failure::Refused(Refusal::from_review(&results[0])),
         ContractError::NotFound | ContractError::Backend(Error::NotFound) => {
             Failure::Refused(Refusal {
