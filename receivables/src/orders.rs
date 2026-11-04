@@ -142,6 +142,13 @@ impl Subscribe for Orders {
     ) -> SubscriberFuture<'a> {
         Box::pin(async move {
             let s = snapshot(&event.payload)?;
+            // Core owns the party code. Keep its reference, not a copied
+            // identity; customer reads resolve the current permitted facts.
+            let mut payload = event.payload.clone();
+            payload
+                .as_object_mut()
+                .ok_or(Error::Invalid)?
+                .remove("customer_code");
             if event.version != 1 || event.tenant != scope.tenant() {
                 return Err(Error::Invalid);
             }
@@ -154,7 +161,7 @@ impl Subscribe for Orders {
             .await?
             .ok_or(Error::NotFound)?;
             let old=tx.query_opt("SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE tenant_id=$1 AND company_id=$2 AND order_id=$3", &[&tenant,&s.company_id,&s.order_id]).await?.map(|r| r.get::<_,Value>(0));
-            let facts = header(&event.payload);
+            let facts = header(&payload);
             let mut changes = Vec::new();
             let mut order = if let Some(old) = old {
                 if old["facts"] != facts {
@@ -189,9 +196,9 @@ impl Subscribe for Orders {
                 }
                 let id = order["id"].as_i64().ok_or(Error::Internal)?;
                 if let Some(existing)=tx.query_opt("SELECT payload FROM finance_receivables_sales_order_parts WHERE tenant_id=$1 AND company_id=$2 AND sales_order_id=$3 AND part_index=$4", &[&tenant,&s.company_id,&id,&s.part_index]).await? {
-                    if existing.get::<_,Value>(0)!=event.payload { return Err(Error::Conflict); }
+                    if existing.get::<_,Value>(0)!=payload { return Err(Error::Conflict); }
                 } else {
-                    store::save(tx,PARTS,tenant,s.company_id,None,json!({"sales_order_id":id,"part_index":s.part_index,"event_key":event.key,"payload":event.payload}),&mut changes).await?;
+                    store::save(tx,PARTS,tenant,s.company_id,None,json!({"sales_order_id":id,"part_index":s.part_index,"event_key":event.key,"payload":payload}),&mut changes).await?;
                 }
             }
             if order["status"] == "confirmed"
