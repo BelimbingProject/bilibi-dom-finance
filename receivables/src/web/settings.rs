@@ -1322,6 +1322,11 @@ impl Settings {
                 {
                     return Err(Error::Invalid);
                 }
+                if !self.can_manage {
+                    self.statuses
+                        .put(key.to_owned(), CommitStatus::Error(DENIED.into()));
+                    return Ok(());
+                }
                 let value = v["value"].as_str().ok_or(Error::Invalid)?;
                 let layout = json!({key: value});
                 let written = self
