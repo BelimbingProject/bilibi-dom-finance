@@ -180,6 +180,16 @@ impl Receivables {
                 tax: l.tax_amount.display(units),
             })
             .collect();
+        let taxes = document
+            .tax_lines
+            .iter()
+            .map(|t| TaxRow {
+                code: t.tax_code.clone(),
+                rate: t.tax_rate.normalize().to_string(),
+                taxable: t.taxable_amount.display(units),
+                tax: t.tax_amount.display(units),
+            })
+            .collect();
         let template = Invoice {
             title,
             credited_reference: &credited_reference,
@@ -194,6 +204,7 @@ impl Receivables {
             layout: &layout,
             document: &document,
             rows,
+            taxes,
             subtotal: document.subtotal.display(units),
             tax: document.tax_total.display(units),
             total: document.total.display(units),
@@ -262,6 +273,12 @@ impl DownloadHandler<Scope, Error> for Downloads {
     }
 }
 
+struct TaxRow {
+    code: String,
+    rate: String,
+    taxable: String,
+    tax: String,
+}
 struct Row {
     description: String,
     quantity: String,
@@ -281,6 +298,7 @@ struct Invoice<'a> {
     layout: &'a InvoiceLayout,
     document: &'a Document,
     rows: Vec<Row>,
+    taxes: Vec<TaxRow>,
     subtotal: String,
     tax: String,
     total: String,

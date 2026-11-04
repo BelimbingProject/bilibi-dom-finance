@@ -337,13 +337,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ar.configure(&scope, 1, &json!({"invoice_layout":{"company_name":"Example Trading & Services", "registration_number":"Example registration 001", "address":"First floor\nExample Street", "contact":"accounts@example.test", "footer":"Payment terms: 30 days.\nPlease quote the invoice number. <This is plain text.>"}})).await?;
         let configured = ar.print_document(&scope, 1, issued.id).await?;
         std::fs::write(format!("{root}/configured.pdf"), configured.bytes)?;
-        let lines: Vec<_> = (1..=100).map(|n| json!({"description":format!("Service line {n}: a description long enough to wrap on the printed invoice"),"quantity":"1","unit_price":"12.50"})).collect();
+        let tax = ar.create_tax_code(&scope,1,&json!({"code":"PRINT-TAX","name":"Example tax","rate":"6","account_id":account("2100")})).await?;
+        let lines: Vec<_> = (1..=100).map(|n| json!({"description":format!("Service line {n}: a description long enough to wrap on the printed invoice"),"quantity":"1","unit_price":"12.50","tax_code_id":tax.id})).collect();
         let long = ar.create_draft(&scope,1,&json!({"kind":"invoice","series_id":series.id,"customer_id":consumer.id,"issue_date":"2026-10-30","lines":lines})).await?;
         assert!(matches!(
             ar.print_document(&scope, 1, long.id).await,
             Err(bilibi_finance_receivables::ReceivableError::NotIssued)
         ));
         let long = ar.issue_document(&scope, 1, long.id).await?;
+        assert_eq!(long.tax_total.display(None), "75.00");
+        assert_eq!(long.total.display(None), "1,325.00");
         std::fs::write(
             format!("{root}/long.pdf"),
             ar.print_document(&scope, 1, long.id).await?.bytes,
