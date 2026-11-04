@@ -239,7 +239,7 @@ impl Documents {
                 })?;
             } else if self.can_add && order.status == "confirmed" {
                 let mut fields = render(
-                    Field::in_form("order", "order_id")
+                    Field::in_form("order", "sales_order_id")
                         .id(format!("order-{}-id", order.id))
                         .kind(InputKind::Hidden)
                         .value(order.id.to_string()),
@@ -777,10 +777,10 @@ impl Documents {
             "invoice_order" => {
                 let form = params::form_values(v, "order");
                 let order = form
-                    .get("order_id")
+                    .get("sales_order_id")
                     .and_then(|s| s.parse::<i64>().ok())
                     .ok_or(Error::Invalid)?;
-                let mut input = json!({"order_id":order});
+                let mut input = json!({"sales_order_id":order});
                 if let Some(series) = params::form_values(v, "order")
                     .get("series_id")
                     .and_then(|s| s.parse::<i64>().ok())

@@ -267,7 +267,7 @@ async fn main() -> Result<()> {
         &services,
         &manager,
         "finance.receivables.sales_order.invoice",
-        json!({"company_id":1,"order_id":waiting.id}),
+        json!({"company_id":1,"sales_order_id":waiting.id}),
     )
     .await?;
     let second = prepared["record"]["id"].as_i64().unwrap();

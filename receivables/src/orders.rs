@@ -277,16 +277,24 @@ impl Receivables {
         let tenant = scope.tenant();
         let row = store::find(client, ORDERS, tenant, company, Some(id))
             .await?
-            .ok_or_else(|| invalid("order_id", "is not a copied sales order of this company"))?;
+            .ok_or_else(|| {
+                invalid(
+                    "sales_order_id",
+                    "is not a copied sales order of this company",
+                )
+            })?;
         if row["document_id"].is_number() {
             return Ok(json!({"order":row}));
         }
         if row["status"] != "confirmed" {
-            return Err(invalid("order_id", "the sales order was cancelled"));
+            return Err(invalid("sales_order_id", "the sales order was cancelled"));
         }
         let parts=client.query("SELECT payload FROM finance_receivables_sales_order_parts WHERE tenant_id=$1 AND company_id=$2 AND sales_order_id=$3 ORDER BY part_index", &[&tenant,&company,&id]).await?;
         if parts.len() != row["part_count"].as_u64().ok_or(Error::Internal)? as usize {
-            return Err(invalid("order_id", "wait for all order lines to arrive"));
+            return Err(invalid(
+                "sales_order_id",
+                "wait for all order lines to arrive",
+            ));
         }
         let first: Value = parts[0].get(0);
         let s = snapshot(&first)?;
@@ -296,7 +304,7 @@ impl Receivables {
             .await?;
         if book.currency_code != s.currency_code {
             return Err(invalid(
-                "order_id",
+                "sales_order_id",
                 "the order currency differs from the book currency; no conversion was made",
             ));
         }
@@ -327,7 +335,7 @@ impl Receivables {
             let part = snapshot(&payload)?;
             if header(&payload) != row["facts"] || part.part_index as usize != index + 1 {
                 return Err(invalid(
-                    "order_id",
+                    "sales_order_id",
                     "the order lines do not match the confirmed order",
                 ));
             }
@@ -399,7 +407,7 @@ impl Receivables {
         let amount = |v: &Value| -> Result<Decimal> { store::decode(v.clone()).map_err(R::from) };
         for (field, index) in [("subtotal", 0), ("tax_total", 1), ("total", 2)] {
             if amount(&prepared.after[field])? != amount(&review["totals"][index])? {
-                return Err(invalid("order_id","the order totals differ from the invoice totals; review currency precision and tax codes"));
+                return Err(invalid("sales_order_id","the order totals differ from the invoice totals; review currency precision and tax codes"));
             }
         }
         for (invoice, source) in prepared
@@ -416,7 +424,7 @@ impl Receivables {
                     != amount(&source["total"])?
             {
                 return Err(invalid(
-                    "order_id",
+                    "sales_order_id",
                     "an order line total differs from the invoice line total",
                 ));
             }
@@ -507,7 +515,7 @@ impl InvoiceOrders {
         } else {
             bilibi_schedule::TENANT_RUN
         };
-        let rows=fence.sql().query("SELECT id,company_id FROM finance_receivables_sales_orders WHERE tenant_id=$1 AND status='confirmed' AND document_id IS NULL ORDER BY attempted_at NULLS FIRST,id LIMIT 100", &[&scope.tenant()]).await.map_err(Error::from)?;
+        let rows=fence.sql().query("SELECT o.id,o.company_id FROM finance_receivables_sales_orders o JOIN companies c ON c.tenant_id=o.tenant_id AND c.id=o.company_id AND c.deleted_at IS NULL AND c.status<>'archived' WHERE o.tenant_id=$1 AND o.status='confirmed' AND o.document_id IS NULL ORDER BY o.attempted_at NULLS FIRST,o.id LIMIT 100", &[&scope.tenant()]).await.map_err(Error::from)?;
         for row in rows {
             let id: i64 = row.get(0);
             let company: i64 = row.get(1);
@@ -548,7 +556,7 @@ impl InvoiceOrders {
                     &mut tx,
                     &system,
                     INVOICE_WORKER,
-                    json!({"company_id":company,"order_id":id}),
+                    json!({"company_id":company,"sales_order_id":id}),
                 )
                 .await?;
             let tenant = scope.tenant();
@@ -581,7 +589,7 @@ impl InvoiceOrders {
 }
 fn invoice_args(args: Value) -> bilibi_database::Result<Value> {
     if args.as_object().is_some_and(|o| o.len() == 2)
-        && ["company_id", "order_id"]
+        && ["company_id", "sales_order_id"]
             .iter()
             .all(|key| args[*key].as_i64().is_some_and(|n| n > 0))
     {
@@ -613,7 +621,7 @@ impl InvoiceOrder {
             return Err(R::Unauthorized);
         }
         let company = args["company_id"].as_i64().ok_or(R::InvalidOption)?;
-        let id = args["order_id"].as_i64().ok_or(R::InvalidOption)?;
+        let id = args["sales_order_id"].as_i64().ok_or(R::InvalidOption)?;
         let owner = &self.receivables;
         let mut client = owner.db.get().await.map_err(Error::from)?;
         let fence = execution

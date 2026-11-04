@@ -25,10 +25,13 @@ fn id(input: &Value, key: &str) -> bilibi_agent_api::Result<i64> {
         .ok_or(Error::Invalid.into())
 }
 fn list_input() -> Value {
-    json!({"type":"object","required":["company_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"after":{"type":"integer","minimum":0},"page_size":{"type":"integer","minimum":1,"maximum":100},"page":{"type":"integer","minimum":1}}})
+    json!({"type":"object","required":["company_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"after":{"type":"integer","minimum":0},"page_size":{"type":"integer","minimum":1,"maximum":100}}})
+}
+fn page_input() -> Value {
+    json!({"type":"object","required":["company_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"page":{"type":"integer","minimum":1}}})
 }
 fn draft_input() -> Value {
-    json!({"type":"object","required":["company_id","order_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"order_id":{"type":"integer","minimum":1},"series_id":{"type":"integer","minimum":1}}})
+    json!({"type":"object","required":["company_id","sales_order_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"sales_order_id":{"type":"integer","minimum":1},"series_id":{"type":"integer","minimum":1}}})
 }
 fn output() -> Value {
     json!({"type":"object"})
@@ -101,7 +104,7 @@ impl WriteHandler for Draft {
                     client,
                     scope,
                     id(input, "company_id")?,
-                    id(input, "order_id")?,
+                    id(input, "sales_order_id")?,
                     input["series_id"].as_i64(),
                 )
                 .await
@@ -123,7 +126,7 @@ impl WriteHandler for Draft {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let company = id(input, "company_id")?;
-            let order = id(input, "order_id")?;
+            let order = id(input, "sales_order_id")?;
             let series = input["series_id"].as_i64();
             let review = owner()?
                 .order_review(tx.sql(), scope, company, order, series)
@@ -145,7 +148,7 @@ impl WriteHandler for Draft {
 }
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.order_operations",Provenance {module:MODULE,source:file!(),line:line!()},&Definitions {
     operations:&[
-        Operation {key:"finance.receivables.sales_order.page",title:"Read orders waiting for invoicing",summary:"Read a bounded page of complete or incomplete confirmed sales orders without an invoice, with reasons for waiting.",keywords:&[],capability:VIEW,input:list_input,output,handler:Handler::Read(&OrderPage),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.sales_order.page",title:"Read orders waiting for invoicing",summary:"Read a bounded page of complete or incomplete confirmed sales orders without an invoice, with reasons for waiting.",keywords:&[],capability:VIEW,input:page_input,output,handler:Handler::Read(&OrderPage),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.sales_order.list",title:"List orders for invoicing",summary:"Read copied sales orders, their invoice links and reasons for waiting. Commerce need not be mounted.",keywords:&[],capability:VIEW,input:list_input,output,handler:Handler::Read(&Orders),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.sales_order.invoice",title:"Prepare an invoice from a sales order",summary:"Create one draft from all confirmed order lines with matching currency, tax codes and totals. Create a Finance customer through the normal rules if permitted. Repeating returns the same invoice, even if discarded.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_input,output,handler:Handler::SafeWrite(&Draft),channels:Channels::Every,step_up:&[]},
     ],guides:&[],
