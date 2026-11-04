@@ -60,6 +60,11 @@ impl Receivables {
         let tenant = scope.tenant();
         let old = store::find(client, SETUPS, tenant, company, None).await?;
         let mut data = v::merge(old.as_ref(), attrs, SETUPS.columns)?;
+        let layout: crate::InvoiceLayout = serde_json::from_value(if data["invoice_layout"].is_null() { json!({}) } else { data["invoice_layout"].clone() }).map_err(|_| invalid("invoice_layout", "is invalid"))?;
+        for (field, text, limit) in [("company_name", &layout.company_name, 200), ("registration_number", &layout.registration_number, 100), ("address", &layout.address, 2000), ("contact", &layout.contact, 500), ("footer", &layout.footer, 4000)] {
+            if text.chars().count() > limit || text.chars().any(|c| c.is_control() && c != '\n' && c != '\t') { return Err(invalid(&format!("invoice_layout.{field}"), format!("must be text with at most {limit} characters"))); }
+        }
+        data["invoice_layout"] = serde_json::to_value(layout).map_err(|_| Error::Internal)?;
         let chart = self.ledger.list_accounts_on(client, scope, company).await?;
         v::account(
             &mut data,
@@ -128,7 +133,7 @@ impl Receivables {
             tx.mutate(move |sql| Box::pin(async move {
                 let mut changes = Vec::new();
                 let new = store::save(sql, SETUPS, tenant, company, old.clone(), data, &mut changes).await?;
-                for field in fields {
+                for field in fields.into_iter().filter(|field| *field != "invoice_layout") {
                     store::save(sql, HISTORY, tenant, company, None, json!({"field": field, "old_value": old.as_ref().map(|o| &o[field]), "new_value": new[field], "changed_by_user_id": actor, "changed_by_impersonator_id": impersonator}), &mut changes).await?;
                 }
                 Ok((new, changes))

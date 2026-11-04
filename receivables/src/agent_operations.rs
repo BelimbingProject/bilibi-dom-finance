@@ -663,7 +663,7 @@ fn target() -> Value {
 fn configure() -> Value {
     schema(
         &[],
-        json!({"receivable_account_id":identifier(),"income_account_id":identifier()}),
+        json!({"receivable_account_id":identifier(),"income_account_id":identifier(),"invoice_layout":object(&[], json!({"company_name":string(200),"registration_number":string(100),"address":string(2000),"contact":string(500),"footer":string(4000)}))}),
     )
 }
 fn series_create() -> Value {

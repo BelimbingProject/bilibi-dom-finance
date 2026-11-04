@@ -12,6 +12,7 @@ mod opening_csv;
 mod opening_lifecycle;
 mod opening_operations;
 mod posting;
+mod pdf;
 mod records;
 mod reports;
 mod settlements;
@@ -26,9 +27,10 @@ pub use contributions::{
     POST_PAYMENTS, SUBMIT_WRITE_OFFS, VIEW,
 };
 pub use evidence::EvidencePage;
+pub use pdf::PdfFile;
 pub use records::{
     Allocation, Customer, Document, DocumentLine, DocumentQuery, Page, Payment, PaymentQuery,
-    PaymentReversal, Series, Setup, SetupChange, TaxCode, TaxLine,
+    PaymentReversal, Series, InvoiceLayout, Setup, SetupChange, TaxCode, TaxLine,
 };
 pub use reports::{
     AgedCustomer, AgedDocument, AgedReceivables, AgingBucket, AgingOptions, BalancePins,
@@ -51,11 +53,12 @@ pub const SERVICE: &str = "finance/receivables.receivables";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
+        dependencies: &["base/artifacts", "base/media", "base/settings", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
         migrations: &[("finance-receivables-001-receivables", include_str!("../migrations/001-receivables.sql")), ("finance-receivables-002-write-offs", include_str!("../migrations/002-write-offs.sql")), ("finance-receivables-003-core-company", include_str!("../migrations/003-core-company.sql")), ("finance-receivables-004-opening-items", include_str!("../migrations/004-opening-items.sql")),
             ("finance-receivables-005-opening-lifecycle", include_str!("../migrations/005-opening-lifecycle.sql")), ("finance-receivables-006-party-facts", include_str!("../migrations/006-party-facts.sql")), ("finance-receivables-007-core-party-code", include_str!("../migrations/007-core-party-code.sql")),
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
-            ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql"))],
+            ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql")),
+            ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -63,11 +66,14 @@ inventory::submit! {
                 attachments: services.get(bilibi_finance_attachments::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
                 records: services.get(bilibi_records::SERVICE)?,
+                artifacts: services.get("base/artifacts.store")?,
+                media: services.get(bilibi_media::SERVICE)?,
+                settings: services.get("base/settings.store")?,
             });
             agent_operations::bind(receivables.clone())?;
             opening_operations::bind(receivables.clone())?;
             Ok(receivables)
-        }}, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+        }}, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             plans: services.get("base/agent_api.plans")?,
@@ -107,6 +113,10 @@ pub enum ReceivableError {
     AlreadyReversed,
     #[error(transparent)]
     Attachment(#[from] bilibi_finance_attachments::AttachmentError),
+    #[error("PDF could not be generated: {0}")]
+    Pdf(&'static str),
+    #[error("Only issued documents can be printed")]
+    NotIssued,
     #[error("Invalid option")]
     InvalidOption,
     #[error("Invalid input")]
@@ -158,6 +168,9 @@ pub(crate) async fn authorize(
 /// unknown fields are ignored, and omitted fields preserve existing values.
 pub struct Receivables {
     db: Db,
+    artifacts: Arc<bilibi_artifacts::Artifacts>,
+    media: Arc<bilibi_media::Media>,
+    settings: Arc<bilibi_settings::Settings>,
     ledger: Arc<Ledger>,
     attachments: Arc<Attachments>,
     parties: Arc<bilibi_tenancy::PartyProofs>,
