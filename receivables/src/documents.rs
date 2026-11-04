@@ -23,6 +23,7 @@ pub(super) struct Prepared {
 
 // A single statement gives headers and children the same MVCC snapshot.
 pub(crate) const READ: &str = "SELECT to_jsonb(d) || jsonb_build_object(
+ 'sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),
  'settlements',COALESCE((SELECT jsonb_agg(to_jsonb(e)-'review' ORDER BY e.settlement_number) FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=d.id OR e.target_document_id=d.id)),'[]'::jsonb),
  'opening',(SELECT i.source_facts || jsonb_build_object('source_reference',b.source_reference,'conversion_date',b.conversion_date::text,'batch_id',b.id,'replaced_by_batch_id',(SELECT x.batch_id FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id)) FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.id=i.batch_id AND b.tenant_id=$1 AND b.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),
  'write_offs',COALESCE((SELECT jsonb_agg(to_jsonb(w) || jsonb_build_object('events',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM finance_receivables_write_off_events e WHERE e.write_off_id=w.id AND e.tenant_id=$1 AND e.company_id=$2),'[]'::jsonb)) ORDER BY w.id) FROM finance_receivables_write_offs w WHERE w.document_id=d.id AND w.tenant_id=$1 AND w.company_id=$2),'[]'::jsonb),
@@ -125,12 +126,12 @@ impl Receivables {
             || query
                 .source
                 .as_deref()
-                .is_some_and(|source| !matches!(source, "ordinary" | "opening"))
+                .is_some_and(|source| !matches!(source, "ordinary" | "opening" | "sales_order"))
         {
             return Err(R::InvalidOption);
         }
         let sql = format!(
-            "{READ} AND d.id>$3 AND ($4::text IS NULL OR d.kind=$4) AND ($5::text IS NULL OR d.status=$5) AND ($6::bigint IS NULL OR d.customer_id=$6) AND ($8::text IS NULL OR EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id)=($8='opening')) ORDER BY d.id LIMIT $7"
+            "{READ} AND d.id>$3 AND ($4::text IS NULL OR d.kind=$4) AND ($5::text IS NULL OR d.status=$5) AND ($6::bigint IS NULL OR d.customer_id=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7"
         );
         client
             .query(

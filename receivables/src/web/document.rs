@@ -466,6 +466,12 @@ impl Document {
                 pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
             ));
         }
+        if let Some(order) = &d.sales_order {
+            items.push(f::fact("Sales order", &order.order_number));
+            if order.status == "cancelled" {
+                items.push(f::fact("Order status", "Cancelled — review this invoice."));
+            }
+        }
         if let Some(opening) = &d.opening {
             items.push(f::fact(
                 "Source item kind",

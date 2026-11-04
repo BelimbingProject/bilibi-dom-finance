@@ -81,6 +81,8 @@ pub struct TaxLine {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     #[serde(default)]
+    pub sales_order: Option<crate::SalesOrder>,
+    #[serde(default)]
     pub settlements: Vec<serde_json::Value>,
     #[serde(default)]
     pub opening: Option<serde_json::Value>,
@@ -137,6 +139,8 @@ pub struct Document {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DocumentPageRow {
+    #[serde(default)]
+    pub sales_order: Option<crate::SalesOrder>,
     pub opening: bool,
     pub id: i64,
     pub kind: String,

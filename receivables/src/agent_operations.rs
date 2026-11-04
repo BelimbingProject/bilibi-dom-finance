@@ -294,7 +294,7 @@ fn decimal_text(value: &mut Value) {
 // The pinned engine previews every step before running any. Fence again at
 // execution so earlier plan steps cannot silently change later reviewed facts.
 // Only hashes live in this transaction-local FIFO, never inputs or credentials.
-async fn fence(
+pub(super) async fn fence(
     client: &dyn OperationClient,
     facts: &Value,
     consume: bool,
@@ -544,7 +544,7 @@ impl ReadHandler for Read {
                             })
                             || customer.is_some_and(|value| value <= 0)
                             || source.is_some_and(|value| {
-                                !matches!(value, "ordinary" | "opening")
+                                !matches!(value, "ordinary" | "opening" | "sales_order")
                             })
                             || !matches!(sort, "number" | "issue_date" | "due_date" | "total")
                             || !matches!(direction, "asc" | "desc")
@@ -554,7 +554,7 @@ impl ReadHandler for Read {
                         {
                             return Err(ReceivableError::InvalidOption);
                         }
-                        let filters_sql = " FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND ($3::text IS NULL OR d.kind=$3) AND ($4::text IS NULL OR ($4='unpaid' AND d.kind='invoice' AND d.status='issued' AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) AND finance_receivables_outstanding(d.id)>0) OR ($4<>'unpaid' AND d.status=$4)) AND ($5::bigint IS NULL OR d.customer_id=$5) AND ($6::text IS NULL OR EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id)=($6='opening'))";
+                        let filters_sql = " FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND ($3::text IS NULL OR d.kind=$3) AND ($4::text IS NULL OR ($4='unpaid' AND d.kind='invoice' AND d.status='issued' AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) AND finance_receivables_outstanding(d.id)>0) OR ($4<>'unpaid' AND d.status=$4)) AND ($5::bigint IS NULL OR d.customer_id=$5) AND ($6::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$6)";
                         let filter_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] =
                             [&tenant, &company, &kind, &status, &customer, &source];
                         let mut matching_customers = Vec::new();
@@ -591,7 +591,7 @@ impl ReadHandler for Read {
                             ("number", "asc") => "d.id ASC",
                             _ => "d.id DESC",
                         };
-                        let rows_sql = format!("SELECT jsonb_build_object('opening',EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),'id',d.id,'kind',d.kind,'status',d.status,'customer_id',d.customer_id,'issue_date',d.issue_date,'due_date',d.due_date,'description',d.description,'total',d.total,'outstanding',CASE WHEN EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) THEN 0 WHEN d.kind IN ('invoice','opening_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,'document_reference',d.document_reference,'party_code',d.party_code,'party_name',d.party_name){where_sql} ORDER BY {order} LIMIT $9 OFFSET $10");
+                        let rows_sql = format!("SELECT jsonb_build_object('sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),'opening',EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),'id',d.id,'kind',d.kind,'status',d.status,'customer_id',d.customer_id,'issue_date',d.issue_date,'due_date',d.due_date,'description',d.description,'total',d.total,'outstanding',CASE WHEN EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) THEN 0 WHEN d.kind IN ('invoice','opening_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,'document_reference',d.document_reference,'party_code',d.party_code,'party_name',d.party_name){where_sql} ORDER BY {order} LIMIT $9 OFFSET $10");
                         let mut row_params = params.to_vec();
                         row_params.push(&page_size);
                         row_params.push(&offset);
@@ -606,7 +606,7 @@ impl ReadHandler for Read {
                         let source = input["source"].as_str();
                         let (sql,params): (String,Vec<&(dyn tokio_postgres::types::ToSql+Sync)>) = match self {
                             Self::History => (format!("SELECT to_jsonb(r) FROM {} r WHERE tenant_id=$1 AND company_id=$2 AND id>$3 ORDER BY id LIMIT $4",HISTORY.name),vec![&tenant,&company,&after,&(limit)]),
-                            Self::Documents => (format!("{} AND d.id>$3 AND ($4::bigint IS NULL OR d.customer_id=$4) AND ($5::text IS NULL OR d.kind=$5) AND ($6::text IS NULL OR d.status=$6) AND ($8::text IS NULL OR EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id)=($8='opening')) ORDER BY d.id LIMIT $7",documents::READ),vec![&tenant,&company,&after,&customer,&kind,&status,&limit,&source]),
+                            Self::Documents => (format!("{} AND d.id>$3 AND ($4::bigint IS NULL OR d.customer_id=$4) AND ($5::text IS NULL OR d.kind=$5) AND ($6::text IS NULL OR d.status=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7",documents::READ),vec![&tenant,&company,&after,&customer,&kind,&status,&limit,&source]),
                             _ => (format!("{} AND p.id>$3 AND ($4::bigint IS NULL OR p.customer_id=$4) ORDER BY p.id LIMIT $5",posting::PAYMENT_READ),vec![&tenant,&company,&after,&customer,&limit]),
                         };
                         let records:Vec<Value> = client.query(&sql,&params).await?.iter().map(|r| {
@@ -813,7 +813,7 @@ fn history() -> Value {
 }
 fn documents() -> Value {
     let mut p = page_fields();
-    p["source"] = choice(&["ordinary", "opening"]);
+    p["source"] = choice(&["ordinary", "opening", "sales_order"]);
     p["kind"] = choice(&["invoice", "credit_note", "opening_credit"]);
     p["status"] = choice(&["draft", "issued", "discarded"]);
     p["customer_id"] = identifier();
@@ -823,7 +823,7 @@ fn document_page() -> Value {
     schema(
         &[],
         json!({
-            "source":choice(&["ordinary","opening"]),
+            "source":choice(&["ordinary","opening","sales_order"]),
             "kind":choice(&["invoice","credit_note","opening_credit"]),
             "status":choice(&["draft","issued","unpaid","discarded"]),
             "customer_id":identifier(),

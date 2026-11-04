@@ -11,6 +11,8 @@ mod opening;
 mod opening_csv;
 mod opening_lifecycle;
 mod opening_operations;
+mod order_operations;
+mod orders;
 mod pdf;
 mod posting;
 mod records;
@@ -27,6 +29,7 @@ pub use contributions::{
     POST_PAYMENTS, SUBMIT_WRITE_OFFS, VIEW,
 };
 pub use evidence::EvidencePage;
+pub use orders::SalesOrder;
 pub use pdf::PdfFile;
 pub use records::{
     Allocation, Customer, Document, DocumentLine, DocumentQuery, InvoiceLayout, Page, Payment,
@@ -53,12 +56,13 @@ pub const SERVICE: &str = "finance/receivables.receivables";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/artifacts", "base/media", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
+        dependencies: &["base/artifacts", "base/media", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
         migrations: &[("finance-receivables-001-receivables", include_str!("../migrations/001-receivables.sql")), ("finance-receivables-002-write-offs", include_str!("../migrations/002-write-offs.sql")), ("finance-receivables-003-core-company", include_str!("../migrations/003-core-company.sql")), ("finance-receivables-004-opening-items", include_str!("../migrations/004-opening-items.sql")),
             ("finance-receivables-005-opening-lifecycle", include_str!("../migrations/005-opening-lifecycle.sql")), ("finance-receivables-006-party-facts", include_str!("../migrations/006-party-facts.sql")), ("finance-receivables-007-core-party-code", include_str!("../migrations/007-core-party-code.sql")),
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
             ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql")),
-            ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql"))],
+            ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql")),
+            ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -71,9 +75,12 @@ inventory::submit! {
                 settings: services.get("base/settings.store")?,
             });
             agent_operations::bind(receivables.clone())?;
+            order_operations::bind(receivables.clone())?;
             opening_operations::bind(receivables.clone())?;
             Ok(receivables)
-        }}, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+        }}, Service { id: orders::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
+            receivables: services.get(SERVICE)?, schedule: services.get("base/schedule.store")?,
+        })))) }, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             plans: services.get("base/agent_api.plans")?,
