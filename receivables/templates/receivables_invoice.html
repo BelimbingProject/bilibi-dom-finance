@@ -16,6 +16,7 @@ footer { margin-top: 28px; border-top: 1px solid #ccc; padding-top: 14px; font-s
 </style></head><body>
 <header>{% if !logo.is_empty() %}<img src="{{ logo }}" alt="Company logo">{% endif %}<div><h2>{{ company_name }}</h2><div class="block">{{ layout.registration_number }}</div><div class="block">{{ layout.address }}</div><div class="block">{{ layout.contact }}</div></div></header>
 <h1>{{ title }}</h1><strong>{{ reference }}</strong>
+{% if !credited_reference.is_empty() %}<div>Credits invoice: {{ credited_reference }}</div>{% endif %}
 <div class="details"><div><strong>Bill to</strong><div class="block">{{ document.party_name.as_deref().unwrap_or("") }}
 {{ document.party_registration_identifier.as_deref().unwrap_or("") }}
 {{ document.party_line1.as_deref().unwrap_or("") }}

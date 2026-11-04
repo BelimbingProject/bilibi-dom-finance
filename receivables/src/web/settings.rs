@@ -524,7 +524,8 @@ impl Settings {
             let mut field =
                 InlineField::new(format!("receivables-layout-{key}"), key, label, value)
                     .version(0)
-                    .status(self.statuses.get(key));
+                    .status(self.statuses.get(key))
+                    .allow_empty();
             field.save_event = "save_layout".into();
             field.id_value = "layout".into();
             if !self.can_manage || self.setup.is_none() {
@@ -536,13 +537,13 @@ impl Settings {
             ));
         }
         items.push(f::fact_html(
-            "Company logo",
+            "Invoice logo",
             f::link(
                 &format!(
-                    "/system/settings?company={}&q=Company+image",
+                    "/system/settings?company={}&q=Invoice+logo",
                     Pages::company(scope).unwrap_or(0)
                 ),
-                "Use the company image (set by your administrator)",
+                "Upload or remove the invoice logo (administrator)",
             )?,
         ));
         body.push(&render(Card {
@@ -1322,15 +1323,7 @@ impl Settings {
                     return Err(Error::Invalid);
                 }
                 let value = v["value"].as_str().ok_or(Error::Invalid)?;
-                let mut layout = serde_json::to_value(
-                    self.setup
-                        .as_ref()
-                        .ok_or(Error::Invalid)?
-                        .invoice_layout
-                        .clone(),
-                )
-                .map_err(|_| Error::Internal)?;
-                layout[key] = json!(value);
+                let layout = json!({key: value});
                 let written = self
                     .pages
                     .write(

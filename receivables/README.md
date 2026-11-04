@@ -244,9 +244,9 @@ Readers can open the opening dialog to inspect retained source batches. The impo
 
 An issued invoice or credit note has **Print / download PDF** on its document page. The PDF opens in the browser for printing or saving. Drafts and opening balances cannot be printed as invoices.
 
-Set the company name, registration number, address, contact details and footer under **Invoice layout** on Receivables settings. Blank fields are omitted; a blank company name uses the current company name. The logo uses the company image, uploaded by an administrator through the linked shared image editor. Images stay in Base Media and are embedded in the PDF; remote images and user HTML are never fetched or rendered.
+Set the company name, registration number, address, contact details and footer under **Invoice layout** on Receivables settings. Blank fields are omitted; a blank company name uses the current company name. The invoice logo is a company-scoped Receivables setting, uploaded by an administrator through the linked shared image editor. Images stay in Base Media and are embedded in the PDF; remote images and user HTML are never fetched or rendered.
 
-The A4 template is `templates/receivables_invoice.html`. Base Artifacts renders and stores it with `render_inline`; the document remains the source of truth. Each download reauthorizes the current company and regenerates from the frozen customer, lines and totals with the current layout. Layout changes are audited with the setup row; default-account history remains about accounts. Configure Base Artifacts storage and Chromium as described in the Platform Artifacts README before printing.
+The A4 template is `templates/receivables_invoice.html`. Base Artifacts renders and stores it with `render_inline`; the document remains the source of truth. Each download reauthorizes the current company and regenerates from the frozen customer, lines and totals with the current layout. Text layout changes are audited with the setup row, and logo changes through Base Settings; default-account history remains about accounts. Configure Base Artifacts storage and Chromium as described in the Platform Artifacts README before printing.
 
 E-invoice authority identifiers and QR codes remain in the e-invoice PDF. Combining them needs a documented read seam without adding a Receivables-to-Einvoice dependency.
 

@@ -82,6 +82,14 @@ impl Receivables {
         {
             return Err(ReceivableError::NotIssued);
         }
+        let credited_reference = if let Some(original) = document.credited_document_id {
+            self.get_document(scope, company, original)
+                .await?
+                .document_reference
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let layout = self.get_setup(scope, company).await?.invoice_layout;
         let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company, VIEW).await?;
@@ -105,7 +113,7 @@ impl Receivables {
                 &**client,
                 scope,
                 bilibi_settings::Target::Company(company_id),
-                bilibi_company::IDENTITY_IMAGE_KEY,
+                crate::configuration::INVOICE_LOGO,
             )
             .await?
             .value
@@ -115,21 +123,21 @@ impl Receivables {
                 .media
                 .stream_url(&**client, scope, id)
                 .await
-                .map_err(|_| ReceivableError::Pdf("company_image_unavailable"))?;
+                .map_err(|_| ReceivableError::Pdf("invoice_logo_unavailable"))?;
             let token = url
                 .split_once("?token=")
-                .ok_or(ReceivableError::Pdf("company_image_unavailable"))?
+                .ok_or(ReceivableError::Pdf("invoice_logo_unavailable"))?
                 .1;
             let image = self
                 .media
                 .read_signed_asset(&**client, id, token)
                 .await
-                .map_err(|_| ReceivableError::Pdf("company_image_unavailable"))?;
+                .map_err(|_| ReceivableError::Pdf("invoice_logo_unavailable"))?;
             if !matches!(
                 image.mime_type.as_deref().unwrap_or(""),
                 "image/png" | "image/jpeg" | "image/webp"
             ) {
-                return Err(ReceivableError::Pdf("company_image_invalid"));
+                return Err(ReceivableError::Pdf("invoice_logo_invalid"));
             }
             logo = format!(
                 "data:{};base64,{}",
@@ -156,6 +164,7 @@ impl Receivables {
             .collect();
         let template = Invoice {
             title,
+            credited_reference: &credited_reference,
             reference: &reference,
             company_name: if layout.company_name.is_empty() {
                 &name
@@ -244,6 +253,7 @@ struct Row {
 #[derive(Template)]
 #[template(path = "receivables_invoice.html")]
 struct Invoice<'a> {
+    credited_reference: &'a str,
     title: &'a str,
     reference: &'a str,
     company_name: &'a str,
