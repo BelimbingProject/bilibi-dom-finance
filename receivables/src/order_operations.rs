@@ -25,13 +25,13 @@ fn id(input: &Value, key: &str) -> bilibi_agent_api::Result<i64> {
         .ok_or(Error::Invalid.into())
 }
 fn list_input() -> Value {
-    json!({"type":"object","required":["company_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"after":{"type":"integer","minimum":0},"page_size":{"type":"integer","minimum":1,"maximum":100}}})
+    json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1},"after":{"type":"integer","minimum":0},"page_size":{"type":"integer","minimum":1,"maximum":100}}})
 }
 fn page_input() -> Value {
-    json!({"type":"object","required":["company_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"page":{"type":"integer","minimum":1}}})
+    json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1},"page":{"type":"integer","minimum":1}}})
 }
 fn draft_input() -> Value {
-    json!({"type":"object","required":["company_id","sales_order_id"],"additionalProperties":false,"properties":{"company_id":{"type":"integer","minimum":1},"sales_order_id":{"type":"integer","minimum":1},"series_id":{"type":"integer","minimum":1}}})
+    json!({"type":"object","required":["company_id","sales_order_id"],"properties":{"company_id":{"type":"integer","minimum":1},"sales_order_id":{"type":"integer","minimum":1},"series_id":{"type":"integer","minimum":1}}})
 }
 fn output() -> Value {
     json!({"type":"object"})
