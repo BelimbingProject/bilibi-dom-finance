@@ -141,6 +141,9 @@ impl Receivables {
     ) -> Result<PreparedIssue> {
         self.join(client, scope, company, ISSUE).await?;
         let tenant = scope.tenant();
+        if client.query_opt("SELECT 1 FROM finance_receivables_sales_orders WHERE tenant_id=$1 AND company_id=$2 AND document_id=$3 AND status='cancelled'", &[&tenant,&company,&id]).await?.is_some() {
+            return Err(invalid("base", "The sales order was cancelled. Discard this draft or review the order before invoicing."));
+        }
         self.ledger.get_book_on(client, scope, company).await?;
         let setup = store::find(client, SETUPS, tenant, company, None)
             .await?

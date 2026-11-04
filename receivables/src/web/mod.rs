@@ -194,6 +194,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, Provenance { module: 
         ("save_customer", "finance.receivables.customer.update"),
         ("record_relationship", "core.company.relationship.assign"),
         ("create_draft", "finance.receivables.draft.create"),
+        ("invoice_order", "finance.receivables.sales_order.invoice"),
         ("save_draft", "finance.receivables.draft.update"),
         ("save_lines", "finance.receivables.draft.update"),
         ("discard", "finance.receivables.draft.discard"),

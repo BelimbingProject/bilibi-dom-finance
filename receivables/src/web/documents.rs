@@ -14,7 +14,7 @@ use bilibi_ui::{
     params, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton,
     EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
     ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SortDir, StatusKind, TableEmpty, ToolbarControl,
+    SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{
@@ -23,6 +23,16 @@ use std::{
 };
 
 const SIZES: [u64; 3] = [25, 50, 100];
+static ORDER_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        param_prefix: "order_".into(),
+        page_sizes: vec![25],
+        omit_defaults: true,
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("order invoice list")
+});
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
@@ -45,7 +55,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             ("customer".into(), Filter::string("")),
             (
                 "source".into(),
-                Filter::one_of(&["", "ordinary", "opening"], ""),
+                Filter::one_of(&["", "ordinary", "opening", "sales_order"], ""),
             ),
         ]
         .into(),
@@ -76,6 +86,11 @@ pub(super) struct Documents {
     list: ListState,
     columns: ListColumns,
     documents: Vec<DocumentPageRow>,
+    orders: Vec<crate::SalesOrder>,
+    order_list: ListState,
+    order_total: u64,
+    order_columns: ListColumns,
+    order_errors: BTreeMap<i64, Errors>,
     customers: Vec<Customer>,
     series: Vec<Series>,
     figures: f::Figures,
@@ -110,6 +125,19 @@ impl Documents {
             columns: ListColumns::mount("receivables-invoices-table", columns)
                 .map_err(|_| Error::Internal)?,
             documents: vec![],
+            orders: vec![],
+            order_list: ListState::parse(query, ORDER_SPEC.clone()).map_err(|_| Error::Invalid)?,
+            order_total: 0,
+            order_columns: ListColumns::mount(
+                "receivables-order-invoices",
+                vec![
+                    BuiltinColumn::new("number", "Order"),
+                    BuiltinColumn::new("reason", "What needs attention"),
+                    BuiltinColumn::new("action", ""),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
+            order_errors: BTreeMap::new(),
             customers: vec![],
             series: vec![],
             figures: f::Figures::default(),
@@ -131,6 +159,7 @@ impl Documents {
 
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         self.load_page(scope).await?;
+        self.load_orders(scope).await?;
         self.load_choices(scope).await
     }
 
@@ -169,6 +198,137 @@ impl Documents {
         self.total = page["total"].as_u64().ok_or(Error::Internal)?;
         self.list.page = page["page"].as_u64().ok_or(Error::Internal)?;
         Ok(())
+    }
+
+    async fn load_orders(&mut self, scope: &Scope) -> Result<()> {
+        let result = self
+            .pages
+            .read(
+                scope,
+                "finance.receivables.sales_order.page",
+                json!({"page":self.order_list.page}),
+            )
+            .await?;
+        self.orders =
+            serde_json::from_value(result["records"].clone()).map_err(|_| Error::Internal)?;
+        self.order_total = result["total"].as_u64().ok_or(Error::Internal)?;
+        self.order_list.page = result["page"].as_u64().ok_or(Error::Internal)?;
+        Ok(())
+    }
+
+    fn order_table(&mut self) -> Result<Html> {
+        if self.orders.is_empty() {
+            return Ok(Html::EMPTY);
+        }
+        let mut body = render(SectionHeading {
+            title: "Orders waiting for invoicing",
+            description: "",
+            ..SectionHeading::default()
+        })?;
+        let mut rows = Vec::new();
+        for order in &self.orders {
+            let mut action = Html::EMPTY;
+            if let Some(document) = order.document_id {
+                action = render(RecordLink {
+                    workspace: self.framed,
+                    kind: crate::MODULE,
+                    record_id: &document.to_string(),
+                    href: &format!("{INVOICES}/{document}"),
+                    body: Html::text("Open invoice"),
+                    class: "",
+                })?;
+            } else if self.can_add && order.status == "confirmed" {
+                let mut fields = render(
+                    Field::in_form("order", "sales_order_id")
+                        .id(format!("order-{}-id", order.id))
+                        .kind(InputKind::Hidden)
+                        .value(order.id.to_string()),
+                )?;
+                let eligible: Vec<_> = self
+                    .series
+                    .iter()
+                    .filter(|s| s.kind == "invoice" && s.active)
+                    .collect();
+                if eligible.len() != 1 {
+                    fields.push(&render(
+                        Field::in_form("order", "series_id")
+                            .id(format!("order-{}-series", order.id))
+                            .label("Invoice series")
+                            .kind(InputKind::Select)
+                            .prompt("Choose a series")
+                            .options(
+                                eligible
+                                    .iter()
+                                    .map(|s| Choice::new(&s.name, s.id.to_string()))
+                                    .collect(),
+                            )
+                            .errors(
+                                self.order_errors
+                                    .get(&order.id)
+                                    .map(|e| e.under("series_id", "Invoice series"))
+                                    .unwrap_or_default(),
+                            ),
+                    )?);
+                }
+                let errors = self.order_errors.get(&order.id);
+                if let Some(errors) = errors {
+                    fields.push(&render(
+                        errors.summary(&format!("order-{}-errors", order.id), &[]),
+                    )?);
+                }
+                let button = render(Button {
+                    button_type: "submit",
+                    body: Html::text("Prepare invoice"),
+                    ..Button::default()
+                })?;
+                action = render(Form {
+                    id: &format!("order-{}-invoice-form", order.id),
+                    event: "invoice_order",
+                    body: fields,
+                    actions: button,
+                    ..Form::default()
+                })?;
+            }
+            rows.push(
+                FlexRow::new(order.id.to_string())
+                    .cell("number", Cell::text(&order.order_number))
+                    .cell(
+                        "status",
+                        Cell::text(if order.status == "cancelled" {
+                            "Cancelled"
+                        } else if order.document_id.is_some() {
+                            "Draft created"
+                        } else {
+                            "Waiting for invoicing"
+                        }),
+                    )
+                    .cell("reason", Cell::text(&order.waiting_reason))
+                    .slot("action", action),
+            );
+        }
+        self.order_columns.load(&self.orders, |o| o.id.to_string());
+        let mut table = FlexTable::new(
+            "receivables-order-invoices",
+            self.order_columns.flex_columns(),
+            rows,
+        );
+        table.zoom = self.order_columns.zoom;
+        table.event = "order_grid";
+        table.suggestions = self.order_columns.flex_suggestions();
+        table.add_query = &self.order_columns.add_query;
+        table.framed = false;
+        table.caption = "Sales orders for invoicing";
+        body.push(&render(table)?);
+        body.push(&render(Pagination {
+            page_event: "order_page",
+            filters_event: "order_filter",
+            ..Pagination::new(
+                "receivables-orders-pagination",
+                PageCounts::new(self.order_list.page, 25, self.order_total),
+                &[25],
+            )
+        })?);
+        Ok(body)
     }
 
     async fn load_choices(&mut self, scope: &Scope) -> Result<()> {
@@ -305,6 +465,7 @@ impl Documents {
                             ("All sources", ""),
                             ("Ordinary", "ordinary"),
                             ("Opening", "opening"),
+                            ("Sales order", "sales_order"),
                         ]
                         .map(|(l, v)| Choice::new(l, v))
                         .to_vec(),
@@ -374,7 +535,18 @@ impl Documents {
                 )
                 .cell(
                     "source",
-                    Cell::text(if d.opening { "Opening" } else { "Ordinary" }),
+                    Cell::text(
+                        d.sales_order
+                            .as_ref()
+                            .map(|o| format!("Sales order {}", o.order_number))
+                            .unwrap_or_else(|| {
+                                if d.opening {
+                                    "Opening".into()
+                                } else {
+                                    "Ordinary".into()
+                                }
+                            }),
+                    ),
                 )
                 .slot("status", f::status_badge(&d.status)?),
             );
@@ -417,6 +589,7 @@ impl Documents {
             ..Header::default()
         })?;
         body.push(&content);
+        body.push(&self.order_table()?);
         let modal = if let Some(opening) = &mut self.opening {
             Some(opening.body(scope).await?)
         } else {
@@ -601,6 +774,56 @@ impl Documents {
     ) -> Result<LiveBody> {
         let mut redirect = None;
         match v["type"].as_str().ok_or(Error::Invalid)? {
+            "invoice_order" => {
+                let form = params::form_values(v, "order");
+                let order = form
+                    .get("sales_order_id")
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .ok_or(Error::Invalid)?;
+                let mut input = json!({"sales_order_id":order});
+                if let Some(series) = params::form_values(v, "order")
+                    .get("series_id")
+                    .and_then(|s| s.parse::<i64>().ok())
+                {
+                    input["series_id"] = json!(series);
+                }
+                match self
+                    .pages
+                    .write(
+                        scope,
+                        credential,
+                        "invoice_order",
+                        "finance.receivables.sales_order.invoice",
+                        input,
+                    )
+                    .await?
+                {
+                    Written::Done(record) => {
+                        self.order_errors.remove(&order);
+                        self.flash
+                            .set(StatusKind::Success, "Invoice draft prepared.");
+                        if let Some(id) = record["id"].as_i64() {
+                            redirect = Some(format!("{INVOICES}/{id}"));
+                        }
+                        self.load(scope).await?;
+                    }
+                    Written::Invalid(fields) => {
+                        self.order_errors.insert(order, Errors(fields));
+                    }
+                    Written::Refused(message) => self
+                        .flash
+                        .set(StatusKind::Error, super::worded(message, super::DENIED)),
+                }
+            }
+            "order_page" => {
+                self.order_list.put_page(v["page"].as_str());
+                self.load_orders(scope).await?;
+            }
+            "order_filter" => {
+                self.order_list
+                    .apply_filters(&params::form_values(v, "filters"));
+                self.load_orders(scope).await?;
+            }
             "clear-flash" => self.flash.dismiss(v),
             "filter" => {
                 self.list.apply_filters(&params::form_values(v, "filters"));
@@ -609,6 +832,9 @@ impl Documents {
             "page" => {
                 self.list.put_page(v["page"].as_str());
                 self.load_page(scope).await?;
+            }
+            "order_grid" => {
+                self.order_columns.handle(&params::string_values(v));
             }
             "grid" => {
                 if let ColumnsOutcome::Sort(column) = self.columns.handle(&params::string_values(v))
@@ -738,7 +964,11 @@ impl Documents {
         let flash = redirect.is_some().then(|| self.flash.0.take()).flatten();
         Ok(LiveBody {
             html: self.body(scope).await?,
-            query: self.list.to_params(),
+            query: {
+                let mut query = self.list.to_params();
+                query.extend(self.order_list.to_params());
+                query
+            },
             redirect,
             flash,
             ..LiveBody::default()
@@ -789,13 +1019,20 @@ impl LiveState<Scope, Error> for Documents {
                 LiveInput::Params(values) => {
                     self.list =
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
+                    self.order_list =
+                        ListState::parse(values, ORDER_SPEC.clone()).map_err(|_| Error::Invalid)?;
                     self.load_page(r.scope).await?;
+                    self.load_orders(r.scope).await?;
                 }
                 LiveInput::Event(_) => {}
             }
             Ok(LiveBody {
                 html: self.body(r.scope).await?,
-                query: self.list.to_params(),
+                query: {
+                    let mut query = self.list.to_params();
+                    query.extend(self.order_list.to_params());
+                    query
+                },
                 ..LiveBody::default()
             })
         })
