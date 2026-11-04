@@ -1,10 +1,10 @@
 //! Bilimbi Receivables.Configuration and Customers: setup history and code
 //! lists. All mutations hold the company lock and audit persisted row images.
 use crate::{
-    authorize, companies, invalid,
-    store::{self, Table, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX},
-    validation as v, Customer, Page, ReceivableError as R, Receivables, Result, Series, Setup,
-    SetupChange, TaxCode, MANAGE_CUSTOMERS, MANAGE_SETUP, VIEW,
+    Customer, MANAGE_CUSTOMERS, MANAGE_SETUP, Page, ReceivableError as R, Receivables, Result,
+    Series, Setup, SetupChange, TaxCode, VIEW, authorize, companies, invalid,
+    store::{self, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX, Table},
+    validation as v,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
@@ -12,7 +12,7 @@ use bilibi_finance_ledger::{Account, AccountType};
 use bilibi_tenancy::Scope;
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(super) struct Prepared {
     pub before: Option<Value>,
@@ -60,9 +60,30 @@ impl Receivables {
         let tenant = scope.tenant();
         let old = store::find(client, SETUPS, tenant, company, None).await?;
         let mut data = v::merge(old.as_ref(), attrs, SETUPS.columns)?;
-        let layout: crate::InvoiceLayout = serde_json::from_value(if data["invoice_layout"].is_null() { json!({}) } else { data["invoice_layout"].clone() }).map_err(|_| invalid("invoice_layout", "is invalid"))?;
-        for (field, text, limit) in [("company_name", &layout.company_name, 200), ("registration_number", &layout.registration_number, 100), ("address", &layout.address, 2000), ("contact", &layout.contact, 500), ("footer", &layout.footer, 4000)] {
-            if text.chars().count() > limit || text.chars().any(|c| c.is_control() && c != '\n' && c != '\t') { return Err(invalid(&format!("invoice_layout.{field}"), format!("must be text with at most {limit} characters"))); }
+        let layout: crate::InvoiceLayout =
+            serde_json::from_value(if data["invoice_layout"].is_null() {
+                json!({})
+            } else {
+                data["invoice_layout"].clone()
+            })
+            .map_err(|_| invalid("invoice_layout", "is invalid"))?;
+        for (field, text, limit) in [
+            ("company_name", &layout.company_name, 200),
+            ("registration_number", &layout.registration_number, 100),
+            ("address", &layout.address, 2000),
+            ("contact", &layout.contact, 500),
+            ("footer", &layout.footer, 4000),
+        ] {
+            if text.chars().count() > limit
+                || text
+                    .chars()
+                    .any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(invalid(
+                    &format!("invoice_layout.{field}"),
+                    format!("must be text with at most {limit} characters"),
+                ));
+            }
         }
         data["invoice_layout"] = serde_json::to_value(layout).map_err(|_| Error::Internal)?;
         let chart = self.ledger.list_accounts_on(client, scope, company).await?;

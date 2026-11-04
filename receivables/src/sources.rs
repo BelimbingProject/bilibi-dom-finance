@@ -3,8 +3,8 @@
 use crate::{MODULE, VIEW};
 use bilibi_database::Error;
 use bilibi_finance_attachments::{
-    on_source_client, Source, SourceClient, SourceDefinition, SourceDocument, SourceFuture,
-    SourceRefusal, SOURCES,
+    SOURCES, Source, SourceClient, SourceDefinition, SourceDocument, SourceFuture, SourceRefusal,
+    on_source_client,
 };
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_tenancy::Scope;

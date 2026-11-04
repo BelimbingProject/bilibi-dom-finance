@@ -1,17 +1,17 @@
 //! Bilimbi Receivables.Documents, NR1: unnumbered drafts with whole-line
 //! replacement, per-line half-up tax, and a kept discard (never deletion).
 use crate::{
+    Document, DocumentQuery, MANAGE_DOCUMENTS, ReceivableError as R, Receivables, Result, VIEW,
     authorize, invalid,
     store::{self, CUSTOMERS, DOCUMENTS, LINES, SERIES, SETUPS, TAX, TAX_LINES},
-    validation as v, Document, DocumentQuery, ReceivableError as R, Receivables, Result,
-    MANAGE_DOCUMENTS, VIEW,
+    validation as v,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_finance_ledger::{Account, AccountType, MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use rust_decimal::{Decimal, RoundingStrategy};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub(super) struct Prepared {

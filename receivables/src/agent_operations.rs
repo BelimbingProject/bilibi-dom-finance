@@ -1,13 +1,13 @@
 //! H2 reach for Bilimbi.Finance.Receivables's facade-only actions. Transport,
 //! consent codes and the outer audited commit belong to Base Agent API.
 use super::*;
-use crate::store::{self, Table, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX};
+use crate::store::{self, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX, Table};
 use bilibi_agent_api::{
-    Channels, Definitions, Guide, Handler, Operation, OperationClient, OperationFuture,
-    ReadHandler, WriteHandler, DEFINITIONS,
+    Channels, DEFINITIONS, Definitions, Guide, Handler, Operation, OperationClient,
+    OperationFuture, ReadHandler, WriteHandler,
 };
 use bilibi_module_registry::{Contribution, Provenance, RegistryError};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::OnceLock};
 
 static OWNER: OnceLock<Arc<Receivables>> = OnceLock::new();

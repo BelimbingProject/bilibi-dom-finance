@@ -1,15 +1,17 @@
 //! Who owes what, by how late. Reads `finance.receivables.aging.get`, which
 //! prices every issued invoice at one posting number so the columns agree.
 use super::{
+    CUSTOMERS, Flash, INVOICES, Pages,
     format::{self as f},
-    render, Flash, Pages, CUSTOMERS, INVOICES,
+    render,
 };
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
+    Button, ButtonVariant, Card, Cell, EmptyState, Facts, Field, FlexRow, Form, Header, Html,
+    InputKind, ListColumns, PageVariant, SectionHeading, StatusKind,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Button, ButtonVariant, Card, Cell, EmptyState, Facts, Field, FlexRow, Form, Header,
-    Html, InputKind, ListColumns, PageVariant, SectionHeading, StatusKind,
+    params,
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;

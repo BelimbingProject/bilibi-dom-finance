@@ -11,8 +11,8 @@ mod opening;
 mod opening_csv;
 mod opening_lifecycle;
 mod opening_operations;
-mod posting;
 mod pdf;
+mod posting;
 mod records;
 mod reports;
 mod settlements;
@@ -29,8 +29,8 @@ pub use contributions::{
 pub use evidence::EvidencePage;
 pub use pdf::PdfFile;
 pub use records::{
-    Allocation, Customer, Document, DocumentLine, DocumentQuery, Page, Payment, PaymentQuery,
-    PaymentReversal, Series, InvoiceLayout, Setup, SetupChange, TaxCode, TaxLine,
+    Allocation, Customer, Document, DocumentLine, DocumentQuery, InvoiceLayout, Page, Payment,
+    PaymentQuery, PaymentReversal, Series, Setup, SetupChange, TaxCode, TaxLine,
 };
 pub use reports::{
     AgedCustomer, AgedDocument, AgedReceivables, AgingBucket, AgingOptions, BalancePins,

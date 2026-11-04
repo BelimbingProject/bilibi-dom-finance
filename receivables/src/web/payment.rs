@@ -3,18 +3,20 @@
 //! Reverse calls `payment.reverse`, which posts a dated mirror entry and keeps
 //! the original receipt as it was.
 use super::{
+    Account, CUSTOMERS, DENIED, Flash, INVOICES, Pages, RECEIPTS, Written,
     documents::reference,
     format::{self as f, Errors},
-    render, Account, Flash, Pages, Written, CUSTOMERS, DENIED, INVOICES, RECEIPTS,
+    render,
 };
-use crate::{Customer, Document, Payment as Record, POST_PAYMENTS};
+use crate::{Customer, Document, POST_PAYMENTS, Payment as Record};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
+    BackLink, Button, ButtonVariant, Card, Cell, EmptyState, Facts, Field, FlexRow, Form, Header,
+    Html, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BackLink, Button, ButtonVariant, Card, Cell, EmptyState, Facts, Field, FlexRow, Form,
-    Header, Html, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
+    params,
 };
 use serde_json::json;
 use std::collections::HashMap;

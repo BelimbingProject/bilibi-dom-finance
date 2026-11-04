@@ -3,7 +3,7 @@
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Change, Error, Result};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_postgres::GenericClient;
 
 #[derive(Clone, Copy)]
@@ -16,7 +16,11 @@ pub(crate) struct Table {
 pub(crate) const SETUPS: Table = Table {
     name: "finance_receivables_setups",
     kind: "finance.receivables.setup",
-    columns: &["receivable_account_id", "income_account_id", "invoice_layout"],
+    columns: &[
+        "receivable_account_id",
+        "income_account_id",
+        "invoice_layout",
+    ],
     timestamps: true,
 };
 pub(crate) const HISTORY: Table = Table {

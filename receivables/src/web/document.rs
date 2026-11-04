@@ -4,22 +4,24 @@
 //! is issued or discarded after a confirmation. Reads `document.get`; writes
 //! call `draft.update`, `draft.discard` and `document.issue`.
 use super::{
+    Account, CUSTOMERS, Flash, INVOICES, Pages, RECEIPTS, Written,
     documents::reference,
     format::{self as f, Errors},
-    render, Account, Flash, Pages, Written, CUSTOMERS, INVOICES, RECEIPTS,
+    render,
 };
-use crate::{Customer, Document as Record, Payment, Series, TaxCode, ISSUE, MANAGE_DOCUMENTS};
+use crate::{Customer, Document as Record, ISSUE, MANAGE_DOCUMENTS, Payment, Series, TaxCode};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_finance_ledger::{Money, PartyReview};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
+    BackLink, Button, ButtonVariant, Card, Cell, Choice, CommitStates, CommitStatus, ConfirmDialog,
+    EmptyState, Facts, Field, FlexRow, Form, Header, Html, InlineEdit, InlineLongText, InputKind,
+    ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BackLink, Button, ButtonVariant, Card, Cell, Choice, CommitStates, CommitStatus,
-    ConfirmDialog, EmptyState, Facts, Field, FlexRow, Form, Header, Html, InlineEdit,
-    InlineLongText, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
+    params,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 enum Dialog {
@@ -317,7 +319,12 @@ impl Document {
         // Header actions: navigation first, then what changes the document.
         let mut actions = back;
         if issued {
-            actions.push(&render(Button { id: "receivables-invoice-print", href: &format!("{INVOICES}/{}/pdf", d.id), body: Html::text("Print / download PDF"), ..Button::default() })?);
+            actions.push(&render(Button {
+                id: "receivables-invoice-print",
+                href: &format!("{INVOICES}/{}/pdf", d.id),
+                body: Html::text("Print / download PDF"),
+                ..Button::default()
+            })?);
         }
         if self.draft() {
             if self.can_manage {

@@ -1,17 +1,18 @@
 //! Reviewed opening action on the record list. Bilimbi has no opening-import UI; shared Base
 //! components render it and PageContracts supplies the same write as MCP.
-use super::{Pages, PAGES};
+use super::{PAGES, Pages};
 use crate::*;
 use askama::Template;
-use bilibi_agent_api::{page::Call, Error as ContractError};
+use bilibi_agent_api::{Error as ContractError, page::Call};
 use bilibi_database::{Error, Result};
 use bilibi_ui::{
+    Alert, BuiltinColumn, Button, ButtonVariant, Cell, ErrorSummary, Field, FlashGroup, FlexRow,
+    FlexTable, Form, Html, InputKind, ListColumns, Modal, ModalWidth, StatusKind,
     page::{LiveInput, LiveRequest},
-    params, Alert, BuiltinColumn, Button, ButtonVariant, Cell, ErrorSummary, Field, FlashGroup,
-    FlexRow, FlexTable, Form, Html, InputKind, ListColumns, Modal, ModalWidth, StatusKind,
+    params,
 };
 use bilibi_ui::{Choice, Combobox};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const CONTRACT: &str = "finance.receivables.opening.import";
 const STAGE: &str = "finance.receivables.opening.stage";
@@ -782,9 +783,13 @@ impl Opening {
             })?;
         } else {
             page = render(Modal {
-                id: "conversion-modal", title: TITLE,
+                id: "conversion-modal",
+                title: TITLE,
                 description: "Reconcile the source register with the current company's approved opening balances.",
-                cancel_event: "close_opening", width: ModalWidth::Wide, body: page, ..Modal::default()
+                cancel_event: "close_opening",
+                width: ModalWidth::Wide,
+                body: page,
+                ..Modal::default()
             })?;
         }
         Ok(page)

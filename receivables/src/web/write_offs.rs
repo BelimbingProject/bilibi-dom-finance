@@ -1,13 +1,13 @@
 //! The invoice's bad-debt journals use the same reviewed contracts as agents.
-use super::{format as f, render, Account, Flash, Pages, Written};
-use crate::{Document, APPROVE_WRITE_OFFS, SUBMIT_WRITE_OFFS};
+use super::{Account, Flash, Pages, Written, format as f, render};
+use crate::{APPROVE_WRITE_OFFS, Document, SUBMIT_WRITE_OFFS};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    params, Alert, Attrs, Button, ButtonVariant, Card, Cell, Combobox, Facts, Field, FlexRow, Fold,
-    Form, Html, InputKind, ListColumns, ModalWidth, SectionHeading, StatusKind,
+    Alert, Attrs, Button, ButtonVariant, Card, Cell, Combobox, Facts, Field, FlexRow, Fold, Form,
+    Html, InputKind, ListColumns, ModalWidth, SectionHeading, StatusKind, params,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub(super) struct Journals {
@@ -418,10 +418,11 @@ impl Journals {
             input["document_id"] = json!(record.ok_or(Error::NotFound)?.id);
         }
         if d.action == "submit" {
-            input["offset_account_id"] = json!(d
-                .values
-                .get("offset_account_id")
-                .and_then(|s| s.parse::<i64>().ok()));
+            input["offset_account_id"] = json!(
+                d.values
+                    .get("offset_account_id")
+                    .and_then(|s| s.parse::<i64>().ok())
+            );
         }
         // Only send the fields the selected contract accepts.
         let keys: &[&str] = match d.action.as_str() {

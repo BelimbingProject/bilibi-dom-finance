@@ -4,7 +4,7 @@ use crate::*;
 use bilibi_agent_api::OperationClient;
 use bilibi_database::Change;
 use bilibi_finance_ledger::{AccountType, EntryOwner, Money, OpeningContext, PartyLinks};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) const HEADER: &[&str] = &[
@@ -546,7 +546,16 @@ impl Receivables {
                 ));
             }
             if balance != expected {
-                return Err(invalid("csv", format!("opening invoices on {} total {} but the approved opening balance is {} (difference {})", account.code, balance.display(book.minor_units), expected.display(book.minor_units), (balance - expected).display(book.minor_units))));
+                return Err(invalid(
+                    "csv",
+                    format!(
+                        "opening invoices on {} total {} but the approved opening balance is {} (difference {})",
+                        account.code,
+                        balance.display(book.minor_units),
+                        expected.display(book.minor_units),
+                        (balance - expected).display(book.minor_units)
+                    ),
+                ));
             }
             reconciliation.push(json!({"gross_debits":debits.get(&id).copied().unwrap_or(Money::ZERO),"gross_credits":credits.get(&id).copied().unwrap_or(Money::ZERO),"account_id":id,"account_code":account.code,"register_balance":balance,"opening_balance":expected,"difference":Money::ZERO}));
         }
@@ -578,7 +587,10 @@ impl Receivables {
             for row in accounts {
                 let id: i64 = row.get(0);
                 if !balances.contains_key(&id) {
-                    return Err(invalid("csv","a correction must retain every previously recognized opening account and its balance"));
+                    return Err(invalid(
+                        "csv",
+                        "a correction must retain every previously recognized opening account and its balance",
+                    ));
                 }
                 replaced_accounts.insert(id);
             }

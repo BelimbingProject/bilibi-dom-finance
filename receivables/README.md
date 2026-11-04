@@ -239,3 +239,15 @@ The focused customer-composition proof runs with `cargo run -p bilibi-finance-wa
 Opening invoices and customer credits share the Invoices list and the same record pages. **Source** and **Status** are columns, and the **Source** filter selects all, ordinary or opening records. The list reads `finance.receivables.document.page`, which applies source, type, status, customer, search, sort, count and page offset in SQL and returns only the displayed row fields. The cursor-based `document.list` also accepts source. Choose **Opening invoices** on the list to review and approve a complete or staged register with the existing opening contracts. The review remains a batch dialog; there is no separate opening menu item or route.
 
 Readers can open the opening dialog to inspect retained source batches. The import form still requires the module's existing opening-write permission, and approval checks run in the shared contract.
+
+## Printed invoices
+
+An issued invoice or credit note has **Print / download PDF** on its document page. The PDF opens in the browser for printing or saving. Drafts and opening balances cannot be printed as invoices.
+
+Set the company name, registration number, address, contact details and footer under **Invoice layout** on Receivables settings. Blank fields are omitted; a blank company name uses the current company name. The logo uses the company image, uploaded by an administrator through the linked shared image editor. Images stay in Base Media and are embedded in the PDF; remote images and user HTML are never fetched or rendered.
+
+The A4 template is `templates/receivables_invoice.html`. Base Artifacts renders and stores it with `render_inline`; the document remains the source of truth. Each download reauthorizes the current company and regenerates from the frozen customer, lines and totals with the current layout. Layout changes are audited with the setup row; default-account history remains about accounts. Configure Base Artifacts storage and Chromium as described in the Platform Artifacts README before printing.
+
+E-invoice authority identifiers and QR codes remain in the e-invoice PDF. Combining them needs a documented read seam without adding a Receivables-to-Einvoice dependency.
+
+For the disposable PDF proof, run the `party-code` walkthrough with `INVOICE_LAYOUT_PROOF_DIR` naming a private output directory. It prints default and configured invoices, a 100-line invoice and a credit note, and proves draft, missing-document, cross-tenant and invalid-layout refusals. Inspect the resulting PDFs with `pdfinfo` and `pdftotext`, and open the document page through the Platform launcher for browser proof.

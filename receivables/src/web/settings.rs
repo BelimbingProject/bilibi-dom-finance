@@ -12,20 +12,22 @@
 //! configured needs both accounts in one `setup.configure`, so the first
 //! choice is kept on the page (never persisted) until the second arrives.
 use super::{
+    Account, DENIED, Flash, Pages, READ_LIMIT, Written,
     format::{self as f, Errors},
-    render, Account, Flash, Pages, Written, DENIED, READ_LIMIT,
+    render,
 };
-use crate::{Payment, Series, Setup, SetupChange, TaxCode, MANAGE_SETUP};
+use crate::{MANAGE_SETUP, Payment, Series, Setup, SetupChange, TaxCode};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
+    Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
     CommitStates, CommitStatus, ConfirmDialog, Facts, Field, FlexRow, Fold, Form, Header, Html,
-    InlineChoice, InlineEdit, InlineLongText, InlineField, InputKind, ListColumns, ModalWidth, PageVariant,
-    SectionHeading, StatusKind,
+    InlineChoice, InlineEdit, InlineField, InlineLongText, InputKind, ListColumns, ModalWidth,
+    PageVariant, SectionHeading, StatusKind,
+    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
+    params,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 /// The chart of accounts page, where an account the setup needs is added.
@@ -498,18 +500,61 @@ impl Settings {
             ..Card::default()
         })?);
 
-        body.push(&render(SectionHeading { title: "Invoice layout", id: "receivables-layout-heading", description: "Used for printed invoices and credit notes for this company.", ..SectionHeading::default() })?);
+        body.push(&render(SectionHeading {
+            title: "Invoice layout",
+            id: "receivables-layout-heading",
+            description: "Used for printed invoices and credit notes for this company.",
+            ..SectionHeading::default()
+        })?);
         let mut items = Vec::new();
-        let layout = self.setup.as_ref().map(|s| s.invoice_layout.clone()).unwrap_or_default();
-        for (key, label, value) in [("company_name", "Company name", &layout.company_name), ("registration_number", "Registration number", &layout.registration_number), ("address", "Address", &layout.address), ("contact", "Contact details", &layout.contact), ("footer", "Footer text", &layout.footer)] {
-            let mut field = InlineField::new(format!("receivables-layout-{key}"), key, label, value).version(0).status(self.statuses.get(key));
+        let layout = self
+            .setup
+            .as_ref()
+            .map(|s| s.invoice_layout.clone())
+            .unwrap_or_default();
+        for (key, label, value) in [
+            ("company_name", "Company name", &layout.company_name),
+            (
+                "registration_number",
+                "Registration number",
+                &layout.registration_number,
+            ),
+            ("address", "Address", &layout.address),
+            ("contact", "Contact details", &layout.contact),
+            ("footer", "Footer text", &layout.footer),
+        ] {
+            let mut field =
+                InlineField::new(format!("receivables-layout-{key}"), key, label, value)
+                    .version(0)
+                    .status(self.statuses.get(key));
             field.save_event = "save_layout".into();
             field.id_value = "layout".into();
-            if !self.can_manage || self.setup.is_none() { field = field.readonly(); }
-            items.push(f::fact_html(label, render(InlineLongText { field, rows: 3 })?));
+            if !self.can_manage || self.setup.is_none() {
+                field = field.readonly();
+            }
+            items.push(f::fact_html(
+                label,
+                render(InlineLongText { field, rows: 3 })?,
+            ));
         }
-        items.push(f::fact_html("Company logo", f::link(&format!("/system/settings?scope=company&company_id={}&q=Company+image", Pages::company(scope).unwrap_or(0)), "Use the company image (set by your administrator)")?));
-        body.push(&render(Card { id: "receivables-layout-card", body: render(Facts { id: "receivables-layout", items })?, ..Card::default() })?);
+        items.push(f::fact_html(
+            "Company logo",
+            f::link(
+                &format!(
+                    "/system/settings?company={}&q=Company+image",
+                    Pages::company(scope).unwrap_or(0)
+                ),
+                "Use the company image (set by your administrator)",
+            )?,
+        ));
+        body.push(&render(Card {
+            id: "receivables-layout-card",
+            body: render(Facts {
+                id: "receivables-layout",
+                items,
+            })?,
+            ..Card::default()
+        })?);
 
         // Numbering series.
         let mut rows = Vec::new();
@@ -1267,12 +1312,46 @@ impl Settings {
             }
             "save_layout" => {
                 let key = v["field"].as_str().ok_or(Error::Invalid)?;
-                if !["company_name", "registration_number", "address", "contact", "footer"].contains(&key) { return Err(Error::Invalid); }
+                if ![
+                    "company_name",
+                    "registration_number",
+                    "address",
+                    "contact",
+                    "footer",
+                ]
+                .contains(&key)
+                {
+                    return Err(Error::Invalid);
+                }
                 let value = v["value"].as_str().ok_or(Error::Invalid)?;
-                let mut layout = serde_json::to_value(self.setup.as_ref().ok_or(Error::Invalid)?.invoice_layout.clone()).map_err(|_| Error::Internal)?;
+                let mut layout = serde_json::to_value(
+                    self.setup
+                        .as_ref()
+                        .ok_or(Error::Invalid)?
+                        .invoice_layout
+                        .clone(),
+                )
+                .map_err(|_| Error::Internal)?;
                 layout[key] = json!(value);
-                let written = self.pages.write(scope, credential, "save_layout", "finance.receivables.setup.configure", json!({"invoice_layout":layout})).await?;
-                self.statuses.put(key.to_owned(), f::commit_status(&written, &format!("invoice_layout.{key}"), "Invoice layout", value));
+                let written = self
+                    .pages
+                    .write(
+                        scope,
+                        credential,
+                        "save_layout",
+                        "finance.receivables.setup.configure",
+                        json!({"invoice_layout":layout}),
+                    )
+                    .await?;
+                self.statuses.put(
+                    key.to_owned(),
+                    f::commit_status(
+                        &written,
+                        &format!("invoice_layout.{key}"),
+                        "Invoice layout",
+                        value,
+                    ),
+                );
             }
             "configure" => self.save_default(scope, credential, v).await?,
             "confirm_receivable" => self.confirm_receivable(scope, credential).await?,

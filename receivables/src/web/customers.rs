@@ -3,20 +3,22 @@
 //! Company or Person (`company_pick`) and submits `customer.create`, which records
 //! the company, Finance customer and relationship in one transaction.
 use super::{
+    CUSTOMERS, Flash, Pages,
     company_pick::Submitted,
     format::{self as f, Errors},
-    render, Flash, Pages, CUSTOMERS,
+    render,
 };
 use crate::Customer;
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::MultiPartyChooser;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
+    BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton, EmptyState,
+    Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns,
+    ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink, SortDir,
+    StatusKind, TableEmpty, ToolbarControl,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton,
-    EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
-    ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params,
 };
 use serde_json::json;
 use std::{

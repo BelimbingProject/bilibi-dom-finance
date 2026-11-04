@@ -1,6 +1,6 @@
 //! Bilimbi Receivables.Contributions, capability keys verbatim.
 use crate::MODULE;
-use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
+use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VOCABULARY, VocabularyContribution};
 use bilibi_module_registry::{Contribution, Provenance};
 
 pub const VIEW: &str = "finance.receivables.view";

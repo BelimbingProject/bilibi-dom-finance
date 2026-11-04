@@ -1,5 +1,5 @@
 //! Credit actions stay on the existing document page and use the agent doors.
-use super::{render, Pages, PAGES};
+use super::{PAGES, Pages, render};
 use crate::POST_PAYMENTS;
 use bilibi_agent_api::page::Call;
 use bilibi_database::{Error, Result};
@@ -10,7 +10,7 @@ use bilibi_ui::{
     Field, FlexRow, FlexTable, Fold, Form, Html, InputKind, ListColumns, Modal, ModalWidth,
     SectionHeading, StatusKind,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub(super) struct Credits {
@@ -152,7 +152,12 @@ impl Credits {
         if events.is_empty() && actions.is_empty() {
             return Ok(Html::EMPTY);
         }
-        let mut body=render(SectionHeading{title:"Credit settlements",description:"Applications and refunds retain their original controls and dates. A same-control application changes no ledger entry.",actions,..SectionHeading::default()})?;
+        let mut body = render(SectionHeading {
+            title: "Credit settlements",
+            description: "Applications and refunds retain their original controls and dates. A same-control application changes no ledger entry.",
+            actions,
+            ..SectionHeading::default()
+        })?;
         if let Some((kind, message)) = &self.message {
             body.push(&render(Alert {
                 id: "credit-message",
@@ -483,10 +488,11 @@ impl Credits {
                     .as_object_mut()
                     .ok_or(Error::Invalid)?
                     .remove("credit_document_id");
-                input["settlement_id"] = json!(d
-                    .values
-                    .get("settlement_id")
-                    .and_then(|v| v.parse::<i64>().ok()));
+                input["settlement_id"] = json!(
+                    d.values
+                        .get("settlement_id")
+                        .and_then(|v| v.parse::<i64>().ok())
+                );
             }
             let call = Call {
                 scope: s,

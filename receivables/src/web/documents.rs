@@ -3,18 +3,20 @@
 //! saving a draft calls `draft.create`.
 use super::opening::Opening;
 use super::{
+    Flash, INVOICES, Pages, Written,
     format::{self as f, Errors},
-    render, Flash, Pages, Written, INVOICES,
+    render,
 };
-use crate::{records::DocumentPageRow, Customer, Document, Series, MANAGE_DOCUMENTS, VIEW};
+use crate::{Customer, Document, MANAGE_DOCUMENTS, Series, VIEW, records::DocumentPageRow};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
+    BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton, EmptyState,
+    Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns,
+    ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink, SortDir,
+    StatusKind, TableEmpty, ToolbarControl,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton,
-    EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
-    ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params,
 };
 use serde_json::json;
 use std::{

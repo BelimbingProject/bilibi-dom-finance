@@ -7,7 +7,7 @@ use bilibi_finance_ledger::{
     Approval, EntryOwner, Money, NewEntry, NewLine, PostOptions, Preparer, Reversal,
 };
 use jiff::civil::Date;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(super) struct PreparedSettlement {
     pub review: Value,
@@ -107,7 +107,10 @@ pub(crate) async fn pin(
      ))
     ) LIMIT 1",&[&s.tenant(),&company,&pin,&entry,&batch,&day.to_string()]).await?.is_some();
     if incompatible {
-        return Err(invalid("through_settlement_number","the report boundaries split a settlement from its entry, source item or original event, or leave an inactive-batch settlement unneutralized"));
+        return Err(invalid(
+            "through_settlement_number",
+            "the report boundaries split a settlement from its entry, source item or original event, or leave an inactive-batch settlement unneutralized",
+        ));
     }
     Ok(pin)
 }

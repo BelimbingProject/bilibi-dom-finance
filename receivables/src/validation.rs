@@ -1,9 +1,9 @@
 //! Bilimbi Receivables changesets: cast only editable fields, then validate
 //! effective values. Calculated and immutable attributes never enter SQL.
-use crate::{invalid, Result};
+use crate::{Result, invalid};
 use bilibi_finance_ledger::{Account, AccountType};
 use rust_decimal::Decimal;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(crate) fn merge(old: Option<&Value>, attrs: &Value, fields: &[&str]) -> Result<Value> {
     let attrs = attrs
@@ -169,11 +169,7 @@ fn decimal_parts(text: &str) -> Option<(bool, String, i64)> {
         } else {
             magnitude.parse().ok()?
         };
-        if e.starts_with('-') {
-            -n
-        } else {
-            n
-        }
+        if e.starts_with('-') { -n } else { n }
     } else {
         0
     };
