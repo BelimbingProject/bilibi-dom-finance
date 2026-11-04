@@ -228,7 +228,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .rows
         .iter()
         .any(|r| r["code"] == consumer.code));
-    println!("PASS: company customer {} code {}; person customer {} code {}; company supplier {} code {}; person supplier shares {}; TV invoice {} posted and aging carries {}",company.id,company.code,consumer.id,consumer.code,supplier.id,supplier.code,person_supplier.code,issued.id,aged.code);
+    println!(
+        "PASS: company customer {} code {}; person customer {} code {}; company supplier {} code {}; person supplier shares {}; TV invoice {} posted and aging carries {}",
+        company.id,
+        company.code,
+        consumer.id,
+        consumer.code,
+        supplier.id,
+        supplier.code,
+        person_supplier.code,
+        issued.id,
+        aged.code
+    );
     // Privacy companion: a partial Core contact is not an authentic Finance
     // fact. Summaries withhold it, and issuing refuses to freeze it. Exercise
     // email and phone independently, then the same draft with both visible.
@@ -268,7 +279,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     restrictions.remove(&admin, "persons", "phone").await?;
     let visible = ar.issue_document(&scope, 1, masked_draft.id).await?;
     assert!(visible.ledger_entry_id.is_some());
-    println!("PASS: masked email and phone withheld in PartyLinks; each refuses document freeze; unmasked control issued");
+    println!(
+        "PASS: masked email and phone withheld in PartyLinks; each refuses document freeze; unmasked control issued"
+    );
+    // Optional printing proof, on this same disposable fixture installation.
+    if let Ok(root) = std::env::var("INVOICE_LAYOUT_PROOF_DIR") {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(&root)?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        bilibi_finance_walkthrough_fixture::attachments::configure_storage(
+            &db,
+            &app.services,
+            &admin,
+            &root,
+        )
+        .await?;
+        if let Ok(binary) = std::env::var("INVOICE_LAYOUT_CHROMIUM") {
+            let settings = app
+                .services
+                .get::<bilibi_settings::Settings>("base/settings.store")?;
+            let mut client = db.get().await?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    admin.mutation_context("walkthrough.invoice-layout.configure"),
+                )
+                .await?;
+            settings
+                .put(
+                    &mut tx,
+                    &admin,
+                    bilibi_settings::Target::Global,
+                    "pdf.chromium.binary",
+                    json!(binary),
+                )
+                .await?;
+            tx.commit().await?;
+        }
+        let default_pdf = ar.print_document(&scope, 1, issued.id).await?;
+        assert!(default_pdf.bytes.starts_with(b"%PDF-"));
+        std::fs::write(format!("{root}/default.pdf"), default_pdf.bytes)?;
+        assert!(ar
+            .print_document(&scope, 1, masked_draft.id + 99999)
+            .await
+            .is_err());
+        let bad = ar
+            .configure(
+                &scope,
+                1,
+                &json!({"invoice_layout":{"company_name":"x".repeat(201)}}),
+            )
+            .await;
+        assert!(matches!(
+            bad,
+            Err(bilibi_finance_receivables::ReceivableError::Invalid(_))
+        ));
+        ar.configure(&scope, 1, &json!({"invoice_layout":{"company_name":"Example Trading & Services", "registration_number":"Example registration 001", "address":"First floor\nExample Street", "contact":"accounts@example.test", "footer":"Payment terms: 30 days.\nPlease quote the invoice number. <This is plain text.>"}})).await?;
+        let configured = ar.print_document(&scope, 1, issued.id).await?;
+        std::fs::write(format!("{root}/configured.pdf"), configured.bytes)?;
+        let tax = ar.create_tax_code(&scope,1,&json!({"code":"PRINT-TAX","name":"Example tax","rate":"6","account_id":account("2100")})).await?;
+        let lines: Vec<_> = (1..=100).map(|n| json!({"description":format!("Service line {n}: a description long enough to wrap on the printed invoice"),"quantity":"1","unit_price":"12.50","tax_code_id":tax.id})).collect();
+        let long = ar.create_draft(&scope,1,&json!({"kind":"invoice","series_id":series.id,"customer_id":consumer.id,"issue_date":"2026-10-30","lines":lines})).await?;
+        assert!(matches!(
+            ar.print_document(&scope, 1, long.id).await,
+            Err(bilibi_finance_receivables::ReceivableError::NotIssued)
+        ));
+        let long = ar.issue_document(&scope, 1, long.id).await?;
+        assert_eq!(long.tax_total.display(None), "75.00");
+        assert_eq!(long.total.display(None), "1,325.00");
+        std::fs::write(
+            format!("{root}/long.pdf"),
+            ar.print_document(&scope, 1, long.id).await?.bytes,
+        )?;
+        let notes = ar.create_series(&scope,1,&json!({"code":"PRINT-CREDIT","name":"Credit notes","kind":"credit_note","prefix":"CN-"})).await?;
+        let note = ar.create_draft(&scope,1,&json!({"kind":"credit_note","series_id":notes.id,"customer_id":consumer.id,"credited_document_id":issued.id,"issue_date":"2026-10-30","lines":[{"description":"Service credit","quantity":"1","unit_price":"5.00"}]})).await?;
+        let note = ar.issue_document(&scope, 1, note.id).await?;
+        std::fs::write(
+            format!("{root}/credit-note.pdf"),
+            ar.print_document(&scope, 1, note.id).await?.bytes,
+        )?;
+        let other = sign_in(&db, &app.services, 2, 5).await?;
+        assert!(ar.print_document(&other, 1, issued.id).await.is_err());
+        println!(
+            "PASS: default/configured PDFs, 100-line invoice {}, credit note {}, draft/missing/cross-tenant refusals and layout validation; files in {}",
+            long.id, note.id, root
+        );
+    }
     if std::env::var("PARTY_CODE_BROWSER").as_deref() == Ok("1") {
         let listener = tokio::net::TcpListener::bind(
             std::env::var("BIND_ADDR").unwrap_or("127.0.0.1:45479".into()),

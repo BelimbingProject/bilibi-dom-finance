@@ -60,6 +60,39 @@ impl Receivables {
         let tenant = scope.tenant();
         let old = store::find(client, SETUPS, tenant, company, None).await?;
         let mut data = v::merge(old.as_ref(), attrs, SETUPS.columns)?;
+        let mut layout_value = old
+            .as_ref()
+            .map(|o| o["invoice_layout"].clone())
+            .unwrap_or_else(|| json!({}));
+        if let Some(patch) = attrs.get("invoice_layout") {
+            for (key, value) in patch
+                .as_object()
+                .ok_or_else(|| invalid("invoice_layout", "is invalid"))?
+            {
+                layout_value[key] = value.clone();
+            }
+        }
+        let layout: crate::InvoiceLayout = serde_json::from_value(layout_value)
+            .map_err(|_| invalid("invoice_layout", "is invalid"))?;
+        for (field, text, limit) in [
+            ("company_name", &layout.company_name, 200),
+            ("registration_number", &layout.registration_number, 100),
+            ("address", &layout.address, 2000),
+            ("contact", &layout.contact, 500),
+            ("footer", &layout.footer, 4000),
+        ] {
+            if text.chars().count() > limit
+                || text
+                    .chars()
+                    .any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(invalid(
+                    &format!("invoice_layout.{field}"),
+                    format!("must be text with at most {limit} characters"),
+                ));
+            }
+        }
+        data["invoice_layout"] = serde_json::to_value(layout).map_err(|_| Error::Internal)?;
         let chart = self.ledger.list_accounts_on(client, scope, company).await?;
         v::account(
             &mut data,
@@ -128,7 +161,7 @@ impl Receivables {
             tx.mutate(move |sql| Box::pin(async move {
                 let mut changes = Vec::new();
                 let new = store::save(sql, SETUPS, tenant, company, old.clone(), data, &mut changes).await?;
-                for field in fields {
+                for field in fields.into_iter().filter(|field| *field != "invoice_layout") {
                     store::save(sql, HISTORY, tenant, company, None, json!({"field": field, "old_value": old.as_ref().map(|o| &o[field]), "new_value": new[field], "changed_by_user_id": actor, "changed_by_impersonator_id": impersonator}), &mut changes).await?;
                 }
                 Ok((new, changes))
@@ -522,3 +555,28 @@ impl Receivables {
         Ok(new)
     }
 }
+
+// The shared image setting editor owns upload inspection, Media storage and
+// removal; this setting belongs to the company's Receivables setup.
+pub(crate) const INVOICE_LOGO: &str = "finance.receivables.invoice_logo_asset_id";
+macro_rules! define {
+    ($key:expr, $label:expr) => {
+        inventory::submit! { bilibi_module_registry::Contribution::new(
+            bilibi_settings::DEFINITIONS, $key,
+            bilibi_module_registry::Provenance { module: crate::MODULE, source: file!(), line: line!() },
+            &bilibi_settings::Setting::Definition(bilibi_settings::Definition {
+                value_type: bilibi_settings::ValueType::Integer,
+                scopes: &[bilibi_settings::ScopeKind::Company], default: || Value::Null,
+                nullable: true, encrypted: false, minimum: Some(1.0), maximum: None,
+                validator: Some(bilibi_settings::Validator { accepts: |v| v.is_null() || v.as_i64().is_some_and(|id| id > 0), message: "must name a stored invoice logo" }),
+                editor: Some(bilibi_settings::Editor { group: "Receivables", label: $label, help: "Printed on invoices and credit notes for this company. PNG, JPEG or WebP.", capability: Some(MANAGE_SETUP), reveal_duration_ms: 5_000 }),
+            })
+        ) }
+    };
+}
+define!(INVOICE_LOGO, "Invoice logo");
+inventory::submit! { bilibi_module_registry::Contribution::new(
+    bilibi_settings_editor::IMAGE_SETTINGS, INVOICE_LOGO,
+    bilibi_module_registry::Provenance { module: crate::MODULE, source: file!(), line: line!() },
+    &bilibi_settings_editor::ImageSetting { directory: "receivables-invoice-logos", max_bytes: 1024 * 1024 }
+) }

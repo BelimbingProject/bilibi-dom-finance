@@ -316,6 +316,14 @@ impl Document {
 
         // Header actions: navigation first, then what changes the document.
         let mut actions = back;
+        if issued && d.opening.is_none() && matches!(d.kind.as_str(), "invoice" | "credit_note") {
+            actions.push(&render(Button {
+                id: "receivables-invoice-print",
+                href: &format!("{INVOICES}/{}/pdf", d.id),
+                body: Html::text("Print / download PDF"),
+                ..Button::default()
+            })?);
+        }
         if self.draft() {
             if self.can_manage {
                 actions.push(&render(Button {

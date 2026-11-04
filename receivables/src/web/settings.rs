@@ -22,8 +22,8 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
     CommitStates, CommitStatus, ConfirmDialog, Facts, Field, FlexRow, Fold, Form, Header, Html,
-    InlineChoice, InlineEdit, InlineField, InputKind, ListColumns, ModalWidth, PageVariant,
-    SectionHeading, StatusKind,
+    InlineChoice, InlineEdit, InlineField, InlineLongText, InputKind, ListColumns, ModalWidth,
+    PageVariant, SectionHeading, StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -495,6 +495,63 @@ impl Settings {
             role: "region",
             labelledby: "receivables-defaults-heading",
             body: defaults,
+            ..Card::default()
+        })?);
+
+        body.push(&render(SectionHeading {
+            title: "Invoice layout",
+            id: "receivables-layout-heading",
+            description: "Used for printed invoices and credit notes for this company.",
+            ..SectionHeading::default()
+        })?);
+        let mut items = Vec::new();
+        let layout = self
+            .setup
+            .as_ref()
+            .map(|s| s.invoice_layout.clone())
+            .unwrap_or_default();
+        for (key, label, value) in [
+            ("company_name", "Company name", &layout.company_name),
+            (
+                "registration_number",
+                "Registration number",
+                &layout.registration_number,
+            ),
+            ("address", "Address", &layout.address),
+            ("contact", "Contact details", &layout.contact),
+            ("footer", "Footer text", &layout.footer),
+        ] {
+            let mut field =
+                InlineField::new(format!("receivables-layout-{key}"), key, label, value)
+                    .version(0)
+                    .status(self.statuses.get(key))
+                    .allow_empty();
+            field.save_event = "save_layout".into();
+            field.id_value = "layout".into();
+            if !self.can_manage || self.setup.is_none() {
+                field = field.readonly();
+            }
+            items.push(f::fact_html(
+                label,
+                render(InlineLongText { field, rows: 3 })?,
+            ));
+        }
+        items.push(f::fact_html(
+            "Invoice logo",
+            f::link(
+                &format!(
+                    "/system/settings?company={}&search=Invoice+logo",
+                    Pages::company(scope).unwrap_or(0)
+                ),
+                "Upload or remove the invoice logo (administrator)",
+            )?,
+        ));
+        body.push(&render(Card {
+            id: "receivables-layout-card",
+            body: render(Facts {
+                id: "receivables-layout",
+                items,
+            })?,
             ..Card::default()
         })?);
 
@@ -1251,6 +1308,46 @@ impl Settings {
             }
             "changes_grid" => {
                 self.change_cols.handle(&params::string_values(v));
+            }
+            "save_layout" => {
+                let key = v["field"].as_str().ok_or(Error::Invalid)?;
+                if ![
+                    "company_name",
+                    "registration_number",
+                    "address",
+                    "contact",
+                    "footer",
+                ]
+                .contains(&key)
+                {
+                    return Err(Error::Invalid);
+                }
+                if !self.can_manage {
+                    self.statuses
+                        .put(key.to_owned(), CommitStatus::Error(DENIED.into()));
+                    return Ok(());
+                }
+                let value = v["value"].as_str().ok_or(Error::Invalid)?;
+                let layout = json!({key: value});
+                let written = self
+                    .pages
+                    .write(
+                        scope,
+                        credential,
+                        "save_layout",
+                        "finance.receivables.setup.configure",
+                        json!({"invoice_layout":layout}),
+                    )
+                    .await?;
+                self.statuses.put(
+                    key.to_owned(),
+                    f::commit_status(
+                        &written,
+                        &format!("invoice_layout.{key}"),
+                        "Invoice layout",
+                        value,
+                    ),
+                );
             }
             "configure" => self.save_default(scope, credential, v).await?,
             "confirm_receivable" => self.confirm_receivable(scope, credential).await?,

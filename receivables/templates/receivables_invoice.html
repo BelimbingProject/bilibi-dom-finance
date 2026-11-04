@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{ title }} {{ reference }}</title>
+<style>
+@page { size: A4; margin: 18mm; }
+body { font: 11pt sans-serif; color: #222; }
+header { display: flex; gap: 20px; align-items: start; border-bottom: 2px solid #333; padding-bottom: 16px; }
+header img { max-width: 45mm; max-height: 25mm; object-fit: contain; }
+h1 { font-size: 22pt; margin-bottom: 6px; } h2 { margin: 0 0 6px; font-size: 16pt; }
+.block { white-space: pre-wrap; overflow-wrap: anywhere; }
+.details { display: flex; justify-content: space-between; gap: 20px; margin: 20px 0; }
+table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 10pt; }
+thead { display: table-header-group; } th, td { border-bottom: 1px solid #ccc; padding: 9px 5px; vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+tr { break-inside: avoid; } .number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.totals { width: 50%; margin-left: auto; break-inside: avoid; } .total { font-weight: bold; }
+footer { margin-top: 28px; border-top: 1px solid #ccc; padding-top: 14px; font-size: 10pt; }
+</style></head><body>
+<header>{% if !logo.is_empty() %}<img src="{{ logo }}" alt="Company logo">{% endif %}<div><h2>{{ company_name }}</h2><div class="block">{{ layout.registration_number }}</div><div class="block">{{ layout.address }}</div><div class="block">{{ layout.contact }}</div></div></header>
+<h1>{{ title }}</h1><strong>{{ reference }}</strong>
+{% if !credited_reference.is_empty() %}<div>Credits invoice: {{ credited_reference }}</div>{% endif %}
+<div class="details"><div><strong>Bill to</strong><div class="block">{{ recipient }}</div></div><div>Issue date: {{ document.issue_date.as_deref().unwrap_or("") }}<br>Due date: {{ document.due_date.as_deref().unwrap_or("") }}<br>Currency: {{ document.currency_code }}</div></div>
+<div class="block">{{ document.description.as_deref().unwrap_or("") }}</div>
+<table><thead><tr><th>Description</th><th class="number">Quantity</th><th class="number">Unit price</th><th class="number">Amount</th><th class="number">Tax</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.description }}</td><td class="number">{{ row.quantity }}</td><td class="number">{{ row.price }}</td><td class="number">{{ row.net }}</td><td class="number">{{ row.tax }}</td></tr>{% endfor %}</tbody></table>
+{% if !taxes.is_empty() %}<table><thead><tr><th>Tax code</th><th class="number">Rate</th><th class="number">Taxable amount</th><th class="number">Tax</th></tr></thead><tbody>{% for row in taxes %}<tr><td>{{ row.code }}</td><td class="number">{{ row.rate }}%</td><td class="number">{{ row.taxable }}</td><td class="number">{{ row.tax }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+<table class="totals"><tbody><tr><td>Subtotal</td><td class="number">{{ subtotal }}</td></tr><tr><td>Tax</td><td class="number">{{ tax }}</td></tr><tr class="total"><td>Total ({{ document.currency_code }})</td><td class="number">{{ total }}</td></tr></tbody></table>
+{% if !layout.footer.is_empty() %}<footer class="block">{{ layout.footer }}</footer>{% endif %}
+</body></html>

@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Setup {
+    pub invoice_layout: InvoiceLayout,
     pub company_id: i64,
     pub receivable_account_id: i64,
     pub income_account_id: i64,
@@ -242,4 +243,15 @@ pub struct DocumentQuery {
 pub struct PaymentQuery {
     pub page: Page,
     pub customer_id: Option<i64>,
+}
+
+/// Company letterhead and footer used when regenerating issued documents.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InvoiceLayout {
+    pub company_name: String,
+    pub registration_number: String,
+    pub address: String,
+    pub contact: String,
+    pub footer: String,
 }
