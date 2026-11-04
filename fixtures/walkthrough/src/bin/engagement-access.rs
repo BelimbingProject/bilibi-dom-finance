@@ -847,11 +847,11 @@ async fn payables_read(
 }
 
 async fn credentials(db: &Db, services: &Services, root: &str) -> Outcome<()> {
-    use bilibi_core::agent_access::{
+    use bilibi_core::agent::{
         code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange,
     };
     use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
-    let access = services.get::<AgentAccess>("core/agent_access.grants")?;
+    let access = services.get::<AgentAccess>("core/agent.grants")?;
     let callback = "https://example.test/engagement/callback";
     let registration=access.register_client(&serde_json::from_value::<ClientRegistration>(json!({"client_name":"Engagement access proof","redirect_uris":[callback],"token_endpoint_auth_method":"none"}))?).await?;
     let client_id = registration["client_id"].as_str().ok_or(Error::Invalid)?;

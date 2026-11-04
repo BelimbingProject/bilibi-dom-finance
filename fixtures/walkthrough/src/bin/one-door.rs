@@ -1,7 +1,7 @@
 //! Provision real OAuth credentials for the HTTP/MCP ledger walkthrough on
 //! an explicitly disposable database. No book is opened here: the wire proof
 //! starts from an empty ledger. Never print credentials.
-use bilibi_core::agent_access::{
+use bilibi_core::agent::{
     code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange, Decision,
     CLIENT_ID,
 };
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     drop(client);
     let path = std::env::var("BILIBI_AGENT_CREDENTIALS")?;
-    let access = services.get::<AgentAccess>("core/agent_access.grants")?;
+    let access = services.get::<AgentAccess>("core/agent.grants")?;
     // MCP uses a public, dynamically registered PKCE client (Platform Agent Access).
     let callback = "https://example.test/ledger-proof/callback";
     let registration = access

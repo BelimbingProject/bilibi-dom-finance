@@ -2,7 +2,7 @@
 //! --serve to keep the composed app open for the shared waiting list and the
 //! Finance approval exceptions page. No credentials are printed.
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
-use bilibi_core::agent_access::{
+use bilibi_core::agent::{
     code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange,
 };
 use bilibi_database::{pool, Error};
@@ -112,9 +112,7 @@ async fn pin(ledger: &Ledger, scope: &Scope) -> Outcome<i64> {
         .through_entry_number)
 }
 async fn agent(app: &bilibi_web::App, scope: &Scope, origin: &str) -> Outcome<Scope> {
-    let access = app
-        .services
-        .get::<AgentAccess>("core/agent_access.grants")?;
+    let access = app.services.get::<AgentAccess>("core/agent.grants")?;
     let callback = "https://example.test/journal-proof/callback";
     let client=access.register_client(&serde_json::from_value::<ClientRegistration>(json!({"client_name":"Journal approval walkthrough","redirect_uris":[callback],"token_endpoint_auth_method":"none"}))?).await?;
     let resource = format!("{origin}/mcp");
