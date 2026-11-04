@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
         .is_err());
     let invoice = ar.invoice_sales_order(&manager, 1, source, None).await?;
     assert_eq!(invoice.lines.len(), 2);
-    assert_eq!(invoice.total.shown(), "25.00");
+    assert_eq!(invoice.total.shown(installed.book.minor_units), "25.00");
     assert_eq!(invoice.status, "draft");
     let customer = ar.get_customer(&manager, 1, invoice.customer_id).await?;
     assert_eq!(customer.code, "company_010");
@@ -435,8 +435,16 @@ async fn main() -> Result<()> {
     let _ = stop.send(true);
     worker.await??;
     let automatic_invoice = ar.get_document(&manager, 1, prepared??).await?;
-    assert_eq!(automatic_invoice.total.shown(), "26.50");
-    assert_eq!(automatic_invoice.tax_total.shown(), "1.50");
+    assert_eq!(
+        automatic_invoice.total.shown(installed.book.minor_units),
+        "26.50"
+    );
+    assert_eq!(
+        automatic_invoice
+            .tax_total
+            .shown(installed.book.minor_units),
+        "1.50"
+    );
     println!("PASS enabled each-tenant scheduled work creates a taxed draft under the Finance worker's own grants");
     // Leave another unready order for browser proof.
     let browser = write(
