@@ -11,13 +11,14 @@ CREATE TABLE finance_receivables_sales_orders (
     facts jsonb NOT NULL,
     issue_date date NOT NULL,
     document_id bigint,
+    job_id bigint,
     waiting_reason text NOT NULL DEFAULT 'Waiting for all order lines.',
     attempted_at timestamp without time zone,
     UNIQUE (tenant_id,company_id,order_id),
     UNIQUE (tenant_id,company_id,id),
     UNIQUE (tenant_id,company_id,document_id),
     FOREIGN KEY (tenant_id,company_id) REFERENCES companies(tenant_id,id),
-    FOREIGN KEY (tenant_id,company_id,document_id) REFERENCES finance_receivables_documents(tenant_id,company_id,id)
+    FOREIGN KEY (document_id,company_id) REFERENCES finance_receivables_documents(id,company_id)
 );
 CREATE INDEX finance_receivables_sales_orders_pending ON finance_receivables_sales_orders(tenant_id,attempted_at NULLS FIRST,id) WHERE document_id IS NULL AND status='confirmed';
 CREATE TABLE finance_receivables_sales_order_parts (

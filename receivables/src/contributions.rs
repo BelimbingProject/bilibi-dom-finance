@@ -32,5 +32,5 @@ inventory::submit! { Contribution::new(VOCABULARY, MODULE, Provenance { module: 
     roles: &[RoleDefinition { code: "tenant_owner", name: "Tenant Owner", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &CAPABILITIES },
         RoleDefinition { code: "appointed_auditor", name: "Appointed auditor", description: "Read-only access to one company's ledger, reports and source evidence for a named audit engagement.", grant_all: false, capabilities: &[VIEW] },
         RoleDefinition { code: SALES_WORKFLOW, name: "Sales workflow", description: "Customers and draft invoices only: no ledger, reports, receipts, issuing, payables or payroll. A workflow boundary, not strict data segregation.", grant_all: false, capabilities: &[VIEW, MANAGE_CUSTOMERS, MANAGE_DOCUMENTS] }],
-    system_principals: &[],
+    system_principals: &[bilibi_authz::SystemPrincipalDefinition {name:crate::orders::PRINCIPAL,capabilities:&[MANAGE_DOCUMENTS,MANAGE_CUSTOMERS,bilibi_company::VIEW,bilibi_company::UPDATE,"admin.person.view"]}],
 }) }

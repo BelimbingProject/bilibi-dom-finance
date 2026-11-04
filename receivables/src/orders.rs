@@ -25,6 +25,9 @@ use tokio_postgres::Transaction;
 const CONFIRMED: &str = "commerce/sales.order_confirmed";
 const STATUS: &str = "commerce/sales.order_status_changed";
 const WORKER: &str = "finance/receivables-order-invoices";
+const INVOICE_WORKER: &str = "finance/receivables-invoice-order";
+pub(crate) const PRINCIPAL: &str = "finance-receivables-order-invoices";
+pub(crate) const SWEEP_SERVICE: &str = "finance/receivables.order_invoice_sweep";
 pub(crate) const JOB_SERVICE: &str = "finance/receivables.order_invoices";
 macro_rules! provenance {
     () => {
@@ -48,6 +51,7 @@ pub(super) const ORDERS: store::Table = store::Table {
         "facts",
         "issue_date",
         "document_id",
+        "job_id",
         "waiting_reason",
         "attempted_at",
     ],
@@ -158,7 +162,7 @@ impl Subscribe for Orders {
                 }
                 old
             } else {
-                store::save(tx,ORDERS,tenant,s.company_id,None,json!({"order_id":s.order_id,"order_number":s.order_number,"revision":s.revision,"status":s.order_status,"part_count":s.part_count,"facts":facts,"issue_date":event.recorded_at.get(..10).ok_or(Error::Invalid)?,"document_id":null,"waiting_reason":"Waiting for all order lines.","attempted_at":null}),&mut changes).await?
+                store::save(tx,ORDERS,tenant,s.company_id,None,json!({"order_id":s.order_id,"order_number":s.order_number,"revision":s.revision,"status":s.order_status,"part_count":s.part_count,"facts":facts,"issue_date":event.recorded_at.get(..10).ok_or(Error::Invalid)?,"document_id":null,"job_id":null,"waiting_reason":"Waiting for all order lines.","attempted_at":null}),&mut changes).await?
             };
             if s.revision > order["revision"].as_i64().ok_or(Error::Internal)? {
                 let old = order.clone();
@@ -468,7 +472,7 @@ fn no_args(args: Value) -> bilibi_database::Result<Value> {
     }
 }
 inventory::submit! { Contribution::new(WORKERS, WORKER, provenance!(), &Worker { max_attempts: 5, validate: |args| bilibi_schedule::worker::validate(args,no_args) }) }
-inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &HandlerBinding { service: JOB_SERVICE, capability: EXECUTE }) }
+inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &HandlerBinding { service: SWEEP_SERVICE, capability: EXECUTE }) }
 inventory::submit! { Contribution::new(CAPABILITY_POLICIES, WORKER, provenance!(), &bilibi_schedule::TENANT_POLICY) }
 inventory::submit! { Contribution::new(DEFINITIONS, WORKER, provenance!(), &Definition {
     name: "Draft invoices from sales orders", expression: "* * * * *", timezone: "Etc/UTC", task_name: "Receivables order invoices", worker: WORKER, args: || json!({}), overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::EachTenant, owner_route: Some("/finance/receivables/invoices"),
@@ -476,13 +480,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, WORKER, provenance!(), &Defi
 pub(crate) struct InvoiceOrders {
     pub receivables: Arc<Receivables>,
     pub schedule: Arc<Schedule>,
+    pub queue: Arc<bilibi_queue::Queue>,
 }
 impl Handler for InvoiceOrders {
     fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
         Box::pin(self.schedule.run(execution, args, |_| async {
             match self.run(execution).await {
                 Ok(()) => Outcome::Completed,
-                Err(_) => Outcome::Retry("order_invoices_failed"),
+                Err(_) => Outcome::Retry("order_invoice_sweep_failed"),
             }
         }))
     }
@@ -493,67 +498,169 @@ impl InvoiceOrders {
         let owner = &self.receivables;
         let mut client = owner.db.get().await.map_err(Error::from)?;
         let fence = execution
-            .begin(&mut client, "finance.receivables.order_invoice_batch")
+            .begin(&mut client, "finance.receivables.order_invoice_sweep")
             .await?;
-        // Oldest attempt first prevents one unready order starving later ones.
+        let capability = if bilibi_authz::in_operator_tenant(fence.sql(), scope.tenant()).await? {
+            EXECUTE
+        } else if scope.principal().is_some() {
+            bilibi_schedule::TENANT_WORK
+        } else {
+            bilibi_schedule::TENANT_RUN
+        };
         let rows=fence.sql().query("SELECT id,company_id FROM finance_receivables_sales_orders WHERE tenant_id=$1 AND status='confirmed' AND document_id IS NULL ORDER BY attempted_at NULLS FIRST,id LIMIT 100", &[&scope.tenant()]).await.map_err(Error::from)?;
         for row in rows {
             let id: i64 = row.get(0);
             let company: i64 = row.get(1);
-            match owner.invoice_sales_order(scope, company, id, None).await {
-                Ok(_) => {}
-                Err(R::Failed(e)) => return Err(R::Failed(e)),
-                Err(e) => {
-                    // Normal business refusals are visible work, not failed
-                    // event delivery. This write has its own company proof.
-                    let reason=match e { R::Invalid(fields)=>fields.iter().map(|f|f.message.as_str()).collect::<Vec<_>>().join("; "), R::Unauthorized=>"An administrator must grant the scheduler permission to prepare invoices and customers.".into(), other=>other.to_string() };
-                    let mut c = owner.db.get().await.map_err(Error::from)?;
-                    // A missing grant must not be bypassed to write a reason.
-                    let mut tx = match owner
-                        .write(
-                            &mut c,
-                            scope,
-                            company,
-                            MANAGE_DOCUMENTS,
-                            "finance.receivables.order_invoice_waiting",
-                        )
-                        .await
-                    {
-                        Ok(tx) => tx,
-                        Err(R::Unauthorized | R::CompanyArchived | R::CompanyNotFound) => continue,
-                        Err(e) => return Err(e),
-                    };
-                    {
-                        let old = store::find(tx.sql(), ORDERS, scope.tenant(), company, Some(id))
-                            .await?
-                            .ok_or(Error::NotFound)?;
-                        if old["document_id"].is_null() {
-                            let tenant = scope.tenant();
-                            let stamp: String=tx.sql().query_one("SELECT to_char(timezone('UTC',clock_timestamp()),'YYYY-MM-DD HH24:MI:SS.US')", &[]).await.map_err(Error::from)?.get(0);
-                            tx.mutate(move |sql| {
-                                Box::pin(async move {
-                                    let mut after = old.clone();
-                                    after["waiting_reason"] = json!(reason);
-                                    after["attempted_at"] = json!(stamp);
-                                    let mut changes = Vec::new();
-                                    store::save(
-                                        sql,
-                                        ORDERS,
-                                        tenant,
-                                        company,
-                                        Some(old),
-                                        after,
-                                        &mut changes,
-                                    )
-                                    .await?;
-                                    Ok(((), changes))
-                                })
-                            })
-                            .await?;
-                        }
-                        tx.commit().await?;
-                    }
+            let mut c = owner.db.get().await.map_err(Error::from)?;
+            // Scheduling authority covers this scheduling metadata only. The
+            // separately queued worker must prove every Finance permission.
+            let mut tx = match owner
+                .write(
+                    &mut c,
+                    scope,
+                    company,
+                    capability,
+                    "finance.receivables.queue_order_invoice",
+                )
+                .await
+            {
+                Ok(tx) => tx,
+                Err(R::CompanyArchived | R::CompanyNotFound | R::Unauthorized) => continue,
+                Err(e) => return Err(e),
+            };
+            let old = store::find(tx.sql(), ORDERS, scope.tenant(), company, Some(id))
+                .await?
+                .ok_or(Error::NotFound)?;
+            if old["document_id"].is_number() || old["status"] != "confirmed" {
+                continue;
+            }
+            if let Some(job) = old["job_id"].as_i64() {
+                match bilibi_queue::lookup(tx.sql(), scope.tenant(), job).await {
+                    Ok(state) if !state.state.terminal() => continue,
+                    Ok(_) | Err(Error::NotFound) => {}
+                    Err(e) => return Err(e.into()),
                 }
+            }
+            let system = SystemScope::rehydrate(tx.sql(), scope.tenant(), Some(PRINCIPAL)).await?;
+            let job = self
+                .queue
+                .enqueue_system_within(
+                    &mut tx,
+                    &system,
+                    INVOICE_WORKER,
+                    json!({"company_id":company,"order_id":id}),
+                )
+                .await?;
+            let tenant = scope.tenant();
+            let stamp: String = tx
+                .sql()
+                .query_one(
+                    "SELECT to_char(timezone('UTC',clock_timestamp()),'YYYY-MM-DD HH24:MI:SS.US')",
+                    &[],
+                )
+                .await
+                .map_err(Error::from)?
+                .get(0);
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    let mut after = old.clone();
+                    after["job_id"] = json!(job.id());
+                    after["attempted_at"] = json!(stamp);
+                    let mut changes = Vec::new();
+                    store::save(sql, ORDERS, tenant, company, Some(old), after, &mut changes)
+                        .await?;
+                    Ok(((), changes))
+                })
+            })
+            .await?;
+            tx.commit().await?;
+        }
+        fence.commit().await?;
+        Ok(())
+    }
+}
+fn invoice_args(args: Value) -> bilibi_database::Result<Value> {
+    if args.as_object().is_some_and(|o| o.len() == 2)
+        && ["company_id", "order_id"]
+            .iter()
+            .all(|key| args[*key].as_i64().is_some_and(|n| n > 0))
+    {
+        Ok(args)
+    } else {
+        Err(Error::Invalid)
+    }
+}
+inventory::submit! { Contribution::new(WORKERS, INVOICE_WORKER, provenance!(), &Worker {max_attempts:5,validate:invoice_args}) }
+inventory::submit! { Contribution::new(HANDLERS, INVOICE_WORKER, provenance!(), &HandlerBinding {service:JOB_SERVICE,capability:MANAGE_DOCUMENTS}) }
+pub(crate) struct InvoiceOrder {
+    pub receivables: Arc<Receivables>,
+}
+impl Handler for InvoiceOrder {
+    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
+        Box::pin(async move {
+            match self.run(execution, args).await {
+                Ok(()) => Outcome::Completed,
+                Err(R::Unauthorized) => Outcome::Cancel("actor_refused"),
+                Err(_) => Outcome::Retry("order_invoice_failed"),
+            }
+        })
+    }
+}
+impl InvoiceOrder {
+    async fn run(&self, execution: &Execution, args: Value) -> Result<()> {
+        let scope = execution.scope().ok_or(R::Unauthorized)?;
+        if scope.principal() != Some(PRINCIPAL) {
+            return Err(R::Unauthorized);
+        }
+        let company = args["company_id"].as_i64().ok_or(R::InvalidOption)?;
+        let id = args["order_id"].as_i64().ok_or(R::InvalidOption)?;
+        let owner = &self.receivables;
+        let mut client = owner.db.get().await.map_err(Error::from)?;
+        let fence = execution
+            .begin(&mut client, "finance.receivables.order_invoice_attempt")
+            .await?;
+        match owner.invoice_sales_order(scope, company, id, None).await {
+            Ok(_) => {}
+            Err(R::Failed(e)) => return Err(e.into()),
+            Err(R::CompanyArchived | R::CompanyNotFound) => return Ok(()),
+            Err(e) => {
+                let reason=match e {R::Invalid(fields)=>fields.iter().map(|f|f.message.as_str()).collect::<Vec<_>>().join("; "),R::Unauthorized=>"An administrator must grant invoice preparation and customer access to the Finance order worker.".into(),other=>other.to_string()};
+                let mut c = owner.db.get().await.map_err(Error::from)?;
+                let mut tx = owner
+                    .write(
+                        &mut c,
+                        scope,
+                        company,
+                        MANAGE_DOCUMENTS,
+                        "finance.receivables.order_invoice_waiting",
+                    )
+                    .await?;
+                let old = store::find(tx.sql(), ORDERS, scope.tenant(), company, Some(id))
+                    .await?
+                    .ok_or(Error::NotFound)?;
+                if old["document_id"].is_null() && old["status"] == "confirmed" {
+                    let tenant = scope.tenant();
+                    tx.mutate(move |sql| {
+                        Box::pin(async move {
+                            let mut after = old.clone();
+                            after["waiting_reason"] = json!(reason);
+                            let mut changes = Vec::new();
+                            store::save(
+                                sql,
+                                ORDERS,
+                                tenant,
+                                company,
+                                Some(old),
+                                after,
+                                &mut changes,
+                            )
+                            .await?;
+                            Ok(((), changes))
+                        })
+                    })
+                    .await?;
+                }
+                tx.commit().await?;
             }
         }
         fence.commit().await?;

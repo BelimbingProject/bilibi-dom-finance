@@ -23,6 +23,7 @@ const DATASETS: &[(&str, &str, &[&str])] = &[
             "facts",
             "issue_date",
             "document_id",
+            "job_id",
             "waiting_reason",
             "attempted_at",
         ],

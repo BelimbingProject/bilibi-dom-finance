@@ -337,7 +337,7 @@ async fn main() -> Result<()> {
     println!(
         "PASS amount refusal rolls back a newly composed customer and relationship with the draft"
     );
-    // The unattended path uses the scheduler's own grants, not the seller.
+    // The unattended path uses the Finance worker's own grants, not the seller.
     ar.create_tax_code(
         &manager,
         1,
@@ -366,18 +366,25 @@ async fn main() -> Result<()> {
     .await?;
     deliver(&db, &services, &admin).await?;
     let automatic_id = automatic["record"]["id"].as_i64().unwrap();
-    for key in [
-        "admin.system.schedule.execute",
-        "admin.tenancy.tenant.list",
-        "finance.receivables.documents.manage",
-        "finance.receivables.customers.manage",
-        "companies.view",
-        "companies.update",
-        "admin.company.view",
-        "admin.company.list",
-    ] {
+    for key in ["admin.system.schedule.execute", "admin.tenancy.tenant.list"] {
         grants
             .set_system(&admin, "scheduler", key, Some(true))
+            .await?;
+    }
+    for key in [
+        "finance.receivables.documents.manage",
+        "finance.receivables.customers.manage",
+        "admin.company.view",
+        "admin.company.update",
+        "admin.person.view",
+    ] {
+        grants
+            .set_system(
+                &admin,
+                "finance-receivables-order-invoices",
+                key,
+                Some(true),
+            )
             .await?;
     }
     let schedule = services.get::<bilibi_base::schedule::Schedule>("base/schedule.store")?;
@@ -430,7 +437,7 @@ async fn main() -> Result<()> {
     let automatic_invoice = ar.get_document(&manager, 1, prepared??).await?;
     assert_eq!(automatic_invoice.total.shown(), "26.50");
     assert_eq!(automatic_invoice.tax_total.shown(), "1.50");
-    println!("PASS enabled each-tenant scheduled work creates a taxed draft under the scheduler's own grants");
+    println!("PASS enabled each-tenant scheduled work creates a taxed draft under the Finance worker's own grants");
     // Leave another unready order for browser proof.
     let browser = write(
         &db,
