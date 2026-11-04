@@ -636,10 +636,10 @@ impl InvoiceOrder {
             .await?;
         match owner.invoice_sales_order(scope, company, id, None).await {
             Ok(_) => {}
-            Err(R::Failed(e)) => return Err(e.into()),
+            Err(R::Failed(e) | R::Ledger(crate::LedgerError::Failed(e))) => return Err(e.into()),
             Err(R::CompanyArchived | R::CompanyNotFound) => return Ok(()),
             Err(e) => {
-                let reason=match e {R::Invalid(fields)=>fields.iter().map(|f|f.message.as_str()).collect::<Vec<_>>().join("; "),R::Unauthorized=>"An administrator must grant invoice preparation and customer access to the Finance order worker.".into(),other=>other.to_string()};
+                let reason=match e {R::Invalid(fields)=>fields.iter().map(|f|f.message.as_str()).collect::<Vec<_>>().join("; "),R::Ledger(crate::LedgerError::Invalid(fields))=>fields.iter().map(|f|f.message.as_str()).collect::<Vec<_>>().join("; "),R::Unauthorized=>"An administrator must grant invoice preparation and customer access to the Finance order worker.".into(),other=>other.to_string()};
                 let mut c = owner.db.get().await.map_err(Error::from)?;
                 let mut tx = owner
                     .write(
@@ -653,7 +653,10 @@ impl InvoiceOrder {
                 let old = store::find(tx.sql(), ORDERS, scope.tenant(), company, Some(id))
                     .await?
                     .ok_or(Error::NotFound)?;
-                if old["document_id"].is_null() && old["status"] == "confirmed" {
+                if old["document_id"].is_null()
+                    && old["status"] == "confirmed"
+                    && old["waiting_reason"] != reason
+                {
                     let tenant = scope.tenant();
                     tx.mutate(move |sql| {
                         Box::pin(async move {
