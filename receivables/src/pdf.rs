@@ -175,7 +175,7 @@ impl Receivables {
             .map(|l| Row {
                 description: l.description.clone(),
                 quantity: l.quantity.normalize().to_string(),
-                price: Money::display_decimal(l.unit_price, units),
+                price: Money::display_decimal(l.unit_price, None),
                 net: l.amount.display(units),
                 tax: l.tax_amount.display(units),
             })
