@@ -215,19 +215,19 @@ impl Receivables {
                 .map_err(|_| ReceivableError::Pdf("template"))?,
         };
         let owned = self.artifacts.for_owner(scope, company_id, &owner);
-        let artifact = owned
-            .render_inline(
-                &mut client,
-                Reference {
-                    subject: format!("document-{id}"),
-                    kind: "invoice-pdf".into(),
-                },
-                &json!({}),
-            )
-            .await
-            .map_err(|e| ReceivableError::Pdf(e.code()))?;
-        let file = owned
-            .read(&mut client, &artifact.id)
+        // The renderer contains the browser process and storage futures. Keep
+        // those allocations off the smaller web worker stack.
+        let artifact = Box::pin(owned.render_inline(
+            &mut client,
+            Reference {
+                subject: format!("document-{id}"),
+                kind: "invoice-pdf".into(),
+            },
+            &json!({}),
+        ))
+        .await
+        .map_err(|e| ReceivableError::Pdf(e.code()))?;
+        let file = Box::pin(owned.read(&mut client, &artifact.id))
             .await
             .map_err(|e| ReceivableError::Pdf(e.code()))?;
         Ok(PdfFile {
@@ -253,9 +253,7 @@ impl DownloadHandler<Scope, Error> for Downloads {
                 .get("id")
                 .and_then(|id| id.parse().ok())
                 .ok_or(Error::NotFound)?;
-            let file = self
-                .receivables
-                .print_document(request.scope, company, id)
+            let file = Box::pin(self.receivables.print_document(request.scope, company, id))
                 .await
                 .map_err(|error| match error {
                     ReceivableError::Unauthorized => Error::Forbidden,

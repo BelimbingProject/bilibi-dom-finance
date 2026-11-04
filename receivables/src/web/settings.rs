@@ -540,7 +540,7 @@ impl Settings {
             "Invoice logo",
             f::link(
                 &format!(
-                    "/system/settings?company={}&q=Invoice+logo",
+                    "/system/settings?company={}&search=Invoice+logo",
                     Pages::company(scope).unwrap_or(0)
                 ),
                 "Upload or remove the invoice logo (administrator)",
