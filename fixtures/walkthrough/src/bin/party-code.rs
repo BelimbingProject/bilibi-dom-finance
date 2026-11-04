@@ -294,6 +294,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &root,
         )
         .await?;
+        if let Ok(binary) = std::env::var("INVOICE_LAYOUT_CHROMIUM") {
+            let settings = app
+                .services
+                .get::<bilibi_settings::Settings>("base/settings.store")?;
+            let mut client = db.get().await?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    admin.mutation_context("walkthrough.invoice-layout.configure"),
+                )
+                .await?;
+            settings
+                .put(
+                    &mut tx,
+                    &admin,
+                    bilibi_settings::Target::Global,
+                    "pdf.chromium.binary",
+                    json!(binary),
+                )
+                .await?;
+            tx.commit().await?;
+        }
         let default_pdf = ar.print_document(&scope, 1, issued.id).await?;
         assert!(default_pdf.bytes.starts_with(b"%PDF-"));
         std::fs::write(format!("{root}/default.pdf"), default_pdf.bytes)?;
