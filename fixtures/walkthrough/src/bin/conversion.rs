@@ -1578,7 +1578,7 @@ async fn main() -> Outcome<()> {
 // One-door proof: keep the normal Platform launcher and its administrator.
 // This is called after launch-only retirement of the old walkthrough users.
 async fn launcher_credentials(db: &Db, services: &Services) -> Outcome<()> {
-    use bilibi_core::agent_access::{
+    use bilibi_core::agent::{
         code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange,
     };
     use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
@@ -1618,7 +1618,7 @@ async fn launcher_credentials(db: &Db, services: &Services) -> Outcome<()> {
                 .set_duty_separation(&scope,company,false,Some("Disposable single-person browser/MCP parity fixture; retain every same-person approval exception")).await?;
         }
     }
-    let access = services.get::<AgentAccess>("core/agent_access.grants")?;
+    let access = services.get::<AgentAccess>("core/agent.grants")?;
     let callback = "https://example.test/opening-list-proof/callback";
     let registration=access.register_client(&serde_json::from_value::<ClientRegistration>(json!({"client_name":"Opening list proof","redirect_uris":[callback],"token_endpoint_auth_method":"none"}))?).await?;
     let client_id = registration["client_id"]
