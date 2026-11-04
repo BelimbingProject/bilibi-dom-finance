@@ -145,6 +145,24 @@ impl Receivables {
                 STANDARD.encode(image.bytes)
             );
         }
+        let recipient = [
+            document.party_name.as_deref(),
+            document.party_registration_identifier.as_deref(),
+            document.party_line1.as_deref(),
+            document.party_line2.as_deref(),
+            document.party_line3.as_deref(),
+            document.party_postcode.as_deref(),
+            document.party_locality.as_deref(),
+            document.party_admin1_code.as_deref(),
+            document.party_country_iso.as_deref(),
+            document.party_email.as_deref(),
+            document.party_phone.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
         let title = if document.kind == "credit_note" {
             "Credit note"
         } else {
@@ -165,6 +183,7 @@ impl Receivables {
         let template = Invoice {
             title,
             credited_reference: &credited_reference,
+            recipient: &recipient,
             reference: &reference,
             company_name: if layout.company_name.is_empty() {
                 &name
@@ -254,6 +273,7 @@ struct Row {
 #[template(path = "receivables_invoice.html")]
 struct Invoice<'a> {
     credited_reference: &'a str,
+    recipient: &'a str,
     title: &'a str,
     reference: &'a str,
     company_name: &'a str,

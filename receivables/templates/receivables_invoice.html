@@ -17,15 +17,7 @@ footer { margin-top: 28px; border-top: 1px solid #ccc; padding-top: 14px; font-s
 <header>{% if !logo.is_empty() %}<img src="{{ logo }}" alt="Company logo">{% endif %}<div><h2>{{ company_name }}</h2><div class="block">{{ layout.registration_number }}</div><div class="block">{{ layout.address }}</div><div class="block">{{ layout.contact }}</div></div></header>
 <h1>{{ title }}</h1><strong>{{ reference }}</strong>
 {% if !credited_reference.is_empty() %}<div>Credits invoice: {{ credited_reference }}</div>{% endif %}
-<div class="details"><div><strong>Bill to</strong><div class="block">{{ document.party_name.as_deref().unwrap_or("") }}
-{{ document.party_registration_identifier.as_deref().unwrap_or("") }}
-{{ document.party_line1.as_deref().unwrap_or("") }}
-{{ document.party_line2.as_deref().unwrap_or("") }}
-{{ document.party_line3.as_deref().unwrap_or("") }}
-{{ document.party_postcode.as_deref().unwrap_or("") }} {{ document.party_locality.as_deref().unwrap_or("") }}
-{{ document.party_admin1_code.as_deref().unwrap_or("") }} {{ document.party_country_iso.as_deref().unwrap_or("") }}
-{{ document.party_email.as_deref().unwrap_or("") }}
-{{ document.party_phone.as_deref().unwrap_or("") }}</div></div><div>Issue date: {{ document.issue_date.as_deref().unwrap_or("") }}<br>Due date: {{ document.due_date.as_deref().unwrap_or("") }}<br>Currency: {{ document.currency_code }}</div></div>
+<div class="details"><div><strong>Bill to</strong><div class="block">{{ recipient }}</div></div><div>Issue date: {{ document.issue_date.as_deref().unwrap_or("") }}<br>Due date: {{ document.due_date.as_deref().unwrap_or("") }}<br>Currency: {{ document.currency_code }}</div></div>
 <div class="block">{{ document.description.as_deref().unwrap_or("") }}</div>
 <table><thead><tr><th>Description</th><th class="number">Quantity</th><th class="number">Unit price</th><th class="number">Amount</th><th class="number">Tax</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.description }}</td><td class="number">{{ row.quantity }}</td><td class="number">{{ row.price }}</td><td class="number">{{ row.net }}</td><td class="number">{{ row.tax }}</td></tr>{% endfor %}</tbody></table>
 <table class="totals"><tbody><tr><td>Subtotal</td><td class="number">{{ subtotal }}</td></tr><tr><td>Tax</td><td class="number">{{ tax }}</td></tr><tr class="total"><td>Total ({{ document.currency_code }})</td><td class="number">{{ total }}</td></tr></tbody></table>
