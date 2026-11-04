@@ -1,11 +1,11 @@
 //! Labels, badges, field errors and the page frame the Receivables pages share.
-use super::{Flash, render};
+use super::{render, Flash};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_ui::{
-    Badge, BadgeKind, BuiltinColumn, Fact, FlashGroup, FlexRow, FlexTable, Html, ListColumns,
-    Modal, ModalWidth, Page, PageVariant, error_sentence,
+    error_sentence, Badge, BadgeKind, BuiltinColumn, Fact, FlashGroup, FlexRow, FlexTable, Html,
+    ListColumns, Modal, ModalWidth, Page, PageVariant,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;

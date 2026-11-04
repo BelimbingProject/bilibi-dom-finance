@@ -4,21 +4,19 @@
 //! issued invoices of one customer, so the dialog lists that customer's open
 //! invoices and asks how much of the receipt goes to each.
 use super::{
-    Account, DENIED, Flash, Pages, RECEIPTS, Written,
     documents::reference,
     format::{self as f, Errors},
-    render,
+    render, Account, Flash, Pages, Written, DENIED, RECEIPTS,
 };
-use crate::{Customer, Document, POST_PAYMENTS, Payment, Series};
+use crate::{Customer, Document, Payment, Series, POST_PAYMENTS};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton,
-    EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
-    ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params,
+    params, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome,
+    CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
+    InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
+    RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde_json::json;

@@ -4,24 +4,22 @@
 //! is issued or discarded after a confirmation. Reads `document.get`; writes
 //! call `draft.update`, `draft.discard` and `document.issue`.
 use super::{
-    Account, CUSTOMERS, Flash, INVOICES, Pages, RECEIPTS, Written,
     documents::reference,
     format::{self as f, Errors},
-    render,
+    render, Account, Flash, Pages, Written, CUSTOMERS, INVOICES, RECEIPTS,
 };
-use crate::{Customer, Document as Record, ISSUE, MANAGE_DOCUMENTS, Payment, Series, TaxCode};
+use crate::{Customer, Document as Record, Payment, Series, TaxCode, ISSUE, MANAGE_DOCUMENTS};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_finance_ledger::{Money, PartyReview};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    BackLink, Button, ButtonVariant, Card, Cell, Choice, CommitStates, CommitStatus, ConfirmDialog,
-    EmptyState, Facts, Field, FlexRow, Form, Header, Html, InlineEdit, InlineLongText, InputKind,
-    ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params,
+    params, BackLink, Button, ButtonVariant, Card, Cell, Choice, CommitStates, CommitStatus,
+    ConfirmDialog, EmptyState, Facts, Field, FlexRow, Form, Header, Html, InlineEdit,
+    InlineLongText, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 enum Dialog {

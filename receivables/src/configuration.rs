@@ -1,10 +1,10 @@
 //! Bilimbi Receivables.Configuration and Customers: setup history and code
 //! lists. All mutations hold the company lock and audit persisted row images.
 use crate::{
-    Customer, MANAGE_CUSTOMERS, MANAGE_SETUP, Page, ReceivableError as R, Receivables, Result,
-    Series, Setup, SetupChange, TaxCode, VIEW, authorize, companies, invalid,
-    store::{self, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX, Table},
-    validation as v,
+    authorize, companies, invalid,
+    store::{self, Table, CUSTOMERS, HISTORY, SERIES, SETUPS, TAX},
+    validation as v, Customer, Page, ReceivableError as R, Receivables, Result, Series, Setup,
+    SetupChange, TaxCode, MANAGE_CUSTOMERS, MANAGE_SETUP, VIEW,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
@@ -12,7 +12,7 @@ use bilibi_finance_ledger::{Account, AccountType};
 use bilibi_tenancy::Scope;
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub(super) struct Prepared {
     pub before: Option<Value>,

@@ -20,23 +20,23 @@ mod write_offs;
 use crate::{MODULE, VIEW};
 use askama::Template;
 use bilibi_agent_api::{
-    Error as ContractError,
     page::{Call, PageContracts},
+    Error as ContractError,
 };
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy};
 use bilibi_locale::Locales;
 use bilibi_module_registry::{
+    contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
     Contribution, Provenance,
-    contributions::{Access, Method, PAGE_WRITES, PageWrites, Pending, ROUTES, Route},
 };
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    Choice, FlashMap, Html, NO_FLASH, StatusKind,
     page::{MountFuture, Page, PageBody, PageFuture, PageRequest},
+    Choice, FlashMap, Html, StatusKind, NO_FLASH,
 };
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub(crate) const PAGES: &str = "finance/receivables.pages";

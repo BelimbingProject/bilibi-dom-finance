@@ -4,7 +4,7 @@ use crate::*;
 use bilibi_agent_api::OperationClient;
 use bilibi_database::Change;
 use bilibi_finance_ledger::{Approval, OpeningContext, Preparer};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 impl Receivables {
     pub(super) async fn authorize_opening_stage(

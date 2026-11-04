@@ -1,5 +1,5 @@
 //! Mirrors Bilimbi Receivables.{Balances,Aging,TaxReport,TieOut}.
-use crate::{MODULE, ReceivableError, Receivables, Result, VIEW, authorize, store};
+use crate::{authorize, store, ReceivableError, Receivables, Result, MODULE, VIEW};
 use bilibi_database::Error;
 use bilibi_finance_ledger::{MinorUnits, TotalsQuery};
 use bilibi_tenancy::Scope;

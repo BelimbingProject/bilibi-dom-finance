@@ -3,7 +3,7 @@
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Change, Error, Result};
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
 #[derive(Clone, Copy)]

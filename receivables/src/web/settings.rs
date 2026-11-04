@@ -12,22 +12,20 @@
 //! configured needs both accounts in one `setup.configure`, so the first
 //! choice is kept on the page (never persisted) until the second arrives.
 use super::{
-    Account, DENIED, Flash, Pages, READ_LIMIT, Written,
     format::{self as f, Errors},
-    render,
+    render, Account, Flash, Pages, Written, DENIED, READ_LIMIT,
 };
-use crate::{MANAGE_SETUP, Payment, Series, Setup, SetupChange, TaxCode};
+use crate::{Payment, Series, Setup, SetupChange, TaxCode, MANAGE_SETUP};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
+    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
+    params, Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
     CommitStates, CommitStatus, ConfirmDialog, Facts, Field, FlexRow, Fold, Form, Header, Html,
     InlineChoice, InlineEdit, InlineField, InlineLongText, InputKind, ListColumns, ModalWidth,
     PageVariant, SectionHeading, StatusKind,
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 /// The chart of accounts page, where an account the setup needs is added.

@@ -1,6 +1,6 @@
 //! Permanent Core party links and issue-time facts for Receivables, mirroring
 //! Bilimbi's customer seam without a second source of party identity or code.
-use crate::{Customer, Receivables, Result, invalid, store};
+use crate::{invalid, store, Customer, Receivables, Result};
 use bilibi_agent_api::OperationClient;
 use bilibi_company::RelationshipRole;
 use bilibi_database::{Error, MutationTransaction};
@@ -9,7 +9,7 @@ use bilibi_party::{
     CalendarDate, EffectiveDates, OrganisationId, PartyId, PersonId, RelationshipInput,
 };
 use bilibi_tenancy::Scope;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub(super) fn reference(row: &Value) -> Result<(&str, i64)> {
     Ok((

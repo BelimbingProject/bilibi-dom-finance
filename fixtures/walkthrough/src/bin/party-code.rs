@@ -155,30 +155,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(consumer.code, consumer.party.code);
     assert_eq!(consumer.party.kind, "person");
     // A taken Finance reference refuses the write. Codes are never Finance input.
-    assert!(
-        ar.create_customer(
+    assert!(ar
+        .create_customer(
             &scope,
             1,
             &json!({"record_kind":"person","record_id":consumer.party.id})
         )
         .await
-        .is_err()
-    );
-    assert!(
-        ar.update_customer(&scope, 1, consumer.id, &json!({"code":"OTHER"}))
-            .await
-            .is_err()
-    );
-    assert!(
-        ar.update_customer(
+        .is_err());
+    assert!(ar
+        .update_customer(&scope, 1, consumer.id, &json!({"code":"OTHER"}))
+        .await
+        .is_err());
+    assert!(ar
+        .update_customer(
             &scope,
             1,
             consumer.id,
             &json!({"record_kind":"company","record_id":11})
         )
         .await
-        .is_err()
-    );
+        .is_err());
     let vendor_input = |kind: &str, id| VendorInput {
         record_kind: Some(kind.into()),
         record_id: Some(id),
@@ -220,21 +217,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .position(|f| *f == "code")
         .unwrap();
-    assert!(
-        customer_evidence
-            .rows
-            .iter()
-            .any(|r| r[code_at] == consumer.code)
-    );
+    assert!(customer_evidence
+        .rows
+        .iter()
+        .any(|r| r[code_at] == consumer.code));
     let supplier_evidence = ap
         .evidence_page(&scope, 1, "vendor", Some(500), None)
         .await?;
-    assert!(
-        supplier_evidence
-            .rows
-            .iter()
-            .any(|r| r["code"] == consumer.code)
-    );
+    assert!(supplier_evidence
+        .rows
+        .iter()
+        .any(|r| r["code"] == consumer.code));
     println!(
         "PASS: company customer {} code {}; person customer {} code {}; company supplier {} code {}; person supplier shares {}; TV invoice {} posted and aging carries {}",
         company.id,
@@ -304,11 +297,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let default_pdf = ar.print_document(&scope, 1, issued.id).await?;
         assert!(default_pdf.bytes.starts_with(b"%PDF-"));
         std::fs::write(format!("{root}/default.pdf"), default_pdf.bytes)?;
-        assert!(
-            ar.print_document(&scope, 1, masked_draft.id + 99999)
-                .await
-                .is_err()
-        );
+        assert!(ar
+            .print_document(&scope, 1, masked_draft.id + 99999)
+            .await
+            .is_err());
         let bad = ar
             .configure(
                 &scope,

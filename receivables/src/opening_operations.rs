@@ -2,11 +2,11 @@
 //! review fence prevents earlier plan steps from changing reviewed opening facts.
 use crate::*;
 use bilibi_agent_api::{
-    Channels, DEFINITIONS, Definitions, Handler, Operation, OperationClient, OperationFuture,
-    ReadHandler, WriteHandler,
+    Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, ReadHandler,
+    WriteHandler, DEFINITIONS,
 };
 use bilibi_module_registry::{Contribution, Provenance, RegistryError};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::OnceLock;
 static OWNER: OnceLock<Arc<Receivables>> = OnceLock::new();
 pub(super) fn bind(owner: Arc<Receivables>) -> bilibi_module_registry::Result<()> {

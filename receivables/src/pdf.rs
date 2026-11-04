@@ -1,19 +1,19 @@
 //! Regenerable A4 views of issued invoices and credit notes. Base Artifacts
 //! owns rendering, private storage and delivery authorization.
-use crate::{Document, InvoiceLayout, ReceivableError, Receivables, Result, VIEW, authorize};
+use crate::{authorize, Document, InvoiceLayout, ReceivableError, Receivables, Result, VIEW};
 use askama::Template;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bilibi_artifacts::{HtmlFuture, HtmlOwner, Operation, Owner, Reference};
 use bilibi_database::Error;
 use bilibi_finance_ledger::Money;
 use bilibi_module_registry::{
+    contributions::{Access, Download, DOWNLOADS},
     Contribution, Provenance,
-    contributions::{Access, DOWNLOADS, Download},
 };
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use bilibi_ui::download::{Download as DownloadHandler, DownloadFuture, DownloadRequest, FileBody};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub(crate) const FILES: &str = "finance/receivables.pdf-downloads";

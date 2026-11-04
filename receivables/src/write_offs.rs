@@ -1,9 +1,9 @@
 //! Invoice-linked bad-debt journals extend Bilimbi Receivables' settlement seam.
 //! Tax eligibility and tax adjustments are deliberately separate decisions.
 use crate::{
-    APPROVE_WRITE_OFFS, MODULE, Receivables, Result, SUBMIT_WRITE_OFFS, documents, invalid,
+    documents, invalid,
     store::{self, Table},
-    validation as v,
+    validation as v, Receivables, Result, APPROVE_WRITE_OFFS, MODULE, SUBMIT_WRITE_OFFS,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
@@ -13,7 +13,7 @@ use bilibi_finance_ledger::{
 use bilibi_tenancy::Scope;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriteOff {

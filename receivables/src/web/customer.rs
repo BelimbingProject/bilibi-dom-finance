@@ -6,23 +6,21 @@
 //! and `core.company.relationship.list`; each edit calls `customer.update`;
 //! every customer permanently names a Core Company or Person.
 use super::{
-    CUSTOMERS, Flash, INVOICES, Pages, RECEIPTS, Written,
     company_pick::{self, Relation},
     format::{self as f},
-    render,
+    render, Flash, Pages, Written, CUSTOMERS, INVOICES, RECEIPTS,
 };
-use crate::{Customer as Record, Document, MANAGE_CUSTOMERS, PartyFacts, Payment};
+use crate::{Customer as Record, Document, PartyFacts, Payment, MANAGE_CUSTOMERS};
 use bilibi_database::{Error, Result};
 use bilibi_records::{Reference, Resolved};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    BackLink, Button, Card, Cell, CommitStates, CommitStatus, EmptyState, Facts, Field, FlexRow,
-    Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns, PageVariant, Restricted,
-    SectionHeading, StatusKind,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params,
+    params, BackLink, Button, Card, Cell, CommitStates, CommitStatus, EmptyState, Facts, Field,
+    FlexRow, Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns, PageVariant,
+    Restricted, SectionHeading, StatusKind,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// `(key, label)` of the Finance facts a customer edits in place.
@@ -421,7 +419,8 @@ impl Customer {
             body: {
                 let mut b = render(SectionHeading {
                     title: "In Finance",
-                    description: "Inactive stops new invoices; receipts and credit notes stay possible.",
+                    description:
+                        "Inactive stops new invoices; receipts and credit notes stay possible.",
                     ..SectionHeading::default()
                 })?;
                 b.push(&summary);

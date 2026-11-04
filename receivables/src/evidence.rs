@@ -1,6 +1,6 @@
 //! Frozen auditor export mirroring Bilimbi `Finance.Receivables.Evidence`.
 //! Dates and UTC instants follow Ledger.Evidence; decimals retain exact SQL text.
-use crate::{ReceivableError, Receivables, Result, VIEW, authorize};
+use crate::{authorize, ReceivableError, Receivables, Result, VIEW};
 use bilibi_database::Error;
 use bilibi_tenancy::Scope;
 use serde::Serialize;

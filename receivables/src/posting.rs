@@ -1,10 +1,10 @@
 //! Bilimbi Receivables.Documents issuing and Payments: record and owned entry
 //! commit together under the company's writable lock. Saved lines never change.
 use crate::{
-    Document, ISSUE, MODULE, POST_PAYMENTS, Payment, PaymentQuery, ReceivableError as R,
-    Receivables, Result, VIEW, authorize, documents, invalid,
-    store::{self, CUSTOMERS, DOCUMENTS, SERIES, SETUPS, Table},
-    validation as v,
+    authorize, documents, invalid,
+    store::{self, Table, CUSTOMERS, DOCUMENTS, SERIES, SETUPS},
+    validation as v, Document, Payment, PaymentQuery, ReceivableError as R, Receivables, Result,
+    ISSUE, MODULE, POST_PAYMENTS, VIEW,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
@@ -15,7 +15,7 @@ use bilibi_finance_ledger::{
 use bilibi_tenancy::Scope;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct PreparedIssue {
@@ -235,11 +235,10 @@ impl Receivables {
         }
         if !credit && draft.due_date.is_none() {
             let days = i64::from(customer.payment_terms_days);
-            data["due_date"] = json!(
-                date.checked_add(jiff::SignedDuration::from_hours(days * 24))
-                    .map_err(|_| invalid("due_date", "is invalid"))?
-                    .to_string()
-            );
+            data["due_date"] = json!(date
+                .checked_add(jiff::SignedDuration::from_hours(days * 24))
+                .map_err(|_| invalid("due_date", "is invalid"))?
+                .to_string());
         }
         let (number, reference) = next_number(client, tenant, company, &series, false).await?;
         data["status"] = json!("issued");
