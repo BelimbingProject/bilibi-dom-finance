@@ -146,6 +146,7 @@ they govern this code and are not copied here.
   (`period_select:<id>`). An as-of date (trial balance, aging), a tax period
   (SST return, e-invoice month) or a figure's drill-down window is not a
   range filter; keep its single control and say so in the module README.
+- Lay out an aging report as the twins do (`receivables/src/web/aging.rs`, `payables/src/web/aged.rs`): the as-of date is a `ToolbarControl::date` in the shared toolbar and updates live, one table by party with a Total row, and each bucket amount links to the same page narrowed to that party's bucket (`?customer=`/`?supplier=` and `bucket=`), never a date card with a Show button or the report's pins as facts.
 - Show a money amount with the book's minor units through `Money::display` (`ledger/src/money.rs`), never `Money`/`Decimal` `to_string`: it groups thousands and keeps the book's decimal places. Keep `Money::shown` for editable, ungrouped values; a bare `Decimal` (a unit price, a report total) goes through `Money::display_decimal`, never a formatter of a page's own.
 - Agent writes join the shared plan's audited transaction through the ledger's private `*_on` methods, never the pool-owning public wrappers: nested commits would escape plan rollback. Preview on the handed `OperationClient`; retain the transaction-local review fence because the pinned engine previews every step before executing any.
 

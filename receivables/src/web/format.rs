@@ -159,6 +159,17 @@ struct Link<'a> {
     text: &'a str,
 }
 
+#[derive(askama::Template)]
+#[template(source = r#"<strong class="font-semibold tabular-nums">{{ text }}</strong>"#, ext = "html")]
+struct Strong<'a> {
+    text: &'a str,
+}
+
+/// A table's total row text.
+pub(super) fn strong(text: &str) -> Result<Html> {
+    render(Strong { text })
+}
+
 /// A plain navigation link inside a fact or a cell.
 pub(super) fn link(href: &str, text: &str) -> Result<Html> {
     render(Link { href, text })
