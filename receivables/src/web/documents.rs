@@ -4,7 +4,7 @@
 use super::opening::Opening;
 use super::{
     format::{self as f, Errors},
-    render, Flash, Pages, Written, INVOICES,
+    render, Flash, Pages, Written, INVOICES, SETTINGS,
 };
 use crate::{records::DocumentPageRow, Customer, Document, Series, MANAGE_DOCUMENTS, VIEW};
 use bilibi_database::{Error, Result};
@@ -638,22 +638,41 @@ impl Documents {
             .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.id.to_string()))
             .collect();
         let mut who = Html::EMPTY;
-        who.push(&render(
-            Field::in_form("draft", "series_id")
-                .id("receivables-draft-series_id")
-                .label("Series")
-                .kind(InputKind::Select)
-                .prompt(if series.is_empty() {
-                    "No series yet — add one in Settings"
-                } else {
-                    "Choose a series"
-                })
-                .options(series)
-                .value(value("series_id"))
-                .required()
-                .hint("The numbering the document takes when it is issued.")
-                .errors(draft.errors.under("series_id", "Series")),
-        )?);
+        let mut series_field = Field::in_form("draft", "series_id")
+            .id("receivables-draft-series_id")
+            .label("Series")
+            .kind(InputKind::Select)
+            .prompt(if series.is_empty() {
+                "No series yet — add one in Settings"
+            } else {
+                "Choose a series"
+            })
+            .options(series)
+            .value(value("series_id"))
+            .required()
+            .errors(draft.errors.under("series_id", "Series"));
+        if credit {
+            series_field = series_field.hint("The numbering the document takes when it is issued.");
+        }
+        let mut series_html = Html::raw("<div>");
+        series_html.push(&render(series_field)?);
+        if !credit {
+            // The Field hint is plain text, so the invoice's hint is drawn
+            // here to carry the shared settings link icon.
+            series_html.push(&Html::raw(
+                "<p id=\"receivables-draft-series_id-hint\" class=\"mt-1.5 flex items-center gap-1 text-xs text-ink-subtle\">Issued ref no, settings ",
+            ));
+            series_html.push(&render(bilibi_ui::ActionLink {
+                id: "receivables-draft-series-settings",
+                icon: "link",
+                title: "Series settings",
+                href: SETTINGS,
+                ..bilibi_ui::ActionLink::default()
+            })?);
+            series_html.push(&Html::raw("</p>"));
+        }
+        series_html.push(&Html::raw("</div>"));
+        who.push(&series_html);
         who.push(&render(
             Field::in_form("draft", "customer_id")
                 .id("receivables-draft-customer_id")
@@ -700,7 +719,11 @@ impl Documents {
             (
                 "issue_date",
                 "Issue date",
-                "Leave empty to set it when you issue.",
+                if credit {
+                    "Leave empty to set it when you issue."
+                } else {
+                    "Leave empty to use the actual date of issue."
+                },
             ),
             (
                 "due_date",
@@ -756,9 +779,13 @@ impl Documents {
             if credit {
                 "New credit note"
             } else {
-                "New invoice"
+                "New invoice - draft"
             },
-            "A draft has no number and posts nothing until you issue it.",
+            if credit {
+                "A draft has no number and posts nothing until you issue it."
+            } else {
+                "Draft: no ref no and no posting until issued."
+            },
             "cancel_create",
             ModalWidth::Wide,
             &self.flash,
