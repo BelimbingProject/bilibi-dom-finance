@@ -232,7 +232,14 @@ impl Book {
         let mut controls = render(SectionHeading {
             id: "ledger-book-controls-heading",
             title: "Controls",
-            description: "Controlled bookkeeping restricts posting to open periods. Manage other Finance approvals on Approval exceptions, and manual journals on Approval rules.",
+            description: "Controlled bookkeeping lets entries post only into open periods. Manual journals follow their own approval rules.",
+            actions: render(bilibi_ui::ActionLink {
+                id: "ledger-book-controls-change",
+                href: "/finance/reports/controls",
+                title: "Change on Bookkeeping controls",
+                body: Html::text("Change on Bookkeeping controls"),
+                ..bilibi_ui::ActionLink::default()
+            })?,
             ..SectionHeading::default()
         })?;
         controls.push(&render(Facts {
@@ -244,7 +251,7 @@ impl Book {
                     value: yes_no(controlled, "On", "Off")?,
                 },
                 Fact {
-                    title: "Other Finance separation",
+                    title: "Someone else approves Finance records",
                     id: "ledger-book-separation",
                     value: yes_no(required, "Required", "Not required")?,
                 },
@@ -325,9 +332,12 @@ impl Book {
             let mut hint = match (&self.options.proposed, chosen) {
                 (Some(proposed), Some(c)) if proposed.code == c.code => format!(
                     "Proposed from the {} base currency. You cannot change it later.",
-                    if proposed.source == "company" { "company's" } else { "tenant's" }
+                    if proposed.source == "company" {
+                        "company's"
+                    } else {
+                        "tenant's"
+                    }
                 ),
-                (None, None) => "No base currency is set for this company or tenant. Search by code or name. You cannot change it later.".into(),
                 _ => "Search by code or name. You cannot change it later.".into(),
             };
             if !self.options.can_enable {
@@ -403,20 +413,20 @@ impl Book {
         body.push(&render(
             Field::in_form("book", "approver")
                 .id("ledger-book-approver")
-                .label("Other Finance approvals")
+                .label("Finance approvals")
                 .kind(InputKind::Select)
                 .value(&self.approver)
                 .options(vec![
-                    Choice::new("Independent approval required", "someone_else"),
-                    Choice::new("Self-approval permitted", "one_person"),
+                    Choice::new("Someone else must approve", "someone_else"),
+                    Choice::new("The preparer may approve their own", "one_person"),
                 ])
-                .hint("This controls other Finance approvals. Manual journals follow their rules on Approval rules."),
+                .hint("For bills, payments and other Finance records. Manual journals follow their own approval rules."),
         )?);
         if self.approver == "one_person" {
             body.push(&render(
                 Field::in_form("book", "approval_reason")
                     .id("ledger-book-approval-reason")
-                    .label("Reason for allowing self-approval")
+                    .label("Why the preparer may approve")
                     .value(&self.approval_reason)
                     .required()
                     .errors(errors("reason")),
@@ -477,7 +487,7 @@ impl Book {
                     "The currency list has not been imported, so {code} was not checked against ISO 4217. "
                 ));
             }
-            detail.push_str(if self.approver == "one_person" { "The currency and decimal places are permanent. Other Finance approvals permit preparer approval and record exceptions. Manual journal rules are set separately on Approval rules." } else { "The currency and decimal places are permanent. Other Finance approvals require another person. Manual journal rules are set separately on Approval rules." });
+            detail.push_str(if self.approver == "one_person" { "The currency and decimal places are permanent. The preparer may approve their own bills, payments and other Finance records; each such approval is listed in Approval exceptions. Manual journals follow their own approval rules." } else { "The currency and decimal places are permanent. Bills, payments and other Finance records need someone else's approval. Manual journals follow their own approval rules." });
             html.push(&render(ConfirmDialog {
                 id: "ledger-book-confirm",
                 consequence: &format!(
