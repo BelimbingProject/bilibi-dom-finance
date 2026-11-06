@@ -379,7 +379,7 @@ impl Accounts {
                 if current {
                     empty = empty.action(render(Button {
                         id: "ledger-accounts-open-book",
-                        href: super::book::INDEX,
+                        href: &format!("{}/{}", super::book::INDEX, company.id),
                         body: Html::text("Go to the book"),
                         variant: ButtonVariant::Primary,
                         ..Button::default()
@@ -421,7 +421,6 @@ impl Accounts {
             }
             body.push(&render(Note { id: "ledger-accounts-comparison", text: "Select one company to add accounts or apply a starter chart. Each balance is in its company's currency; no consolidation or currency translation is performed." })?);
         }
-        body.push(&render(Note { id: "ledger-accounts-context", text: "This filter does not change the current company in the top bar. Each account opens in its named company." })?);
         let mut page = render(Header {
             title: Html::text("Chart of accounts"),
             subtitle: &subtitle,
