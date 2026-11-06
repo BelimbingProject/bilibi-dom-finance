@@ -3,6 +3,7 @@
 //! and write goes through a `finance.receivables.*` operation contract with
 //! `PageContracts`, the same contract the agent doors call; no page touches
 //! the facade or a table. Business meaning follows Belimbing's receivables.
+mod actions;
 mod aging;
 mod company_pick;
 mod credits;
@@ -62,6 +63,26 @@ bilibi_records::drop_target!(
     }
 );
 pub(crate) const INVOICES: &str = "/finance/receivables/invoices";
+/// The drop target of the New invoice dialog (`bilibi_records::drop_target!`).
+pub(crate) const INVOICE_TARGET: &str = "receivables.invoice";
+
+// A customer's Core company or contact, carried by a list row's actions menu
+// (or dropped on Invoices), opens the New invoice dialog with that customer
+// chosen; the dialog commits `draft.create` as "+ Invoice" does. A party that
+// is not a customer yet gets the page's own notice, not a dialog.
+bilibi_records::drop_target!(
+    "finance/receivables",
+    bilibi_records::DropTarget {
+        id: INVOICE_TARGET,
+        service: PAGES,
+        contract: "finance.receivables.draft.create",
+        capability: crate::MANAGE_DOCUMENTS,
+        path: INVOICES,
+        label: "New invoice",
+        accepts: &["company", "person"],
+        max: 1,
+    }
+);
 pub(crate) const RECEIPTS: &str = "/finance/receivables/receipts";
 const AGING: &str = "/finance/receivables/aging";
 pub(crate) const SETTINGS: &str = "/finance/receivables/settings";
@@ -657,6 +678,7 @@ impl State {
     async fn mounted(&mut self, scope: &Scope) -> Result<()> {
         match self {
             State::Customers(s) => s.mounted(scope).await,
+            State::Invoices(s) => s.mounted(scope).await,
             _ => Ok(()),
         }
     }

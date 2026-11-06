@@ -3,6 +3,7 @@
 //! Company or Person (`company_pick`) and submits `customer.create`, which records
 //! the company, Finance customer and relationship in one transaction.
 use super::{
+    actions::Actions,
     company_pick::Submitted,
     format::{self as f, Errors},
     render, Flash, Pages, CUSTOMERS,
@@ -71,6 +72,8 @@ pub(super) struct Customers {
     all: Vec<Customer>,
     cut: bool,
     can_add: bool,
+    /// Each row's actions menu: what other pages offer for its party.
+    actions: Actions,
     create: Option<Create>,
     flash: Flash,
     framed: bool,
@@ -96,6 +99,7 @@ impl Customers {
             all: vec![],
             cut: false,
             can_add: false,
+            actions: Actions::default(),
             create: None,
             flash: Flash::default(),
             framed,
@@ -220,6 +224,7 @@ impl Customers {
             )
             .await?;
         self.can_add = self.pages.allowed(scope, crate::MANAGE_CUSTOMERS).await?;
+        self.actions = Actions::read(&self.pages.records, scope).await?;
         Ok(())
     }
 
@@ -307,6 +312,7 @@ impl Customers {
         for c in &shown {
             let mut row = FlexRow::new(c.id.to_string());
             row.dom_id = Some(format!("receivables-customer-{}", c.id));
+            self.actions.attach(c, &mut row)?;
             flex_rows.push(
                 row.slot(
                     "code",
@@ -337,6 +343,7 @@ impl Customers {
         )
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Customers";
+        table.actions = self.actions.any();
         table.framed = false;
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();

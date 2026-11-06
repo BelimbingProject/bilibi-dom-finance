@@ -1,6 +1,8 @@
 //! The invoices and credit notes list, and its New invoice and New credit
 //! note dialogs. Reads `document.page`, `customer.list` and `series.list`;
 //! saving a draft calls `draft.create`.
+mod new_draft;
+
 use super::opening::Opening;
 use super::{
     format::{self as f, Errors},
@@ -83,6 +85,8 @@ struct Draft {
 
 pub(super) struct Documents {
     pages: Pages,
+    /// A customer an actions menu carried (`?drop=`), opened once on first use.
+    dropped: Option<String>,
     list: ListState,
     columns: ListColumns,
     documents: Vec<DocumentPageRow>,
@@ -121,6 +125,7 @@ impl Documents {
         ];
         Ok(Self {
             pages,
+            dropped: query.get(bilibi_records::DROP_PARAM).cloned(),
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns: ListColumns::mount("receivables-invoices-table", columns)
                 .map_err(|_| Error::Internal)?,
@@ -154,6 +159,7 @@ impl Documents {
 
     pub(super) async fn first(&mut self, scope: &Scope) -> Result<String> {
         self.load(scope).await?;
+        self.open_dropped(scope).await?;
         self.body(scope).await
     }
 
@@ -598,13 +604,14 @@ impl Documents {
                 .map(|draft| self.dialog(draft))
                 .transpose()?
         };
-        f::frame(
+        let html = f::frame(
             "receivables-invoices",
             PageVariant::List,
             &self.flash,
             body,
             modal,
-        )
+        )?;
+        Ok(self.drop_zone(html))
     }
 
     fn dialog(&self, draft: &Draft) -> Result<Html> {
@@ -844,38 +851,16 @@ impl Documents {
                 }
             }
             kind @ ("show_create_invoice" | "show_create_credit_note") => {
-                if self.pages.allowed(scope, MANAGE_DOCUMENTS).await? {
-                    let kind = if kind == "show_create_invoice" {
-                        "invoice"
-                    } else {
-                        "credit_note"
-                    };
-                    self.opening = None;
-                    if kind == "credit_note" {
-                        self.credit_invoices = self
-                            .pages
-                            .read_all(
-                                scope,
-                                "finance.receivables.document.list",
-                                json!({"kind":"invoice","status":"issued"}),
-                                ("after", "next_after"),
-                            )
-                            .await?
-                            .0;
-                    }
-                    let mut values = HashMap::new();
-                    let mut open = self.series.iter().filter(|s| s.kind == kind && s.active);
-                    if let (Some(only), None) = (open.next(), open.next()) {
-                        values.insert("series_id".into(), only.id.to_string());
-                    }
-                    self.create = Some(Draft {
-                        kind,
-                        values,
-                        errors: Errors::default(),
-                    });
+                let kind = if kind == "show_create_invoice" {
+                    "invoice"
                 } else {
-                    self.flash.set(StatusKind::Error, super::DENIED);
-                }
+                    "credit_note"
+                };
+                self.start_draft(scope, kind).await?;
+            }
+            bilibi_records::DROP_EVENT => {
+                let text = v["records"].as_str().ok_or(Error::Invalid)?;
+                self.receive_drop(scope, text).await?;
             }
             "cancel_create" => self.create = None,
             "create_draft" => {
