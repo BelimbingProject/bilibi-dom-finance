@@ -27,7 +27,7 @@ def sql(query):
     return subprocess.check_output(["psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-c", query], text=True).strip()
 
 
-require(sql("SELECT email FROM users WHERE tenant_id=1 AND id=2") == "viewer@example.test", "not the disposable fixture")
+require(sql("SELECT i.email FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id=2") == "viewer@example.test", "not the disposable fixture")
 
 
 def invoke(tool, arguments, who="first"):

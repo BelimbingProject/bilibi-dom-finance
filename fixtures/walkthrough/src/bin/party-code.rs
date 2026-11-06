@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         client.batch_execute("INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(1,1,'ada_manager','Ada Manager','human','manager@example.test') ON CONFLICT DO NOTHING;
             INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(1,1,1,1,'Manager') ON CONFLICT DO NOTHING;
-            INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) SELECT 1,1,'Ada Manager','manager@example.test',password_hash,1 FROM users WHERE email='ai@agent.my' ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=1 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;").await?;
+            INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','manager@example.test',i.password_hash,1,1,1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE i.email='ai@agent.my' ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 1,1,'Ada Manager',id,1 FROM user_identities WHERE home_tenant_id=1 AND home_user_id=1 ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=1 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;").await?;
     }
     let installed = install(&db, &app.services).await?;
     if std::env::args().any(|arg| arg == "--evidence") {

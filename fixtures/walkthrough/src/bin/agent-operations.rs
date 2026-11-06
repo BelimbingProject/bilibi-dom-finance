@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let path = std::env::var("BILIBI_AGENT_CREDENTIALS")?;
     let origin = std::env::var("APP_ORIGIN")?;
-    bilibi_walkthrough_fixture::install(&db).await?;
+    bilibi_finance_walkthrough_fixture::install_platform(&db).await?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants.reconcile().await?;
     let admin = sign_in(&db, &services, 1, 4).await?;
@@ -192,7 +192,7 @@ async fn payables_control(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let c = db.get().await?;
     if c.query_opt(
-        "SELECT 1 FROM users WHERE id=1 AND tenant_id=1 AND email='manager@example.test'",
+        "SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND u.tenant_id=1 AND i.email='manager@example.test'",
         &[],
     )
     .await?

@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get()
                 .await?
                 .query_opt(
-                    "SELECT id FROM users WHERE id=1 AND email='manager@example.test'",
+                    "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND i.email='manager@example.test'",
                     &[],
                 )
                 .await?
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return serve(app).await;
     }
 
-    bilibi_walkthrough_fixture::install(&db).await?;
+    bilibi_finance_walkthrough_fixture::install_platform(&db).await?;
     services
         .get::<Grants>("base/authz.grants")?
         .reconcile()

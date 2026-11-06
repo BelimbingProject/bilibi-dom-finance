@@ -38,7 +38,7 @@ def sql(query):
     ).strip()
 
 
-require(sql("SELECT count(*) FROM users WHERE tenant_id=1 AND id=1 AND email='manager@example.test'") == "1", "not the disposable fixture")
+require(sql("SELECT count(*) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id=1 AND i.email='manager@example.test'") == "1", "not the disposable fixture")
 
 
 def request(path, data=None, who="manager", channel="api"):

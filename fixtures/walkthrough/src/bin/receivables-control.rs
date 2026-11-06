@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = db.get().await?;
     if client
         .query_opt(
-            "SELECT id FROM users WHERE id=1 AND email='manager@example.test'",
+            "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND i.email='manager@example.test'",
             &[],
         )
         .await?

@@ -109,7 +109,18 @@ async fn main() -> Outcome<()> {
         preview["result"]["changes"]["target"]["creation"]["name"],
         "Orchid Atelier"
     );
-    assert_eq!(ar.list_customers(&manager, 1).await?.len(), 0);
+    // Count on the open transaction itself: the preview holds the company lock, so
+    // a second pooled connection (`ar.list_customers`) would wait on it forever,
+    // and the transaction sees any row the preview wrote, which that one would not.
+    let previewed: i64 = tx
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM finance_receivables_customers WHERE company_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    assert_eq!(previewed, 0);
     let answer = create
         .commit(&mut tx, &manager, &input)
         .await?
@@ -285,9 +296,7 @@ async fn main() -> Outcome<()> {
     );
 
     // Billing intervals, kind priority, primary fallback, complete frozen facts.
-    // Reference geography, as in Core's geonames-walkthrough example. The
-    // disposable install deliberately has no imported country list.
-    raw.batch_execute("INSERT INTO geonames_countries(iso,iso3,iso_numeric,country,continent) VALUES('MY','MYS','458','Malaysia','AS'); INSERT INTO geonames_admin1(code,name) VALUES('MY.14','Kuala Lumpur')").await?;
+    // Malaysia and Kuala Lumpur come from the Platform's bundled reference geography.
     let primary = addresses
         .create_and_attach(
             &manager,
@@ -374,7 +383,7 @@ async fn main() -> Outcome<()> {
     println!("PASS: expired billing attachment falls back to primary address");
     let stale_draft = ar.create_draft(&manager, 1, &invoice("2026-08-31")).await?;
     let stale_input = json!({"company_id":1,"document_id":stale_draft.id});
-    let mut review_tx = mutations
+    let review_tx = mutations
         .begin(
             &mut raw,
             manager.mutation_context("walkthrough.changed-billing"),
@@ -383,6 +392,11 @@ async fn main() -> Outcome<()> {
     issue
         .preview(review_tx.sql(), &manager, &stale_input)
         .await?;
+    // The preview holds the company lock until its transaction ends, so the
+    // billing change cannot run beside it: end that transaction, change the
+    // address, then try to commit on a new one. The review is local to the
+    // transaction it was taken on, so the old preview cannot authorise it.
+    review_tx.rollback().await?;
     addresses
         .update(
             &manager,
@@ -394,6 +408,12 @@ async fn main() -> Outcome<()> {
                     ..billing.address.address.clone()
                 },
             },
+        )
+        .await?;
+    let mut review_tx = mutations
+        .begin(
+            &mut raw,
+            manager.mutation_context("walkthrough.changed-billing-commit"),
         )
         .await?;
     let changed = issue.commit(&mut review_tx, &manager, &stale_input).await;

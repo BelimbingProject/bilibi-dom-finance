@@ -1440,7 +1440,7 @@ async fn main() -> Outcome<()> {
             return Err("disposable proof required".into());
         }
         let c = db.get().await?;
-        let proof: bool = c.query_one("SELECT current_database()='fin_issue_110_rest_ui' AND EXISTS(SELECT 1 FROM users WHERE id=6 AND email='ai@agent.my') AND EXISTS(SELECT 1 FROM finance_ledger_entries WHERE company_id=2)",&[]).await?.get(0);
+        let proof: bool = c.query_one("SELECT current_database()='fin_issue_110_rest_ui' AND EXISTS(SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=6 AND i.email='ai@agent.my') AND EXISTS(SELECT 1 FROM finance_ledger_entries WHERE company_id=2)",&[]).await?.get(0);
         if !proof {
             return Err(
                 "prepare this task's disposable conversion database before restoring identities"
@@ -1450,7 +1450,7 @@ async fn main() -> Outcome<()> {
         // Fixture identities only: the normal launcher retires the old demo users.
         c.batch_execute("INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(1,1,'ada_manager','Ada Manager','human','manager@example.test') ON CONFLICT DO NOTHING;
         INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(1,1,1,1,'Manager') ON CONFLICT DO NOTHING;
-        INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) SELECT 1,1,'Ada Manager','manager@example.test',password_hash,1 FROM users WHERE id=6 AND email='ai@agent.my' ON CONFLICT DO NOTHING;
+        INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','manager@example.test',i.password_hash,1,1,1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=6 AND i.email='ai@agent.my' ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 1,1,'Ada Manager',id,1 FROM user_identities WHERE home_tenant_id=1 AND home_user_id=1 ON CONFLICT DO NOTHING;
         INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,1,1) ON CONFLICT DO NOTHING;").await?;
     }
     install(&db, &app.services).await?;
@@ -1588,7 +1588,7 @@ async fn launcher_credentials(db: &Db, services: &Services) -> Outcome<()> {
     let client = db.get().await?;
     let row = client
         .query_one(
-            "SELECT tenant_id,id FROM users WHERE email='ai@agent.my'",
+            "SELECT u.tenant_id,u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE i.email='ai@agent.my'",
             &[],
         )
         .await?;
@@ -1672,7 +1672,7 @@ async fn launcher_ordinary(db: &Db, services: &Services) -> Outcome<()> {
     let client = db.get().await?;
     let row = client
         .query_one(
-            "SELECT tenant_id,id FROM users WHERE email='ai@agent.my'",
+            "SELECT u.tenant_id,u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE i.email='ai@agent.my'",
             &[],
         )
         .await?;

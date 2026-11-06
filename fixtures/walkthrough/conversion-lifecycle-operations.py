@@ -41,7 +41,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-require(sql("SELECT count(*) FROM users WHERE id=1 AND email='manager@example.test'") == "1", "not the disposable fixture")
+require(sql("SELECT count(*) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND i.email='manager@example.test'") == "1", "not the disposable fixture")
 
 
 def request(path, body=None, who="manager", channel="api"):

@@ -74,7 +74,7 @@ async fn main() -> Outcome<()> {
     let services = bilibi_finance_walkthrough_fixture::services(&db, &modules)?;
     let c = db.get().await?;
     if c.query_opt(
-        "SELECT 1 FROM users WHERE tenant_id=1 AND id=1 AND email='manager@example.test'",
+        "SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id=1 AND i.email='manager@example.test'",
         &[],
     )
     .await?

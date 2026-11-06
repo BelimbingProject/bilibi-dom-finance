@@ -80,7 +80,7 @@ async fn main() -> Outcome<()> {
     let modules = bilibi_module_registry::discover()?;
     bilibi_database::migrate(&db, &modules).await?;
     let services = bilibi_finance_walkthrough_fixture::services(&db, &modules)?;
-    bilibi_walkthrough_fixture::install(&db).await?;
+    bilibi_finance_walkthrough_fixture::install_platform(&db).await?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants.reconcile().await?;
     if std::env::args().any(|arg| arg == "--empty") {
