@@ -11,7 +11,7 @@ use bilibi_ui::{AddToItem, AddToMenu, Html};
 /// The document and its summary side by side.
 #[derive(Template)]
 #[template(
-    source = r#"<div id="{{ id }}" class="grid items-start gap-4 lg:grid-cols-3"><div id="{{ id }}-document" class="min-w-0 space-y-4 lg:col-span-2">{{ document|safe }}</div><aside id="{{ id }}-summary" aria-label="Summary" class="min-w-0 space-y-4">{{ summary|safe }}</aside></div>"#,
+    source = r#"<div id="{{ id }}" class="grid items-start gap-4 lg:grid-cols-3"><div id="{{ id }}-document" class="min-w-0 space-y-4 lg:col-span-2">{{ document|safe }}</div><aside id="{{ id }}-summary" aria-label="Summary" class="order-first min-w-0 space-y-4 lg:order-none">{{ summary|safe }}</aside></div>"#,
     ext = "html"
 )]
 pub struct DocumentLayout {
