@@ -2,7 +2,7 @@
 //! Four independent immutable-stream pins reproduce backdated activity too.
 use crate::*;
 use activity::Activity;
-use bilibi_finance_ledger::{AccountTotal, MinorUnits, TotalsQuery};
+use bilibi_finance_ledger::{AccountTotal, MinorUnits, OwnerTotal, TotalsQuery};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use store::{int, Table};
 
@@ -28,6 +28,12 @@ pub struct Reconciliation {
     pub register_balance: Money,
     #[serde(deserialize_with = "money_serde::deserialize")]
     pub difference: Money,
+    /// Activity on a depreciation, gain or loss account that this module did
+    /// not post (an invoice to a shared income account, a manual journal):
+    /// shown beside the row, never counted as a register difference. Zero on
+    /// a balance row, where every posting counts.
+    #[serde(deserialize_with = "money_serde::deserialize")]
+    pub other_postings: Money,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RegisterRow {
@@ -131,7 +137,7 @@ impl FixedAssets {
         let through = totals.through_entry_number;
         let flows = self
             .ledger
-            .account_totals_on(
+            .account_totals_by_owner_on(
                 c,
                 s,
                 company,
@@ -277,7 +283,7 @@ impl FixedAssets {
 fn reconcile<'a>(
     rows: &[RegisterRow],
     totals: &[AccountTotal],
-    flows: &[AccountTotal],
+    flows: &[OwnerTotal],
     revisions: impl Iterator<Item = &'a CategoryRevision>,
 ) -> Vec<Reconciliation> {
     let mut expected = BTreeMap::<i64, Money>::new();
@@ -318,15 +324,28 @@ fn reconcile<'a>(
                 .map(|id| (*id, ReconciliationKind::Activity)),
         )
         .map(|(id, kind)| {
-            let source = if kind == ReconciliationKind::Balance {
-                totals
+            // A balance counts every posting: an acquisition debit comes from
+            // a bill or a journal, never from this module. Activity counts only
+            // this module's postings, so a gain or loss account shared with
+            // sales or cost of sales does not show their activity as a difference.
+            let (actual, other) = if kind == ReconciliationKind::Balance {
+                let actual = totals
+                    .iter()
+                    .find(|r| r.account.id == id)
+                    .map_or(Money::ZERO, |r| r.debits - r.credits);
+                (actual, Money::ZERO)
             } else {
-                flows
+                flows.iter().filter(|r| r.account.id == id).fold(
+                    (Money::ZERO, Money::ZERO),
+                    |(own, other), r| {
+                        if r.owner_module.as_deref() == Some(MODULE) {
+                            (own + (r.debits - r.credits), other)
+                        } else {
+                            (own, other + (r.debits - r.credits))
+                        }
+                    },
+                )
             };
-            let actual = source
-                .iter()
-                .find(|r| r.account.id == id)
-                .map_or(Money::ZERO, |r| r.debits - r.credits);
             let registered = expected.get(&id).copied().unwrap_or(Money::ZERO);
             Reconciliation {
                 account_id: id,
@@ -334,6 +353,7 @@ fn reconcile<'a>(
                 ledger_balance: actual,
                 register_balance: registered,
                 difference: actual - registered,
+                other_postings: other,
             }
         })
         .collect()
