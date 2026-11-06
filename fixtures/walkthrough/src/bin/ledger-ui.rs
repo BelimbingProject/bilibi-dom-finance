@@ -594,6 +594,25 @@ async fn book_page_proof(
         ("MYR", 2)
     );
     assert_eq!(enabled().await?, 1, "opening the book should enable MYR");
+    let mut opened_page = mount().await?;
+    let seen = update(&mut opened_page, manager, LiveInput::Refresh).await?;
+    has(&seen, "ledger-book-controls-change");
+    let viewer = bilibi_finance_walkthrough_fixture::sign_in(db, services, 2, 9).await?;
+    let mut viewer_page = pages
+        .0
+        .mount(PageRequest {
+            operation: "book",
+            scope: Some(&viewer),
+            path: &path,
+            query: &HashMap::new(),
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .expect("the book page mounts for a reader");
+    let read = update(&mut viewer_page, &viewer, LiveInput::Refresh).await?;
+    has(&read, "ledger-book-controls");
+    lacks(&read, "ledger-book-controls-change");
     println!(
         "Book page and book.open: without currency manage the page asks an administrator and enable_currency is refused; with it MYR is reviewed as enabled, opens the book, enables MYR in the same write, keeps its 2 decimal places and lands on Chart of accounts"
     );

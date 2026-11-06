@@ -4,7 +4,7 @@ use super::{
     error_text, event_type, no_company, render, shell, unavailable, view, Failure, Flash, Pages,
     Read, Refusal, Review,
 };
-use crate::MANAGE_ACCOUNTS;
+use crate::{MANAGE_ACCOUNTS, MANAGE_CONTROLLED_BOOKKEEPING, MANAGE_DUTY_SEPARATION};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
@@ -114,7 +114,7 @@ impl Book {
                     body.push(&unavailable("ledger-book-refused", "the book", &refused)?)
                 }
                 Ok(state) => match &state.book {
-                    Some(book) => body.push(&self.facts(&state, book)?),
+                    Some(book) => body.push(&self.facts(scope, &state, book).await?),
                     None => {
                         self.load_options(scope).await?;
                         body.push(&self.open_form(scope).await?)
@@ -175,7 +175,17 @@ impl Book {
         Ok(())
     }
 
-    fn facts(&self, state: &view::BookState, book: &view::BookRow) -> Result<Html> {
+    async fn facts(
+        &self,
+        scope: &Scope,
+        state: &view::BookState,
+        book: &view::BookRow,
+    ) -> Result<Html> {
+        let can_change = self
+            .pages
+            .allowed(scope, MANAGE_CONTROLLED_BOOKKEEPING)
+            .await?
+            || self.pages.allowed(scope, MANAGE_DUTY_SEPARATION).await?;
         let controlled = state
             .controlled_bookkeeping
             .as_ref()
@@ -233,13 +243,17 @@ impl Book {
             id: "ledger-book-controls-heading",
             title: "Controls",
             description: "Controlled bookkeeping lets entries post only into open periods. Manual journals follow their own approval rules.",
-            actions: render(bilibi_ui::ActionLink {
-                id: "ledger-book-controls-change",
-                href: "/finance/reports/controls",
-                title: "Change on Bookkeeping controls",
-                body: Html::text("Change on Bookkeeping controls"),
-                ..bilibi_ui::ActionLink::default()
-            })?,
+            actions: if can_change {
+                render(bilibi_ui::ActionLink {
+                    id: "ledger-book-controls-change",
+                    href: "/finance/reports/controls",
+                    title: "Change on Bookkeeping controls",
+                    body: Html::text("Change on Bookkeeping controls"),
+                    ..bilibi_ui::ActionLink::default()
+                })?
+            } else {
+                Html::EMPTY
+            },
             ..SectionHeading::default()
         })?;
         controls.push(&render(Facts {
