@@ -9,8 +9,8 @@ use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BuiltinColumn, Cell, EmptyState, FilterToolbar, FlexRow, FlexTable, Html,
-    ListColumns, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, Cell, EmptyState, FilterToolbar, FlexRow, FlexTable, Html, ListColumns,
+    TableEmpty, ToolbarControl,
 };
 use jiff::civil::Date;
 use std::collections::HashMap;
@@ -296,7 +296,12 @@ impl Aged {
         if !aged.parties.is_empty() {
             let mut row = FlexRow::new("all");
             row.dom_id = Some("payables-aged-total".into());
-            row = row.slot("party", render(Strong { text: "Total".into() })?);
+            row = row.slot(
+                "party",
+                render(Strong {
+                    text: "Total".into(),
+                })?,
+            );
             for (i, amount) in aged.buckets.iter().enumerate().take(labels.len()) {
                 row = row.slot(&format!("b{i}"), self.bucket_cell(amount, None)?);
             }

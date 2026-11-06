@@ -160,7 +160,10 @@ struct Link<'a> {
 }
 
 #[derive(askama::Template)]
-#[template(source = r#"<strong class="font-semibold tabular-nums">{{ text }}</strong>"#, ext = "html")]
+#[template(
+    source = r#"<strong class="font-semibold tabular-nums">{{ text }}</strong>"#,
+    ext = "html"
+)]
 struct Strong<'a> {
     text: &'a str,
 }

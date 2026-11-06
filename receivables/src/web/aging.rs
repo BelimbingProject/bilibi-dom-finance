@@ -441,7 +441,8 @@ impl Aging {
                         id: "receivables-aging-credits-heading",
                         title: "Unapplied customer credits",
                         class: "p-5 pb-0",
-                        description: "They age from their original dates, apart from unpaid invoices.",
+                        description:
+                            "They age from their original dates, apart from unpaid invoices.",
                         ..SectionHeading::default()
                     })?;
                     b.push(&f::table(
