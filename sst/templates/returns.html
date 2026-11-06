@@ -4,7 +4,7 @@
 {% import "forms.html" as form %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="sst-returns") %}
-{% call ui::header(subtitle="SST-02 returns for each taxable period, computed from posted documents and reconciled with the tax accounts.", title_actions=title_actions, actions=actions) %}SST returns{% endcall %}
+{% call ui::header(subtitle="Prepare and review the company's SST-02 returns.", title_actions=title_actions, actions=actions) %}SST returns{% endcall %}
 {% if let Some(refusal) = refusal %}{{ refusal|safe }}{% endif %}
 {% if let Some(unregistered) = unregistered %}{{ unregistered|safe }}{% endif %}
 {% if let Some(periods) = periods %}

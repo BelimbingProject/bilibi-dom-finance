@@ -291,22 +291,7 @@ impl Aged {
             bills,
             credits,
             empty: None,
-            summary: render(bilibi_ui::Facts {
-                id: "payables-aged-pins",
-                items: vec![
-                    f::fact(
-                        "Gross debit balances",
-                        &aged.gross_debits.display(self.units),
-                    ),
-                    f::fact(
-                        "Gross credit balances",
-                        &aged.gross_credits.display(self.units),
-                    ),
-                    f::fact("Ledger entry", &aged.through_entry_number.to_string()),
-                    f::fact("Opening batch", &aged.through_opening_batch_id.to_string()),
-                    f::fact("Settlement", &aged.through_settlement_number.to_string()),
-                ],
-            })?,
+            summary: Html::EMPTY,
             opening_credits: Some(Self::table(
                 &self.opening_credits,
                 "opening_credits_grid",

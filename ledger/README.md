@@ -751,7 +751,7 @@ Saved templates are immutable and use the key `saved:<key>`. A repeated key is r
 
 An operator can set **Ledger → Proposed starter chart** in Base Settings. The nullable key `finance.ledger.default_chart_template` accepts global and tenant values: use a bundled template key globally, and a bundled or `saved:<key>` template within its tenant. A tenant override takes precedence; an explicit null proposes none. An unavailable key is shown as unavailable and never causes accounts to be created.
 
-On Chart of accounts, **Template proposal** lets a person with `finance.ledger.templates.manage` choose or clear the tenant proposal through a reviewed operation. **Opening creates no accounts.** Once the book opens, the Book page takes the person to Chart of accounts, whose empty chart offers the proposal first, alongside the other templates and the choice to start empty. Apply only after reviewing the exact rows and optional sections. Existing books are never reseeded, and changing a proposal changes no accounts.
+On Chart of accounts, **Starter chart** lets a person with `finance.ledger.templates.manage` choose or clear the tenant proposal through a reviewed operation. **Opening creates no accounts.** Once the book opens, the Book page takes the person to Chart of accounts, whose empty chart offers the proposal first, alongside the other templates and the choice to start empty. Apply only after reviewing the exact rows and optional sections. Existing books are never reseeded, and changing a proposal changes no accounts.
 
 The same contracts serve pages, REST and MCP:
 

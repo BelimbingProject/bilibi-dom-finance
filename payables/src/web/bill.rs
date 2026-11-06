@@ -197,14 +197,17 @@ impl Bill {
             id: "payables-bill-party-facts",
             items: vec![
                 f::fact("Name", &d.party.name),
-                f::fact("Core code", &d.party.code),
+                f::fact("Supplier code", &d.party.code),
                 f::fact("Tax ID", f::optional(&d.party.tax_id)),
                 f::fact("Registration", f::optional(&d.party.registration_id)),
                 f::fact("Address", f::optional(&d.party.address)),
             ],
         })?;
         let mut items = vec![
-            f::fact("Party's number", f::optional(&d.party_document_number)),
+            f::fact(
+                "Supplier's invoice number",
+                f::optional(&d.party_document_number),
+            ),
             f::fact("Date", &d.document_date.to_string()),
             f::fact(
                 "Due",

@@ -71,7 +71,7 @@ async fn main() -> Outcome<()> {
             payroll.list_posting_events(&manager, 1).await?.len()
         );
         let html = page(&services, &manager, None).await?;
-        assert!(html.contains("No payroll or claims source is installed"));
+        assert!(html.contains("Payroll is not in use"));
         assert!(!html.contains("id=\"payroll-runs-table\""));
         assert!(html.contains("FY1"));
         println!("FY1: People absent; postings retained, source writes make no attempt");
@@ -89,7 +89,7 @@ async fn main() -> Outcome<()> {
         assert!(postings.len() >= 2);
         let html = page(&services, &manager, None).await?;
         assert!(html.contains("id=\"payroll-runs-table\""));
-        assert!(!html.contains("No payroll or claims source is installed"));
+        assert!(!html.contains("Payroll is not in use"));
         println!("FY1: People remounted; copied sources and original postings retained");
         return Ok(());
     }
@@ -253,7 +253,7 @@ async fn main() -> Outcome<()> {
     ] {
         assert!(html.contains(text));
     }
-    assert!(!html.contains("No payroll or claims source is installed"));
+    assert!(!html.contains("Payroll is not in use"));
     grants
         .set_direct(
             &admin,

@@ -449,7 +449,7 @@ impl State {
                     } else {
                         &self.document
                     };
-                    body.push(&render(Alert {id:"conversion-summary",kind:StatusKind::Info,body:Html::text(&format!("Conversion {} · reporting date {} · through entry {} · {} unresolved items. Review every difference, source and schedule limit.",content["conversion_date"].as_str().unwrap_or(""),content["as_of"].as_str().unwrap_or(""),content["through_entry_number"],content["unresolved_differences"].as_array().map_or(0,Vec::len))),..Alert::default()})?);
+                    body.push(&render(Alert {id:"conversion-summary",kind:StatusKind::Info,body:Html::text(&format!("Conversion {} · reporting date {} · {} unresolved items. Review every difference, source and schedule limit.",content["conversion_date"].as_str().unwrap_or(""),content["as_of"].as_str().unwrap_or(""),content["unresolved_differences"].as_array().map_or(0,Vec::len))),..Alert::default()})?);
                     let stale_bridges = content["bank_bridges"].as_array().map_or(0, |rows| {
                         rows.iter()
                             .filter(|row| row["source_activity_after_finalisation"] == true)
@@ -605,7 +605,7 @@ impl State {
                     variant: ButtonVariant::Primary,
                     ..Button::default()
                 })?);
-                fields.push(&render(Alert {id:"conversion-significance",kind:StatusKind::Info,body:Html::text(if self.id.is_some(){"Sign the exact issued report after reviewing its sources, differences and excluded history. Explain any qualifications in your conclusion."}else{"Issue an immutable copy after reviewing the report. Issuance does not sign it or certify completeness."}),..Alert::default()})?);
+                fields.push(&render(Alert {id:"conversion-significance",kind:StatusKind::Info,body:Html::text(if self.id.is_some(){"Sign the exact issued report after reviewing its sources, differences and excluded history. Explain any qualifications in your conclusion."}else{"Once issued, this report cannot be changed. Issuing does not sign it."}),..Alert::default()})?);
                 body.push(&render(Card {
                     id: "conversion-form-card",
                     body: render(Form {

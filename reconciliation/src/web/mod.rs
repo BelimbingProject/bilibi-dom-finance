@@ -55,7 +55,7 @@ bilibi_menu::contribute!(
     "finance/reconciliation",
     bilibi_menu::MenuItem::page(
         "finance.reconciliation",
-        "Bank reconciliation",
+        "Bank accounts",
         "/finance/reconciliation"
     )
     .company_scoped()
@@ -182,7 +182,7 @@ fn path_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
-            "index" => Some("Bank reconciliation"),
+            "index" => Some("Bank accounts"),
             "account" => Some("Bank statements"),
             "matching" => Some("Matching"),
             "reconciliation" => Some("Reconciliation"),

@@ -369,7 +369,7 @@ impl Document {
         };
         match self.document_number {
             Some(n) => format!("{kind} {n}"),
-            None => format!("{kind} (record {})", self.id),
+            None => format!("{kind} (no number yet)"),
         }
     }
 }

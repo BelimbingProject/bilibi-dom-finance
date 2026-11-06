@@ -103,7 +103,6 @@ pub(crate) struct TemplateSummary {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct Owner {
     pub module: String,
-    pub record: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

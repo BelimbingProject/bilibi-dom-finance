@@ -150,29 +150,24 @@ pub(super) fn header(
 ) -> Result<Html> {
     let mut subtitle = Html::EMPTY;
     let mut actions = Html::EMPTY;
-    let mut title = "Management reports".to_owned();
+    let mut title = "Reports".to_owned();
     let mut back = Html::EMPTY;
     let mut account_id = None;
     if activity {
         title = "Account entries".into();
         back = render(BackLink {
             href: PATH,
-            title: "Management reports",
+            title: "Reports",
             ..BackLink::default()
         })?;
         if let Some(Report::Activity(a)) = report {
             title = format!("{} {}", a.account.code, a.account.name);
             account_id = Some(a.account.id.to_string());
             subtitle.push(&Html::text(&format!(
-                "{} · {} · ",
+                "{} · {}",
                 type_label(a.account.account_type),
                 window(a)
             )));
-            subtitle.push(&text(
-                "activity-through",
-                &format!("through entry {}", a.through_entry_number),
-                false,
-            )?);
             if _query.get("closing").is_some_and(|v| v == "excluded") {
                 subtitle.push(&text(
                     "activity-closing",
@@ -183,14 +178,8 @@ pub(super) fn header(
         }
     } else if let Some(header) = report.and_then(Report::header) {
         subtitle = text("report-currency", &header.currency_code, false)?;
-        subtitle.push(&Html::text(" · "));
-        subtitle.push(&text(
-            "report-through",
-            &format!("through entry {}", header.through_entry_number),
-            false,
-        )?);
         if pinned {
-            subtitle.push(&Html::text(" · pinned"));
+            subtitle.push(&Html::text(" · figures frozen"));
         }
         // The shared button has no patch-link variant. A page event changes
         // only URL/read state, retaining the mounted page just as patch does.
@@ -218,7 +207,7 @@ pub(super) fn header(
             body: Html::text(if pinned {
                 "Show latest figures"
             } else {
-                "Pin entry cutoff"
+                "Freeze these figures"
             }),
             ..Button::default()
         })?);
@@ -241,9 +230,7 @@ pub(super) fn notice() -> Result<Html> {
     render(Alert {
         id: "management-report-notice",
         class: "mb-3",
-        body: Html::text(
-            "Management reports for the company's own use, read live from its ledger. They are not statutory financial statements: there is no cash flow statement, statement of changes in equity or other comprehensive income, notes, or consolidation.",
-        ),
+        body: Html::text("For management use, not statutory statements."),
         ..Alert::default()
     })
 }
@@ -319,22 +306,17 @@ fn overview(
     for (id, title, view, range) in [
         (
             "overview-profit-and-loss",
-            "Profit and loss (management)",
+            "Profit and loss",
             "profit-and-loss",
             0..3,
         ),
         (
             "overview-position",
-            "Financial position (management)",
+            "Financial position",
             "balance-sheet",
             3..6,
         ),
-        (
-            "overview-cash",
-            "Cash position (management)",
-            "cash-position",
-            6..7,
-        ),
+        ("overview-cash", "Cash position", "cash-position", 6..7),
     ] {
         let mut q = query.clone();
         q.insert("view".into(), view.into());
@@ -497,7 +479,7 @@ fn statement(
     columns: &mut HashMap<&'static str, ListColumns>,
     list: &ListState,
 ) -> Result<Html> {
-    let title = format!("Management report: {}", id.replace('-', " "));
+    let title = format!("Report: {}", id.replace('-', " "));
     let mut body = Html::EMPTY;
     if let Some((title, reason)) = empty {
         body.push(&render(EmptyState::missing(title, reason))?);

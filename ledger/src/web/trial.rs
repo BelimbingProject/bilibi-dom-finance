@@ -137,7 +137,6 @@ impl Trial {
             },
         ))?;
         status.push(&render(Pinned {
-            number: trial.through_entry_number,
             currency: &trial.currency_code,
         })?);
         status.push(&render(Button {
@@ -251,11 +250,10 @@ impl Trial {
 
 #[derive(Template)]
 #[template(
-    source = r#"<span id="ledger-trial-pin" class="ml-3 text-sm text-ink-muted">Figures count entries up to number {{ number }}, in {{ currency }}.</span>"#,
+    source = r#"<span id="ledger-trial-pin" class="ml-3 text-sm text-ink-muted">Amounts in {{ currency }}.</span>"#,
     ext = "html"
 )]
 struct Pinned<'a> {
-    number: i64,
     currency: &'a str,
 }
 

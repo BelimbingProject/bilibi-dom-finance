@@ -138,9 +138,8 @@ impl Entry {
             note(
                 "ledger-entry-owned",
                 format!(
-                    "{} posted this entry for {}. Correct it there, not here.",
-                    source_label(&owner.module),
-                    owner.record.replace(':', " ")
+                    "Posted by {}. Correct it there, not here.",
+                    source_label(&owner.module)
                 ),
                 None,
             )?;

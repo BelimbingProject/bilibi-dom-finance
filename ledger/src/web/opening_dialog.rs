@@ -119,13 +119,13 @@ impl OpeningDialog {
                     "source_reference",
                     "Source reference",
                     InputKind::Text,
-                    "A permanent export or batch identifier. Keep it unchanged when retrying; a correction needs a new one.",
+                    "A name for this batch. Reuse it if you retry; a corrected batch needs a new one.",
                 ),
                 (
                     "csv",
                     "Opening balances CSV",
                     InputKind::Textarea,
-                    "Paste UTF-8 CSV with header source_id,account_code,debit,credit. Map account_code to existing active accounts; use ungrouped amounts. Maximum 500 rows and 128 KiB.",
+                    "Paste a CSV with the header source_id,account_code,debit,credit. Use the codes of active accounts and amounts without thousands separators. Up to 500 rows.",
                 ),
             ] {
                 let errors = self

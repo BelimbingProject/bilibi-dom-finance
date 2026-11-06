@@ -4,7 +4,7 @@
 {% import "feedback.html" as feedback %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="bank-accounts") %}
-{% call ui::header(subtitle="Manage bank accounts and statement import mappings.", title_actions=title_actions) %}Bank reconciliation{% endcall %}
+{% call ui::header(subtitle="", title_actions=title_actions) %}Bank accounts{% endcall %}
 {% if let Some(table) = table %}
 {% call ui::card(id="bank-accounts-list", inner_class="p-0", role="region", labelledby="bank-accounts-heading") %}
 {% call ui::section_heading(id="bank-accounts-heading", title="Bank accounts", class="p-5 pb-0") %}{% endcall %}

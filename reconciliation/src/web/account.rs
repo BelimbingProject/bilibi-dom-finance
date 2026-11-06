@@ -421,7 +421,7 @@ impl Account {
         }
         let m = &account.import_mapping;
         view.mapping = format!(
-            "The bank's CSV export, read with this account's mapping: {} as the description, {} as the amount{}. A file or a line already imported is refused.",
+            "Reads the description from {}, the amount from {}{}. A file or line already imported is refused.",
             column_text(&m.description),
             if m.amount.is_some() {
                 column_text(&m.amount)
@@ -429,7 +429,7 @@ impl Account {
                 format!("{} and {}", column_text(&m.debit), column_text(&m.credit))
             },
             if m.balance.is_some() {
-                format!(", {} as the running balance", column_text(&m.balance))
+                format!(", and the running balance from {}", column_text(&m.balance))
             } else {
                 String::new()
             }

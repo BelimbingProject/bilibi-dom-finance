@@ -22,8 +22,6 @@ struct Report {
     through_entry_number: i64,
     through_opening_batch_id: i64,
     through_settlement_number: i64,
-    gross_debits: Decimal,
-    gross_credits: Decimal,
     currency_code: String,
     minor_units: u32,
     buckets: Vec<Bucket>,
@@ -192,8 +190,7 @@ impl Aging {
                     .id("receivables-aging-as-of")
                     .label("As of")
                     .kind(InputKind::Date)
-                    .value(self.as_of.clone())
-                    .hint("Later invoices and receipts are excluded."),
+                    .value(self.as_of.clone()),
             )?,
             actions: render(Button {
                 id: "receivables-aging-show",
@@ -236,30 +233,10 @@ impl Aging {
             items: vec![
                 f::fact("Owed as of", &r.as_of),
                 f::fact(
-                    "Gross debit balances",
-                    &self.figures.decimal(r.gross_debits),
-                ),
-                f::fact(
-                    "Unapplied credit balances",
-                    &self.figures.decimal(r.gross_credits),
-                ),
-                f::fact(
-                    "Read through settlement",
-                    &format!("#{}", r.through_settlement_number),
-                ),
-                f::fact(
                     "Total owed",
                     &format!("{} {}", self.figures.decimal(r.total), r.currency_code),
                 ),
                 f::fact("Customers owing", &r.customers.len().to_string()),
-                f::fact(
-                    "Read through opening batch",
-                    &format!("#{}", r.through_opening_batch_id),
-                ),
-                f::fact(
-                    "Read through ledger entry",
-                    &format!("#{}", r.through_entry_number),
-                ),
             ],
         })?);
         // The five default buckets name the columns; a bucket beyond them
@@ -308,8 +285,6 @@ impl Aging {
             id: "receivables-aging-customers-heading",
             title: "By customer",
             class: "mt-4",
-            description:
-                "A day late is counted from the due date. An invoice due today is not yet late.",
             ..SectionHeading::default()
         })?);
         body.push(&render(Card {

@@ -71,7 +71,7 @@ impl Publication {
                 ..SectionHeading::default()
             })?);
             if self.proposal {
-                body.push(&render(Note { id:"ledger-proposal-review-note",text:"This proposal applies to new books throughout this tenant. Applying a chart requires a separate preview and confirmation in the current company." })?);
+                body.push(&render(Note { id:"ledger-proposal-review-note",text:"This starter chart is offered to every new book. Applying it to a company needs its own preview and confirmation." })?);
             } else {
                 let rows: Vec<crate::ChartTemplateRow> =
                     view::parse(after["rows"].clone()).unwrap_or_default();
@@ -117,14 +117,14 @@ impl Publication {
                     self.columns.flex_columns(),
                     rows,
                 );
-                table.caption = "Exact chart snapshot to publish";
+                table.caption = "Chart to save";
                 table.framed = false;
                 table.event = "publication_grid";
                 table.zoom = self.columns.zoom;
                 table.suggestions = self.columns.flex_suggestions();
                 table.add_query = &self.columns.add_query;
                 body.push(&render(table)?);
-                body.push(&render(Note {id:"ledger-publication-review-note",text:"Published within this tenant as an immutable template. Active accounts and groups only; balances, currency, report layout and subledger settings are excluded. Optional sections start unselected when applying."})?);
+                body.push(&render(Note {id:"ledger-publication-review-note",text:"Saves a copy of the active accounts and groups for other companies to start from. Balances, currency and report layout are not included. Optional sections start unselected when applying."})?);
             }
         } else if self.proposal {
             body.push(&render(
@@ -138,7 +138,7 @@ impl Publication {
             )?);
         } else {
             for (key, label, value) in [
-                ("key", "Template key", &self.key),
+                ("key", "Chart key", &self.key),
                 ("name", "Name", &self.name),
                 ("description", "Description", &self.description),
             ] {
@@ -151,7 +151,7 @@ impl Publication {
                         .errors(errors(key)),
                 )?);
             }
-            body.push(&render(SectionHeading {id:"ledger-publish-optional",title:"Optional sections",description:"Each selected group and its descendants becomes optional. Select separate branches; leave core groups unselected.",..SectionHeading::default()})?);
+            body.push(&render(SectionHeading {id:"ledger-publish-optional",title:"Optional sections",description:"Pick the groups a company can leave out. Everything under a picked group becomes optional too.",..SectionHeading::default()})?);
             for group in &self.groups {
                 body.push(&render(
                     Field::in_form("publish_groups", &group.id.to_string())
@@ -217,7 +217,7 @@ impl Publication {
                 "Save reusable chart"
             },
             description: &format!(
-                "Current company: {}. Templates are shared within this tenant.",
+                "Saves the chart of {} so other companies can start from it.",
                 self.company_name
             ),
             cancel_event: "close_publication",

@@ -49,13 +49,6 @@ struct AreaName<'a> {
     linked: bool,
 }
 
-#[derive(Template)]
-#[template(
-    source = r#"<p id="setup-note" class="mt-4 text-xs text-ink-muted">Setup belongs to one company, the current company. Choose another in the top bar to set it up, or see every company you can work in on <a href="/finance/ledger/books" class="text-link hover:underline">Company books</a>. A step shows a status only when its module can tell; the rest are links.</p>"#,
-    ext = "html"
-)]
-struct Note;
-
 /// One area, as the contract answers it.
 #[derive(Deserialize)]
 struct SetupArea {
@@ -225,10 +218,9 @@ impl Setup {
                         body.push(&self.table(
                             "setup-optional",
                             "As the company needs them",
-                            "Each belongs to a module the company may not use.",
+                            "Set these up when the company uses them.",
                             &optional,
                         )?);
-                        body.push(&render(Note)?);
                     }
                     Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
                         body.push(&render(

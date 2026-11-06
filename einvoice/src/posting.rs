@@ -345,12 +345,25 @@ impl Einvoice {
             .iter()
             .zip(&codes)
             .filter(|(_, code)| code.is_none())
-            .map(|(account, _)| account.field())
+            .map(|(account, _)| match account.field() {
+                "receivable_account" => "receivable",
+                "revenue_account" => "income",
+                "tax_account" => "tax",
+                "settlement_account" => "settlement",
+                "payable_account" => "payable",
+                "expense_account" => "expense",
+                _ => "purchase tax",
+            })
             .collect();
         if !missing.is_empty() {
+            let (last, rest) = missing.split_last().unwrap_or((&"", &[]));
+            let names = if rest.is_empty() {
+                format!("{last} account")
+            } else {
+                format!("{} and {last} accounts", rest.join(", "))
+            };
             return Err(Refused::Final(format!(
-                "posting accounts not set: {}",
-                missing.join(", ")
+                "Choose the {names} in the e-invoice settings."
             )));
         }
         let chart = self
@@ -377,7 +390,7 @@ impl Einvoice {
         }
         if !groups.is_empty() {
             return Err(Refused::Final(format!(
-                "accounts that are account groups, not posting accounts: {}",
+                "These are account groups, not accounts that take postings: {}",
                 groups.join(", ")
             )));
         }

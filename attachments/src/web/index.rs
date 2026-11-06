@@ -72,7 +72,7 @@ fn attachment_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("sha256", "SHA-256"),
         BuiltinColumn::new("kept_until", "Kept until"),
         captured,
-        BuiltinColumn::new("standing", "Standing"),
+        BuiltinColumn::new("standing", "Current"),
     ]
 }
 
@@ -302,7 +302,11 @@ impl Index {
                 },
                 dot: true,
                 class: "",
-                body: Html::text(a.status.as_str()),
+                body: Html::text(match a.status {
+                    Status::Standing => "Current",
+                    Status::Replaced => "Replaced",
+                    Status::Removed => "Removed",
+                }),
             })?;
             row = row
                 .cell("number", Cell::text(a.attachment_number.to_string()))
@@ -461,7 +465,7 @@ impl Index {
                 .id("attachments-filter-status")
                 .kind(InputKind::Select)
                 .options(vec![
-                    Choice::new("Standing", "standing"),
+                    Choice::new("Current", "standing"),
                     Choice::new("Replaced", "replaced"),
                     Choice::new("Removed", "removed"),
                     Choice::new("All", "all"),
@@ -629,7 +633,7 @@ struct HashCell<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{{ until }}{% if on_hold %} {% call ui::badge() %}legal hold{% endcall %}{% endif %}"#,
+    source = r#"{% import "components.html" as ui %}{{ until }}{% if on_hold %} {% call ui::badge() %}Legal hold{% endcall %}{% endif %}"#,
     ext = "html"
 )]
 struct KeptCell {

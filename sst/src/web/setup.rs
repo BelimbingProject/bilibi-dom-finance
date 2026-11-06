@@ -454,7 +454,7 @@ impl Setup {
             row.dom_id = Some(format!("tax-code-{}-{}", code.source.as_str(), code.id));
             let reports_in = match &code.mapping {
                 Some(m) => Html::text(&f::mapped_box_name(m.box_key.as_deref())),
-                None => f::badge("unmapped", bilibi_ui::BadgeKind::Warning, "")?,
+                None => f::badge("Not chosen", bilibi_ui::BadgeKind::Warning, "")?,
             };
             rows.push(
                 row.cell("source", Cell::text(f::source_name(code.source)))

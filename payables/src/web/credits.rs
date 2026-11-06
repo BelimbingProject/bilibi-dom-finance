@@ -223,7 +223,7 @@ impl Credits {
                         "Credit source",
                         text(&f["credit"]["source"]["document_reference"]),
                     ),
-                    fact("Party", text(&f["credit"]["party_name"])),
+                    fact("Supplier", text(&f["credit"]["party_name"])),
                     fact("Target", text(&f["target"]["party_document_number"])),
                     fact("Effective date", text(&f["effective_date"])),
                     fact(

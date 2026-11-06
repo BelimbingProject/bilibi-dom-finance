@@ -443,12 +443,7 @@ impl Document {
             ));
         }
         if let Some(pins) = self.balance_pins.as_object() {
-            for (key, label) in [
-                ("as_of", "Balance as of"),
-                ("through_entry_number", "Read through ledger entry"),
-                ("through_opening_batch_id", "Read through opening batch"),
-                ("through_settlement_number", "Read through settlement"),
-            ] {
+            for (key, label) in [("as_of", "Balance as of")] {
                 items.push(f::fact(
                     label,
                     &pins
@@ -461,10 +456,6 @@ impl Document {
                         .unwrap_or_default(),
                 ));
             }
-            items.push(f::fact(
-                "Activity shown through",
-                pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
-            ));
         }
         if let Some(order) = &d.sales_order {
             items.push(f::fact("Sales order", &order.order_number));
@@ -567,7 +558,7 @@ impl Document {
             }
             _ => posting.push(f::fact(
                 "Posting",
-                "Not posted yet. Issuing gives it a number and posts it to the ledger.",
+                "Draft: no ref no and no posting until issued.",
             )),
         }
         let posting = render(Facts {
@@ -599,7 +590,7 @@ impl Document {
             Some(render(Facts {
                 id: "receivables-invoice-party",
                 items: vec![
-                    f::fact("Core code", f::optional(&d.party_code)),
+                    f::fact("Customer code", f::optional(&d.party_code)),
                     f::fact("Name", f::optional(&d.party_name)),
                     f::fact("Tax ID", f::optional(&d.party_tax_identifier)),
                     f::fact(
@@ -893,7 +884,7 @@ impl Document {
                         .as_ref()
                         .map(|review| &review["changes"]["after"]);
                     let items = [
-                        ("party_code", "Core code"),
+                        ("party_code", "Customer code"),
                         ("party_name", "Name"),
                         ("party_tax_identifier", "Tax ID"),
                         ("party_registration_identifier", "Registration number"),

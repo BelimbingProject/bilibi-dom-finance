@@ -526,9 +526,9 @@ impl State {
             ("period_end", "Period ends", InputKind::Date, ""),
             (
                 "source_id",
-                "Source row ID",
+                "Row in the source report",
                 InputKind::Text,
-                "Identify the row in the source report.",
+                "The row number or reference used in the source report.",
             ),
             (
                 "amount",
@@ -631,7 +631,7 @@ impl State {
         fields.push(&render(Alert {
             id: "source-period-currency",
             body: Html::text(&format!(
-                "Book currency: {currency}. This form retains one source row per schedule."
+                "Amounts in {currency}. Add one row for each schedule."
             )),
             ..Alert::default()
         })?);

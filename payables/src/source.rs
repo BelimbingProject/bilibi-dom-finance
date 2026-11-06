@@ -8,7 +8,7 @@ use bilibi_module_registry::{Contribution, Provenance};
 struct Documents;
 impl Source for Documents {
     fn label(&self) -> &'static str {
-        "Payables document"
+        "Payables"
     }
     fn view_capabilities(&self) -> &'static [&'static str] {
         &[VIEW]
@@ -48,7 +48,7 @@ inventory::submit! {Contribution::new(SOURCES,DOCUMENT_SOURCE,Provenance {module
 struct Payments;
 impl Source for Payments {
     fn label(&self) -> &'static str {
-        "Payment request"
+        "Payment"
     }
     fn view_capabilities(&self) -> &'static [&'static str] {
         &[VIEW]
@@ -72,7 +72,7 @@ impl Source for Payments {
                     })?;
                 let r=sql.query_opt("SELECT r.request_number,r.payment_date::text,EXISTS(SELECT 1 FROM finance_payables_payment_request_events e WHERE e.tenant_id=r.tenant_id AND e.company_id=r.company_id AND e.request_id=r.id) FROM finance_payables_payment_requests r WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.id=$3",&[&s.tenant(),&company,&id]).await.map_err(Error::from)?.ok_or(SourceRefusal::NotFound)?;
                 Ok(SourceDocument {
-                    label: format!("Payment request {}", r.get::<_, i64>(0)),
+                    label: format!("Payment {}", r.get::<_, i64>(0)),
                     date: r
                         .get::<_, String>(1)
                         .parse()

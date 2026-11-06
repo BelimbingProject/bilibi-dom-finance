@@ -53,13 +53,13 @@ impl Vendors {
                 "payables-vendors-table",
                 [
                     ("code", "Code"),
-                    ("company", "Core party"),
+                    ("company", "Supplier"),
                     ("terms", "Terms (days)"),
                     ("payable", "Payable account"),
                     ("expense", "Default expense"),
                     ("tax", "Default tax"),
-                    ("active", "Finance availability"),
-                    ("relationship", "Relationship"),
+                    ("active", "Availability"),
+                    ("relationship", "Company record"),
                 ]
                 .into_iter()
                 .map(|(k, l)| BuiltinColumn::new(k, l))
@@ -70,9 +70,9 @@ impl Vendors {
                 "payables-vendor-keys",
                 [
                     ("key", "Supplier key"),
-                    ("facts", "Recorded snapshots"),
-                    ("collisions", "Possible collisions"),
-                    ("vendor", "Confirmed vendor"),
+                    ("facts", "Details on bills"),
+                    ("collisions", "Similar keys"),
+                    ("vendor", "Matched supplier"),
                 ]
                 .into_iter()
                 .map(|(k, l)| BuiltinColumn::new(k, l))
@@ -214,7 +214,7 @@ impl Vendors {
         if !self.pages.allowed(s, MANAGE_SETTINGS).await? {
             self.notice = Some((
                 StatusKind::Error,
-                "You do not have permission to manage vendors.".into(),
+                "You do not have permission to manage suppliers.".into(),
             ));
             return Ok(());
         }
@@ -262,11 +262,11 @@ impl Vendors {
     pub(super) async fn body(&self, s: &Scope) -> Result<String> {
         let mut actions = Html::EMPTY;
         if self.can_manage {
-            actions = Self::button("vendor-add", "show_vendor", "Add vendor", "", "")?;
+            actions = Self::button("vendor-add", "show_vendor", "Add supplier", "", "")?;
         }
         let mut body = render(Header {
-            title: Html::text("Vendors"),
-            subtitle: &format!("Vendor settings for {}", self.company_name),
+            title: Html::text("Suppliers"),
+            subtitle: "",
             title_actions: bilibi_ui::Html::EMPTY,
             actions,
         })?;
@@ -322,9 +322,9 @@ impl Vendors {
             vec![ToolbarControl::search(
                 "vendor-search",
                 "search",
-                "Search vendors",
+                "Search suppliers",
                 &self.list.search,
-                "Search vendors",
+                "Search suppliers",
             )],
         ))?);
         let search = self.list.search.to_lowercase();
@@ -394,7 +394,7 @@ impl Vendors {
                             &self.pages.today(s).await?.to_string(),
                         );
                         Html::text(&if lines.is_empty() {
-                            "No billing address in Core".into()
+                            "No billing address yet".into()
                         } else {
                             lines.join(", ")
                         })
@@ -412,7 +412,7 @@ impl Vendors {
                 });
                 company_body.push(&render(Fold {
                     id: &format!("vendor-{}-company-details", v.id),
-                    title: "Core party details",
+                    title: "Company details",
                     summary: "",
                     open: false,
                     body: render(Facts {
@@ -540,12 +540,12 @@ impl Vendors {
             row = row.slot(
                 "active",
                 render(InlineChoice {
-                    field: self.inline(v, "active", "Finance availability", v.active.to_string()),
+                    field: self.inline(v, "active", "Availability", v.active.to_string()),
                     display: Html::text(if v.active { "Available" } else { "Unavailable" }),
                     editor: render(
                         Field::named("active")
                             .id(format!("vendor-{}-active-input", v.id))
-                            .label("Finance availability")
+                            .label("Availability")
                             .kind(InputKind::Select)
                             .value(v.active.to_string())
                             .options(vec![
@@ -563,32 +563,30 @@ impl Vendors {
             )
             .await?;
             let relation = match relation {
-                bilibi_finance_ledger::PartyRelation::Recorded { .. } => {
-                    Html::text("Vendor relationship recorded")
-                }
+                bilibi_finance_ledger::PartyRelation::Recorded { .. } => Html::text("Recorded"),
                 bilibi_finance_ledger::PartyRelation::Hidden => {
                     Html::text("No access to company relationships")
                 }
                 bilibi_finance_ledger::PartyRelation::Missing if self.can_manage => Self::button(
                     &format!("vendor-{}-relationship", v.id),
                     "record_vendor_relationship",
-                    "Record vendor relationship",
+                    "Record as supplier",
                     "vendor",
                     &v.id.to_string(),
                 )?,
-                _ => Html::text("No vendor relationship recorded"),
+                _ => Html::text("Not recorded"),
             };
             row = row.slot("relationship", relation);
             rows.push(row);
         }
         let mut table = FlexTable::new("payables-vendors-table", self.columns.flex_columns(), rows);
-        table.caption = "Vendors";
+        table.caption = "Suppliers";
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
         table.empty = Some(TableEmpty::Content(render(EmptyState::missing(
-            "No vendors",
-            "Add a supplier linked to a Core Company or Person before recording a bill.",
+            "No suppliers yet",
+            "Add a supplier before recording a bill.",
         ))?));
         body.push(&render(table)?);
         body.push(&render(Pagination::new(
@@ -596,7 +594,7 @@ impl Vendors {
             PageCounts::new(self.list.page, self.list.page_size, total),
             &[25, 50, 100],
         ))?);
-        body.push(&render(SectionHeading{title:"Historical supplier keys",description:"Confirm each match after reviewing every snapshot and possible collision. Confirmations are permanent. Bills, payment keys and aging groups remain unchanged.",..SectionHeading::default()})?);
+        body.push(&render(SectionHeading{title:"Supplier keys on old bills",description:"Match each key to a supplier after checking its details and similar keys. A match cannot be undone. Bills, payment keys and aging groups stay as they are.",..SectionHeading::default()})?);
         let mut rows = vec![];
         for h in &self.history {
             let snapshots = h
@@ -617,7 +615,7 @@ impl Vendors {
                 .join("; ");
             let matched = match h.vendor_id {
                 Some(id) => Html::text(&self.all.iter().find(|v| v.id == id).map_or_else(
-                    || format!("Vendor {id}"),
+                    || format!("Supplier {id}"),
                     |v| format!("{} · {}", v.code, v.party.name),
                 )),
                 None if self.can_manage => Self::button(
@@ -753,7 +751,7 @@ impl Vendors {
                 (
                     "vendor_id".into(),
                     "vendor-map-choice".into(),
-                    "Vendor".into(),
+                    "Supplier".into(),
                 ),
                 ("reason".into(), "vendor-map-reason".into(), "Reason".into()),
             ],
@@ -763,11 +761,11 @@ impl Vendors {
         )));
         body.push(&render(
             Combobox::new("vendor-map-choice", format!("{FORM}[vendor_id]"))
-                .label("Vendor *")
-                .aria_label("Vendor")
+                .label("Supplier *")
+                .aria_label("Supplier")
                 .attrs(bilibi_ui::Attrs {
                     required: true,
-                    aria_label: Some("Vendor".into()),
+                    aria_label: Some("Supplier".into()),
                     ..bilibi_ui::Attrs::default()
                 })
                 .value(values.get("vendor_id").cloned().unwrap_or_default())
@@ -777,7 +775,7 @@ impl Vendors {
                         .map(|v| Choice::new(&v.party.name, v.id.to_string()).detail(&v.code))
                         .collect(),
                 )
-                .errors(errors.under("vendor_id", "Vendor")),
+                .errors(errors.under("vendor_id", "Supplier")),
         )?);
         body.push(&render(
             Field::in_form(FORM, "reason")
@@ -821,7 +819,7 @@ impl Vendors {
         {
             self.notice = Some((
                 StatusKind::Error,
-                "You do not have permission to manage vendors.".into(),
+                "You do not have permission to manage suppliers.".into(),
             ));
             self.reload(s).await?;
             return Ok(LiveBody {
@@ -1114,7 +1112,7 @@ impl Vendors {
                 self.notice = Some(match recorded {
                     Ok(()) => (
                         StatusKind::Success,
-                        "Vendor relationship recorded in Companies.".into(),
+                        "Recorded as a supplier in Companies.".into(),
                     ),
                     Err(e) => (StatusKind::Warning, e),
                 });

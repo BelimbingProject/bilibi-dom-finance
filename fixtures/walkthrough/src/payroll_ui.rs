@@ -68,7 +68,7 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
     let mut postings = mount(services, &manager, "postings").await?;
     let html = refresh(postings.as_mut(), &manager).await?;
     if !payroll.people_available() {
-        assert!(html.contains("No payroll or claims source is installed"));
+        assert!(html.contains("Payroll is not in use"));
         assert!(!html.contains("id=\"payroll-runs\""));
         for kind in ["post_run", "post_claim", "post_all_claims"] {
             let html = event(

@@ -31,7 +31,7 @@
 {% endcall %}
 {% endif %}
 {% call ui::card(id="standing-matches", inner_class="p-0", class="mt-4", role="region", labelledby="standing-matches-heading") %}
-{% call ui::section_heading(id="standing-matches-heading", title="Standing matches", count=match_count, class="p-5 pb-0") %}{% endcall %}
+{% call ui::section_heading(id="standing-matches-heading", title="Current matches", count=match_count, class="p-5 pb-0") %}{% endcall %}
 {{ matches|safe }}
 {% endcall %}
 {% if let Some(u) = unmatching %}

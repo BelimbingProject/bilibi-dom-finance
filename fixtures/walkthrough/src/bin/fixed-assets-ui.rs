@@ -203,7 +203,7 @@ async fn main() -> Outcome<()> {
     let mut categories = mount(services, &manager, "categories", None, &empty).await?;
     has(
         &refresh(&mut categories, &manager).await?,
-        "No records match these filters.",
+        "No categories yet.",
     );
     let category_form = json!({"type":"record_asset","asset[name]":"Equipment <record>","asset[cost_account_id]":cost.id.to_string(),"asset[accumulated_account_id]":accumulated.id.to_string(),"asset[expense_account_id]":find("5000").to_string(),"asset[gain_account_id]":find("4000").to_string(),"asset[loss_account_id]":find("5000").to_string(),"asset[method]":"straight_line","asset[life_months]":"3","asset[reason]":"Initial assumptions"});
     has(

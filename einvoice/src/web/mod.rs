@@ -78,6 +78,15 @@ fn render(template: impl Template) -> Result<Html> {
 fn type_label(code: &str) -> String {
     Einvoice::authority().document_type_name(code)
 }
+/// A stored code as a person reads it: "posting_failed" as "Posting failed".
+fn sentence(code: &str) -> String {
+    let spaced = code.replace('_', " ");
+    let mut chars = spaced.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
 fn status_badge(status: &str) -> Result<Html> {
     render(Badge {
         kind: match status {
@@ -88,7 +97,7 @@ fn status_badge(status: &str) -> Result<Html> {
         },
         dot: true,
         class: "",
-        body: Html::text(status),
+        body: Html::text(&sentence(status)),
     })
 }
 fn table(
