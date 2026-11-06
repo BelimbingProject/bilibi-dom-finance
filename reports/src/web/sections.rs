@@ -1,7 +1,10 @@
 //! A form for the existing report layout setting; no JSON editing required.
 use super::*;
 use bilibi_agent_api::page::Call;
-use bilibi_ui::{Button, ButtonVariant, Card, Choice, Field, Form, Header, InputKind, PageVariant};
+use bilibi_ui::{
+    BackLink, Button, ButtonVariant, Card, Choice, Combobox, EmptyState, Field, Form, Header,
+    InputKind, PageVariant,
+};
 use serde_json::json;
 
 pub(super) struct State {
@@ -25,7 +28,7 @@ impl State {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        let mut accounts = vec![Choice::new("Choose an account", "")];
+        let mut accounts = Vec::new();
         let mut input = input;
         loop {
             let page = pages
@@ -43,7 +46,7 @@ impl State {
                     } else {
                         ""
                     };
-                    accounts.push(Choice::new(format!("{code} {name}{group}"), code));
+                    accounts.push(Choice::new(format!("{name}{group}"), code).detail(code));
                 }
             }
             match page["result"]["next_after_code"].as_str() {
@@ -95,13 +98,22 @@ impl State {
             title: Html::text("Report sections"),
             title_actions: bilibi_ui::Html::EMPTY,
             subtitle: "Choose headings and accounts for your reports.",
-            ..Header::default()
+            actions: render(BackLink {
+                href: PATH,
+                id: "report-sections-back",
+                title: "Back to reports",
+                ..BackLink::default()
+            })?,
         })?;
-        content.push(&render(Button {
-            href: PATH,
-            body: Html::text("Reports"),
-            ..Button::default()
-        })?);
+        if self.sections.is_empty() {
+            let mut empty = EmptyState::missing(
+                "No report sections yet",
+                "Until you add one, each report lists its accounts under their account type.",
+            )
+            .id("report-sections-empty");
+            empty.class = "py-6".into();
+            content.push(&render(empty)?);
+        }
         let mut fields = Html::EMPTY;
         for (index, section) in self.sections.iter().enumerate() {
             let key = self.keys[index];
@@ -139,18 +151,20 @@ impl State {
                 let code = account.as_str().unwrap_or_default();
                 let mut options = self.accounts.clone();
                 if !code.is_empty() && !options.iter().any(|o| o.value == code) {
-                    options.push(Choice::new(format!("{code} (not in the chart)"), code));
+                    options.push(Choice::new("Not in the chart", code).detail(code));
                 }
                 body.push(&render(
-                    Field::in_form("layout", &format!("account_{index}_{number}"))
-                        .id(format!("report-section-{key}-account-{number}"))
-                        .label("Account")
-                        .kind(InputKind::Select)
-                        .value(code)
-                        .options(options),
+                    Combobox::new(
+                        format!("report-section-{key}-account-{number}"),
+                        format!("layout[account_{index}_{number}]"),
+                    )
+                    .label("Account")
+                    .placeholder("Search accounts")
+                    .value(code)
+                    .options(options),
                 )?);
             }
-            body.push(&render(Button {
+            let mut buttons = render(Button {
                 id: &format!("report-section-{key}-add-account"),
                 event: "section_account",
                 name: "index",
@@ -158,8 +172,8 @@ impl State {
                 button_type: "button",
                 body: Html::text("Add account"),
                 ..Button::default()
-            })?);
-            body.push(&render(Button {
+            })?;
+            buttons.push(&render(Button {
                 id: &format!("report-section-{key}-remove"),
                 event: "section_remove",
                 name: "index",
@@ -168,6 +182,8 @@ impl State {
                 body: Html::text("Remove section"),
                 ..Button::default()
             })?);
+            // The section's buttons sit in one row, 8 px apart.
+            body.push(&render(ButtonRow { buttons })?);
             fields.push(&render(Card {
                 id: &format!("report-section-{key}"),
                 body,
@@ -313,4 +329,13 @@ impl LiveState<Scope, Error> for State {
             })
         })
     }
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex flex-wrap items-center gap-2">{{ buttons }}</div>"#,
+    ext = "html"
+)]
+struct ButtonRow {
+    buttons: Html,
 }

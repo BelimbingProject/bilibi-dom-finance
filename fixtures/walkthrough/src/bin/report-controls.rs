@@ -345,12 +345,10 @@ async fn main() -> Outcome<()> {
     let mut restricted = mount(&services, &viewer, "controls").await?;
     let withheld = refresh(restricted.as_mut(), &viewer).await?;
     // As in Bilimbi, a control the viewer may not use is simply absent.
-    for control in ["controlled-bookkeeping-on", "controlled-bookkeeping-off"] {
-        assert!(
-            !withheld.contains(&format!("id=\"{control}\"")),
-            "restricted page shows {control:?}"
-        );
-    }
+    assert!(
+        !withheld.contains("id=\"controlled-bookkeeping-toggle\""),
+        "restricted page shows the controlled bookkeeping toggle"
+    );
     let forged = event(restricted.as_mut(), &viewer, json!({"type":"turn_on"})).await?;
     contains(&forged, "You do not have permission for that action.");
     event(

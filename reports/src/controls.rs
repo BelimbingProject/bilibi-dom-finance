@@ -19,7 +19,7 @@ use bilibi_ui::{
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, EmptyState, Field,
     Filter, FlashMap, FlexRow, FlexTable, Header, Html, InputKind, ListColumns, ListSpec,
-    ListState, Modal, RowMode, SectionHeading, StatusKind, Tab, Tabs, NO_FLASH,
+    ListState, Modal, RowMode, SectionHeading, StatusKind, Tab, Tabs, Toggle, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -602,20 +602,42 @@ impl State {
             .await?;
         let can_manage = self.allowed(scope, MANAGE_CONTROLLED_BOOKKEEPING).await?;
         let change = controlled.change.as_ref();
+        // On/off is the Toggle: switching it off asks for the reason the
+        // override is listed under; switching it back on does not.
         let mut content = html(Summary {
             status_id: "controlled-bookkeeping-status",
-            badge: html(Badge::status(
-                if controlled.controlled {
-                    BadgeKind::Success
-                } else {
-                    BadgeKind::Warning
-                },
-                if controlled.controlled {
-                    "Controlled"
-                } else {
-                    "Not controlled"
-                },
-            ))?,
+            badge: if can_manage {
+                html(Toggle {
+                    on: controlled.controlled,
+                    label: "Controlled bookkeeping",
+                    id: "controlled-bookkeeping-toggle",
+                    event: if controlled.controlled {
+                        "open_dialog"
+                    } else {
+                        "turn_on"
+                    },
+                    name: if controlled.controlled { "dialog" } else { "" },
+                    value: if controlled.controlled {
+                        "controlled-off"
+                    } else {
+                        ""
+                    },
+                    ..Toggle::default()
+                })?
+            } else {
+                html(Badge::status(
+                    if controlled.controlled {
+                        BadgeKind::Success
+                    } else {
+                        BadgeKind::Warning
+                    },
+                    if controlled.controlled {
+                        "Controlled"
+                    } else {
+                        "Not controlled"
+                    },
+                ))?
+            },
             since: change
                 .map(|c| datetime(display, c.changed_at, "controlled-bookkeeping-changed-at"))
                 .transpose()?
@@ -624,38 +646,29 @@ impl State {
                 .map(|c| people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
                 .unwrap_or_default(),
             reason: change.and_then(|c| c.reason.as_deref()).unwrap_or(""),
-            action: if can_manage {
-                if controlled.controlled {
-                    button(
-                        "controlled-bookkeeping-off",
-                        "open_dialog",
-                        "dialog",
-                        "controlled-off",
-                        "Turn off",
-                        ButtonVariant::Danger,
-                    )?
-                } else {
-                    button(
-                        "controlled-bookkeeping-on",
-                        "turn_on",
-                        "",
-                        "",
-                        "Turn on",
-                        ButtonVariant::Secondary,
-                    )?
-                }
-            } else {
-                Html::EMPTY
-            },
+            action: Html::EMPTY,
         })?;
         if controlled.controlled && controlled.fiscal_years == 0 {
             content.push(&html(Alert { id: "no-fiscal-year", kind: StatusKind::Warning, class: "mt-4", body: Html::text("No fiscal year is open, so no entry can be posted yet. Open the first fiscal year to start.") })?);
         }
-        content.push(&html(Button {
-            id: "controls-fiscal-years",
-            href: "/finance/ledger/fiscal-years",
-            body: Html::text("Fiscal years"),
-            ..Button::default()
+        // Where these controls are acted on, side by side in the card.
+        content.push(&html(Links {
+            id: "controls-links",
+            body: {
+                let mut links = html(Button {
+                    id: "controls-fiscal-years",
+                    href: "/finance/ledger/fiscal-years",
+                    body: Html::text("Fiscal years"),
+                    ..Button::default()
+                })?;
+                links.push(&html(Button {
+                    id: "controls-late-journals",
+                    href: "/finance/ledger/journals?review=pending",
+                    body: Html::text("Journals awaiting late-recording review"),
+                    ..Button::default()
+                })?);
+                links
+            },
         })?);
         if !changes.is_empty() {
             let rows = changes
@@ -677,20 +690,13 @@ impl State {
                 .collect::<Result<_>>()?;
             content.push(&self.table(0, rows, "Changes to controlled bookkeeping", None)?);
         }
-        let mut parts = vec![section(
+        Ok(vec![section(
             "controlled-bookkeeping",
             "Controlled bookkeeping",
             "When enabled, entries can be posted only to open fiscal periods. Open a fiscal year before posting to its periods. Late entries can still be posted to an open period.",
             content,
             false,
-        )?];
-        parts.push(html(Button {
-            id: "controls-late-journals",
-            href: "/finance/ledger/journals?review=pending",
-            body: Html::text("Journals awaiting late-recording review"),
-            ..Button::default()
-        })?);
-        Ok(parts)
+        )?])
     }
     async fn exception_parts(
         &mut self,
@@ -749,18 +755,32 @@ impl State {
         let change = separation.change.as_ref();
         let mut content = html(Summary {
             status_id: "duty-separation-status",
-            badge: html(Badge::status(
-                if separation.required {
-                    BadgeKind::Success
-                } else {
-                    BadgeKind::Warning
-                },
-                if separation.required {
-                    "Required"
-                } else {
-                    "Not required"
-                },
-            ))?,
+            // Either way the change is recorded with a reason, so the Toggle
+            // opens the reason dialog.
+            badge: if can_manage {
+                html(Toggle {
+                    on: separation.required,
+                    label: "Separate approver required",
+                    id: "duty-separation-toggle",
+                    event: "open_dialog",
+                    name: "dialog",
+                    value: "separation",
+                    ..Toggle::default()
+                })?
+            } else {
+                html(Badge::status(
+                    if separation.required {
+                        BadgeKind::Success
+                    } else {
+                        BadgeKind::Warning
+                    },
+                    if separation.required {
+                        "Required"
+                    } else {
+                        "Not required"
+                    },
+                ))?
+            },
             since: change
                 .map(|c| datetime(display, c.changed_at, "duty-separation-changed-at"))
                 .transpose()?
@@ -769,26 +789,7 @@ impl State {
                 .map(|c| people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
                 .unwrap_or_default(),
             reason: change.and_then(|c| c.reason.as_deref()).unwrap_or(""),
-            action: if can_manage {
-                button(
-                    "duty-separation-change",
-                    "open_dialog",
-                    "dialog",
-                    "separation",
-                    if separation.required {
-                        "Turn off"
-                    } else {
-                        "Require again"
-                    },
-                    if separation.required {
-                        ButtonVariant::Danger
-                    } else {
-                        ButtonVariant::Primary
-                    },
-                )?
-            } else {
-                Html::EMPTY
-            },
+            action: Html::EMPTY,
         })?;
         if !changes.is_empty() {
             let rows = changes
@@ -821,7 +822,7 @@ impl State {
         )?];
         parts.push(section("duty-separation", "Other Finance approvals", "This control applies to the other Finance approvals. Manual journals follow their rules on Approval rules.",content,false)?);
         let mut filters = html(self.period.as_ref().expect("period initialized"))?;
-        filters.push(&self.tabs(
+        filters.push(&self.tabs_in(
             "exceptions-review",
             "Review status",
             "review",
@@ -830,6 +831,7 @@ impl State {
                 ("pending", "Awaiting review"),
                 ("reviewed", "Reviewed"),
             ],
+            "min-w-0 flex-1",
         )?);
         parts.push(html(FiltersView {
             id: "exceptions-filters",
@@ -948,21 +950,27 @@ impl State {
                 ("other", "Other Finance approvals"),
             ],
         )?];
-        let mut links = html(bilibi_ui::ActionLink {
-            id: "journal-approval-rules",
-            href: &format!(
-                "/workflow/approval-rules?case=finance.ledger.manual_journal&company={company}"
-            ),
-            body: Html::text("Journal approval rules"),
-            ..bilibi_ui::ActionLink::default()
+        // Where journal approvals are set and decided: the standard buttons.
+        let links = html(Links {
+            id: "journal-approval-links",
+            body: {
+                let mut links = html(Button {
+                    id: "journal-approval-rules",
+                    href: &format!(
+                        "/workflow/approval-rules?case=finance.ledger.manual_journal&company={company}"
+                    ),
+                    body: Html::text("Journal approval rules"),
+                    ..Button::default()
+                })?;
+                links.push(&html(Button {
+                    id: "journal-approval-waiting",
+                    href: "/workflow/approvals",
+                    body: Html::text("Waiting for my approval"),
+                    ..Button::default()
+                })?);
+                links
+            },
         })?;
-        links.push(&Html::text(" · "));
-        links.push(&html(bilibi_ui::ActionLink {
-            id: "journal-approval-waiting",
-            href: "/workflow/approvals",
-            body: Html::text("Waiting for my approval"),
-            ..bilibi_ui::ActionLink::default()
-        })?);
         parts.push(section("journal-approval-controls","Journal approvals","Journal rules decide who may approve. Approvals by the person who prepared a journal are kept here for independent review.",links,false)?);
         let clock = self.sync_period(display);
         let (from, before) = self
@@ -1002,7 +1010,7 @@ impl State {
             }
         }
         let mut filters = html(self.period.as_ref().expect("period initialized"))?;
-        filters.push(&self.tabs(
+        filters.push(&self.tabs_in(
             "journal-exceptions-review",
             "Review status",
             "review",
@@ -1011,6 +1019,7 @@ impl State {
                 ("pending", "Not reviewed"),
                 ("reviewed", "Reviewed"),
             ],
+            "min-w-0 flex-1",
         )?);
         parts.push(html(FiltersView {
             id: "exceptions-filters",
@@ -1111,6 +1120,18 @@ impl State {
     }
 
     fn tabs(&self, id: &str, label: &str, key: &str, choices: &[(&str, &str)]) -> Result<Html> {
+        self.tabs_in(id, label, key, choices, "")
+    }
+    /// Tabs with a page-context class: the review status shares its row with
+    /// the period filter (`min-w-0 flex-1`), as one toolbar.
+    fn tabs_in(
+        &self,
+        id: &str,
+        label: &str,
+        key: &str,
+        choices: &[(&str, &str)],
+        class: &str,
+    ) -> Result<Html> {
         let links: Vec<_> = choices
             .iter()
             .map(|(value, _)| self.link(key, value))
@@ -1118,12 +1139,12 @@ impl State {
         html(Tabs {
             id,
             label,
+            class,
             tabs: choices
                 .iter()
                 .zip(&links)
                 .map(|((value, title), link)| Tab::patch(link, title, self.filter(key) == *value))
                 .collect(),
-            ..Tabs::default()
         })
     }
     fn next(&self, id: &str, after: i64, label: &str) -> Result<Html> {
@@ -1424,6 +1445,16 @@ struct Summary<'a> {
     actor: String,
     reason: &'a str,
     action: Html,
+}
+/// Buttons that lead from a control to where it is acted on, in one row.
+#[derive(Template)]
+#[template(
+    source = r#"<div id="{{ id }}" class="mt-3 flex flex-wrap items-center gap-2">{{ body }}</div>"#,
+    ext = "html"
+)]
+struct Links<'a> {
+    id: &'a str,
+    body: Html,
 }
 #[derive(Template)]
 #[template(path = "control_cell.html")]

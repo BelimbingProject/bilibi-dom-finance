@@ -9,8 +9,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Alert, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice, Field, FlexRow,
-    FlexTable, Form, Header, Html, InputKind, ListColumns, PageVariant, StatusKind,
+    params, Alert, BackLink, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice,
+    CreateButton, EmptyState, Field, FlexRow, FlexTable, Form, Header, Html, InputKind,
+    ListColumns, Modal, PageVariant, StatusKind, TableEmpty,
 };
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
@@ -43,6 +44,34 @@ struct Confirmation<'a> {
     event: &'a str,
     body: Html,
 }
+/// "+ Report": opens the reporting-date dialog.
+fn new_report_button(id: &str) -> Result<Html> {
+    render(CreateButton {
+        noun: "Report",
+        id,
+        event: "new_report",
+        button_type: "button",
+        ..CreateButton::default()
+    })
+}
+#[derive(Template)]
+#[template(
+    source = r#"<a href="{{ href }}" class="font-medium text-link hover:underline">{{ label }}</a>"#,
+    ext = "html"
+)]
+struct ReportLink<'a> {
+    href: &'a str,
+    label: &'a str,
+}
+/// A dialog's Cancel then its one primary verb, at the end of the row.
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex w-full flex-wrap justify-end gap-2">{{ buttons }}</div>"#,
+    ext = "html"
+)]
+struct ActionRow {
+    buttons: Html,
+}
 struct State {
     pages: Pages,
     id: Option<i64>,
@@ -59,6 +88,8 @@ struct State {
     list_after: i64,
     list_columns: ListColumns,
     account_columns: ListColumns,
+    /// The "+ Report" dialog (the reporting date to preview) is open.
+    choosing: bool,
 }
 fn render(t: impl Template) -> Result<Html> {
     Html::render(&t).map_err(|_| Error::Internal)
@@ -95,6 +126,7 @@ impl State {
             )
             .expect("conversion columns"),
             list_after: 0,
+            choosing: false,
             list_columns: ListColumns::mount(
                 "conversion-list",
                 vec![
@@ -135,7 +167,21 @@ impl State {
             .read(s, key, &input)
             .await
             .map(|v| v["result"].clone())
-            .map_err(|e| e.to_string())
+            .map_err(|e| match e {
+                // The owner's own words for what is wrong, never the code.
+                bilibi_agent_api::Error::InvalidInput(fields) => {
+                    fields.into_values().flatten().collect::<Vec<_>>().join(" ")
+                }
+                bilibi_agent_api::Error::Forbidden => {
+                    "Your role does not allow you to do this.".into()
+                }
+                bilibi_agent_api::Error::NotFound => {
+                    "That conversion report is not in the current company.".into()
+                }
+                _ => {
+                    "The conversion report could not be read. Reload the page and try again.".into()
+                }
+            })
     }
     fn current(&self) -> &Value {
         self.path.iter().fold(&self.document, |v, k| match v {
@@ -212,10 +258,9 @@ impl State {
                 FlexRow::new(id.to_string())
                     .slot(
                         "report",
-                        render(Button {
+                        render(ReportLink {
                             href: &format!("{PATH}/{id}"),
-                            body: Html::text(&format!("Report {id}")),
-                            ..Button::default()
+                            label: &format!("Report {id}"),
                         })?,
                     )
                     .cell("date", Cell::text(r["as_of"].as_str().unwrap_or("")))
@@ -232,6 +277,11 @@ impl State {
         }
         let mut table = FlexTable::new("conversion-list", self.list_columns.flex_columns(), rows);
         table.caption = "Issued conversion reports";
+        table.empty = Some(TableEmpty::State(
+            EmptyState::missing("No conversion reports yet", "")
+                .id("conversion-list-empty")
+                .action(new_report_button("conversion-new-empty")?),
+        ));
         table.zoom = self.list_columns.zoom;
         table.suggestions = self.list_columns.flex_suggestions();
         render(table)
@@ -379,9 +429,33 @@ impl State {
         } else {
             "No current company".into()
         };
+        // The list starts a report with "+ Report"; a report or preview
+        // leads back to the list from the header.
+        let listing = self.id.is_none() && self.document.get("rows").is_some();
+        let previewing = self.id.is_none() && !self.document.is_null() && !listing;
         body.push(&render(Header {
             title: Html::text("Conversion reports"),
             subtitle: &format!("Current company: {name}"),
+            actions: if company.is_none() {
+                Html::EMPTY
+            } else if self.id.is_some() {
+                render(BackLink {
+                    href: PATH,
+                    id: "conversion-back",
+                    title: "Back to conversion reports",
+                    ..BackLink::default()
+                })?
+            } else if previewing {
+                render(Button {
+                    id: "conversion-issued-list",
+                    event: "issued_list",
+                    button_type: "button",
+                    body: Html::text("Issued reports"),
+                    ..Button::default()
+                })?
+            } else {
+                new_report_button("conversion-new")?
+            },
             ..Header::default()
         })?);
         if let Some(company) = company {
@@ -432,7 +506,8 @@ impl State {
                     self.message = e;
                 }
             }
-            if !self.message.is_empty() {
+            // A refusal of the reporting date is said in its dialog.
+            if !self.message.is_empty() && !self.choosing {
                 body.push(&render(Alert {
                     id: "conversion-message",
                     kind: StatusKind::Warning,
@@ -486,11 +561,6 @@ impl State {
                 }
             }
             if self.id.is_none() {
-                body.push(&render(Button {
-                    event: "issued_list",
-                    body: Html::text("Issued reports"),
-                    ..Button::default()
-                })?);
                 if let Some(next) = self.document["next"].as_i64() {
                     body.push(&render(Button {
                         event: "more_reports",
@@ -500,20 +570,15 @@ impl State {
                         ..Button::default()
                     })?);
                 }
-            } else {
-                body.push(&render(Button {
-                    href: PATH,
-                    body: Html::text("All conversion reports"),
-                    ..Button::default()
-                })?);
             }
             let signed = self.document["signoffs"]
                 .as_array()
                 .is_some_and(|s| !s.is_empty());
-            if self.id.is_none() {
+            if self.id.is_none() && self.choosing {
                 let preview = render(Form {
                     id: "conversion-preview-form",
                     event: "preview",
+                    class: "mt-4",
                     body: render(
                         Field::in_form("conversion", "as_of")
                             .id("conversion-preview-as-of")
@@ -523,20 +588,48 @@ impl State {
                             .value(self.values.get("as_of").map(String::as_str).unwrap_or(""))
                             .errors(self.errors.get("as_of").cloned().unwrap_or_default()),
                     )?,
-                    actions: render(Button {
-                        button_type: "submit",
-                        body: Html::text("Preview report"),
-                        ..Button::default()
-                    })?,
+                    actions: {
+                        let mut buttons = render(Button {
+                            button_type: "button",
+                            event: "close_new",
+                            body: Html::text("Cancel"),
+                            ..Button::default()
+                        })?;
+                        buttons.push(&render(Button {
+                            button_type: "submit",
+                            variant: ButtonVariant::Primary,
+                            body: Html::text("Preview report"),
+                            ..Button::default()
+                        })?);
+                        render(ActionRow { buttons })?
+                    },
                     ..Form::default()
                 })?;
-                body.push(&render(Card {
-                    id: "conversion-preview-card",
+                let mut preview = preview;
+                if !self.message.is_empty() {
+                    let mut alert = render(Alert {
+                        id: "conversion-new-refusal",
+                        kind: StatusKind::Error,
+                        body: Html::text(&self.message),
+                        ..Alert::default()
+                    })?;
+                    alert.push(&preview);
+                    preview = alert;
+                }
+                body.push(&render(Modal {
+                    id: "conversion-new-modal",
+                    title: "New conversion report",
+                    description: &format!(
+                        "Preview {name}'s conversion as of a reporting date, then review and issue it."
+                    ),
+                    cancel_event: "close_new",
                     body: preview,
-                    ..Card::default()
+                    ..Modal::default()
                 })?);
             }
-            if !signed {
+            // The issue form belongs to a previewed report, the sign-off form
+            // to an issued one: never to the list.
+            if !signed && (self.id.is_some() || previewing) {
                 let mut fields = Html::EMPTY;
                 for (key, title, kind) in [
                     (
@@ -722,6 +815,14 @@ impl LiveState<Scope, Error> for State {
                     }
                     "cancel_review" => self.confirm = false,
                     "open_review" => self.confirm = true,
+                    "new_report" => {
+                        self.choosing = true;
+                        self.message.clear();
+                    }
+                    "close_new" => {
+                        self.choosing = false;
+                        self.message.clear();
+                    }
                     "issued_list" => {
                         self.document = Value::Null;
                         self.path.clear();
@@ -764,6 +865,7 @@ impl LiveState<Scope, Error> for State {
                             });
                             match self.read(r.scope, PREVIEW, input).await {
                                 Ok(document) => {
+                                    self.choosing = false;
                                     self.document = document;
                                     self.path.clear();
                                     self.offset = 0;
