@@ -48,7 +48,7 @@ impl Actions {
         row.record = Some((party.kind.clone(), party.id.clone()));
         row.actions = render(AddToMenu::new(
             format!("receivables-customer-{}-actions", customer.id),
-            format!("Actions for {}", customer.name),
+            customer.name.clone(),
             offered
                 .iter()
                 .map(|target| AddToItem {

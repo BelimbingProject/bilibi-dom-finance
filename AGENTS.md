@@ -101,8 +101,10 @@ they govern this code and are not copied here.
   `{id}-description` and `{id}-body`, and a `description` field in a dialog
   named `<record>` would share its id and lose its label.
   Keep a Cancel or Close in every state of a dialog, including one whose read
-  was refused and renders no form (`receivables/src/web/opening.rs`): the
-  shared `Modal` draws no X, and dismissing its flash would leave nothing to press.
+  was refused and renders no form (the three `*/src/web/opening.rs`): the
+  shared `Modal` draws no X. Say that refusal in the dialog's own `Alert`, not
+  its `FlashGroup`, which floats past the dialog's edge on a phone, and link
+  the place that clears it (Go to opening journal).
   Let that round trip also drop what a changed field no longer allows (a group
   of another type once the type changes, `Draft::reconcile` in
   `ledger/src/web/accounts.rs`) and offer only eligible choices, instead of a
