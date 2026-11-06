@@ -113,12 +113,23 @@ pub async fn prove_messages(
     use bilibi_ui::page::{LiveInput, LiveRequest, PageRequest, PageService};
     use std::collections::HashMap;
     let pages = services.get::<PageService<Scope, Error>>("finance/fixed_assets.pages")?;
-    for (operation, path, refusal) in [
-        ("categories", HashMap::new(), json!({"type":"record_asset"})),
+    // A refusal stays in its dialog, beside its fields, until it is closed.
+    for (operation, path, open, refusal, marker, close) in [
+        (
+            "categories",
+            HashMap::new(),
+            json!({"type":"new"}),
+            json!({"type":"create_category"}),
+            "category-modal",
+            json!({"type":"close_category"}),
+        ),
         (
             "asset",
             HashMap::from([("id".into(), asset.to_string())]),
+            json!({"type":"open_dispose"}),
             json!({"type":"dispose"}),
+            "asset-dispose-modal",
+            json!({"type":"close_dialog"}),
         ),
     ] {
         let mut state = pages
@@ -133,6 +144,13 @@ pub async fn prove_messages(
             })
             .await?
             .unwrap();
+        state
+            .update(LiveRequest {
+                scope,
+                credential: "",
+                input: LiveInput::Event(&open),
+            })
+            .await?;
         let body = state
             .update(LiveRequest {
                 scope,
@@ -140,7 +158,14 @@ pub async fn prove_messages(
                 input: LiveInput::Event(&refusal),
             })
             .await?;
-        assert!(body.html.contains("id=\"flash-error\""));
+        let refused = |html: &str| {
+            html.contains(&format!("{marker}-form-errors"))
+                || html.contains(&format!("{marker}-alert"))
+        };
+        assert!(
+            refused(&body.html),
+            "{operation}: the refusal shows in its dialog"
+        );
         let refreshed = state
             .update(LiveRequest {
                 scope,
@@ -164,18 +189,18 @@ pub async fn prove_messages(
             body.html, unchanged.html,
             "old success dismissal retains refusal"
         );
-        let dismiss = json!({"type":"clear-flash","key":"error"});
-        let dismissed = state
+        let closed = state
             .update(LiveRequest {
                 scope,
                 credential: "",
-                input: LiveInput::Event(&dismiss),
+                input: LiveInput::Event(&close),
             })
             .await?;
-        assert!(!dismissed.html.contains("id=\"flash-error\""));
+        assert!(!closed.html.contains(marker));
+        assert!(!refused(&closed.html));
     }
     println!(
-        "NU1: Fixed Assets list/detail refusals survive refresh and stale success dismissal; matching dismissal clears without an error"
+        "NU1: Fixed Assets list/detail dialog refusals survive refresh and stale success dismissal; Cancel closes them"
     );
     Ok(())
 }

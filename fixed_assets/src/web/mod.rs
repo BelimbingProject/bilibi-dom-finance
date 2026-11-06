@@ -1,8 +1,11 @@
 //! Bilimbi Finance.FixedAssets.Web: shared lists and the asset record page.
+mod acquire;
+mod categories;
 mod detail;
 mod index;
 mod input;
 mod opening;
+mod runs;
 mod source_evidence;
 
 use crate::{FixedAssetsError, MODULE};
@@ -14,10 +17,11 @@ use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
     Contribution, Provenance,
 };
+use bilibi_principal_directory::{PrincipalDirectory, PrincipalKind, PrincipalRef, Query};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, BuiltinColumn, Cell, EmptyState, Field, FlexRow, FlexTable, Html, Instant,
-    ListColumns, StatusKind, TableEmpty,
+    page::*, params, BuiltinColumn, Button, ButtonVariant, Cell, EmptyState, Field, FlexRow,
+    FlexTable, Html, Instant, ListColumns, StatusKind, TableEmpty,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -30,6 +34,7 @@ pub(crate) struct Pages {
     pub plans: Arc<bilibi_agent_api::plans::Plans>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub directory: Arc<PrincipalDirectory>,
 }
 macro_rules! route {
     ($op:literal, $path:literal) => {
@@ -80,6 +85,9 @@ fn company(s: &Scope) -> Option<i64> {
     s.current_company().map(|p| p.get())
 }
 fn refusal(e: FixedAssetsError) -> String {
+    refusal_text(&e)
+}
+fn refusal_text(e: &FixedAssetsError) -> String {
     use bilibi_finance_ledger::LedgerError;
     match e {
         FixedAssetsError::Invalid(fields)
@@ -122,6 +130,8 @@ fn table(
     t.add_query = &columns.add_query;
     t.caption = caption;
     t.framed = true;
+    // Rows that offer a next step get the trailing actions column.
+    t.actions = t.rows.iter().any(|r| !r.actions.is_empty());
     t.empty = Some(TableEmpty::Content(Html::text(empty)));
     render(t)
 }
@@ -145,32 +155,245 @@ fn time_cell(display: &DisplayContext, value: &str) -> Result<Cell> {
         r.mode.as_str(),
     )))
 }
-fn actor(user: i64, impersonator: Option<i64>) -> String {
-    let mut text = user.to_string();
-    if let Some(id) = impersonator {
-        text.push_str(&format!(" (impersonated by {id})"));
+/// People's names for the users a page shows, from the Platform's principal
+/// directory; someone it cannot name keeps the durable "User 5".
+pub(super) struct People(HashMap<i64, String>);
+impl People {
+    pub(super) fn name(&self, user: i64, impersonator: Option<i64>) -> String {
+        let one = |id: i64| {
+            self.0
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| format!("User {id}"))
+        };
+        match impersonator {
+            None => one(user),
+            Some(by) => format!("{} (impersonated by {})", one(user), one(by)),
+        }
     }
-    text
+}
+
+/// A ledger entry's number as a link to its journal page.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="text-link hover:underline tabular-nums whitespace-nowrap">{{ label }}</a>"#,
+    ext = "html"
+)]
+struct EntryLink<'a> {
+    id: i64,
+    label: &'a str,
+}
+pub(super) fn entry_link(id: Option<i64>, number: Option<i64>) -> Result<Html> {
+    match (id, number) {
+        (Some(id), Some(number)) => render(EntryLink {
+            id,
+            label: &format!("Entry {number}"),
+        }),
+        _ => Ok(Html::text("—")),
+    }
+}
+
+/// A month as people say it ("October 2026").
+pub(super) fn month(date: jiff::civil::Date) -> String {
+    date.strftime("%B %Y").to_string()
+}
+
+/// A form dialog laid out as the shared specimen: the form under the title,
+/// Cancel then the one primary verb at the end of the row. A `change` event
+/// keeps the draft on the server as fields change; `submit` is what the
+/// primary button raises. `alert` is a refusal that has no field.
+pub(super) struct Dialog<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub description: &'a str,
+    pub change: &'a str,
+    pub submit: &'a str,
+    pub cancel: &'a str,
+    pub verb: &'a str,
+    pub working: &'a str,
+    pub alert: &'a str,
+    pub fields: Vec<Field>,
+    /// Shown under the alert, before the fields: the way to clear a refusal,
+    /// or what the dialog shows instead of fields.
+    pub extra: Html,
+    /// False when nothing can be submitted yet; only Cancel is offered.
+    pub can_submit: bool,
+}
+impl Dialog<'_> {
+    pub(super) fn render(self) -> Result<Html> {
+        let mut body = Html::EMPTY;
+        if !self.alert.is_empty() {
+            body.push(&render(bilibi_ui::Alert {
+                id: &format!("{}-alert", self.id),
+                kind: StatusKind::Error,
+                body: Html::text(self.alert),
+                ..Default::default()
+            })?);
+        }
+        body.push(&self.extra);
+        body.push(&fields(&format!("{}-form", self.id), &self.fields)?);
+        let mut actions = render(Button {
+            id: &format!("{}-cancel", self.id),
+            button_type: "button",
+            event: self.cancel,
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        if self.can_submit {
+            actions.push(&render(Button {
+                id: &format!("{}-submit", self.id),
+                button_type: "submit",
+                variant: ButtonVariant::Primary,
+                working: self.working,
+                body: Html::text(self.verb),
+                ..Button::default()
+            })?);
+        }
+        let form = bilibi_ui::Form {
+            id: &format!("{}-form", self.id),
+            event: if self.change.is_empty() {
+                self.submit
+            } else {
+                self.change
+            },
+            change: !self.change.is_empty(),
+            class: "mt-4",
+            body,
+            actions: render(DialogActions { buttons: actions })?,
+        };
+        let form = if self.change.is_empty() {
+            render(form)?
+        } else {
+            form.submit_event(self.submit)
+                .map_err(|_| Error::Internal)?
+        };
+        render(bilibi_ui::Modal {
+            id: self.id,
+            title: self.title,
+            description: self.description,
+            cancel_event: self.cancel,
+            body: form,
+            ..Default::default()
+        })
+    }
 }
 #[derive(Template)]
-#[template(path = "operation.html")]
-struct Operation<'a> {
-    form_dom: &'a str,
-    event_name: &'a str,
-    button_dom: &'a str,
-    verb: &'a str,
-    fields: Vec<Field>,
-    help: &'a str,
+#[template(
+    source = r#"<div class="flex w-full flex-wrap justify-end gap-2">{{ buttons|safe }}</div>"#,
+    ext = "html"
+)]
+struct DialogActions {
+    buttons: Html,
 }
-fn withheld(id: &str, title: &str, reason: &str) -> Result<Html> {
-    let mut empty = EmptyState::missing(title, reason);
-    empty.id = id.into();
-    render(empty)
+
+/// The fields of a dialog: the problems first, each linking to its field,
+/// then each field; a record choice (an account, a category, a purchase) is a
+/// searchable combobox, name first.
+pub(super) fn fields(form: &str, fields: &[Field]) -> Result<Html> {
+    let mut summary = bilibi_ui::ErrorSummary::new(format!("{form}-errors"));
+    for field in fields {
+        for error in &field.errors {
+            summary.push(&field.id, bilibi_ui::error_sentence(&field.label, error));
+        }
+    }
+    let mut body = render(summary)?;
+    for original in fields {
+        let mut field = original.clone();
+        field.errors = field
+            .errors
+            .iter()
+            .map(|e| bilibi_ui::error_sentence(&field.label, e))
+            .collect();
+        if field.name.ends_with("_id]") || field.name.ends_with("[source]") {
+            // The combobox draws no required mark of its own yet.
+            let label = if field.attrs.required {
+                format!("{} *", field.label)
+            } else {
+                field.label.clone()
+            };
+            let control = bilibi_ui::Combobox::new(&field.id, &field.name)
+                .label(label)
+                .value(&field.value)
+                .placeholder(field.attrs.placeholder.clone().unwrap_or_default())
+                .hint(field.hint.clone())
+                .options(
+                    field
+                        .options
+                        .iter()
+                        .filter(|c| !c.value.is_empty())
+                        .cloned()
+                        .collect(),
+                )
+                .errors(field.errors.clone())
+                .attrs(field.attrs.clone())
+                .aria_label(&field.label);
+            body.push(&render(control)?);
+        } else {
+            body.push(&render(field.clone())?);
+        }
+    }
+    Ok(body)
+}
+
+/// An action on the row's own record: a plain icon button with a tooltip
+/// that opens its dialog. The "Non-local actions" menu holds only actions that take
+/// the record to another module (New invoice, Add to…), and Fixed assets
+/// rows have none, so they show no such menu.
+pub(super) fn row_icon(id: &str, icon: &str, label: &str, href: &str) -> Result<Html> {
+    let mut button = bilibi_ui::IconButton::new(icon, label);
+    button.id = id;
+    button.href = href;
+    button.title = label;
+    render(button)
+}
+
+/// An action this person may not take is left out, not offered and refused.
+pub(super) fn header_button(id: &str, event: &str, label: &str, primary: bool) -> Result<Html> {
+    render(Button {
+        id,
+        button_type: "button",
+        event,
+        variant: if primary {
+            ButtonVariant::Primary
+        } else {
+            ButtonVariant::Secondary
+        },
+        body: Html::text(label),
+        ..Button::default()
+    })
 }
 impl Pages {
     async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
         let c = self.db.get().await?;
         Ok(bilibi_authz::decide(&**c, scope, capability).await?.allowed)
+    }
+    pub(super) async fn people(
+        &self,
+        scope: &Scope,
+        users: impl IntoIterator<Item = i64>,
+    ) -> Result<People> {
+        let wanted: Vec<PrincipalRef> = users
+            .into_iter()
+            .filter_map(|id| PrincipalRef::new(PrincipalKind::User, id).ok())
+            .collect();
+        if wanted.is_empty() {
+            return Ok(People(HashMap::new()));
+        }
+        let c = self.db.get().await?;
+        // A directory that cannot answer leaves the durable "User 5".
+        let named = match self
+            .directory
+            .rank(&**c, scope, &wanted, &Query::default())
+            .await
+        {
+            Ok(ranked) => ranked
+                .named
+                .into_iter()
+                .map(|n| (n.principal.id(), n.name))
+                .collect(),
+            Err(_) => HashMap::new(),
+        };
+        Ok(People(named))
     }
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let c = self.db.get().await?;
@@ -185,7 +408,7 @@ impl Pages {
         framed: bool,
     ) -> Result<Box<dyn LiveState<Scope, Error>>> {
         if operation == "asset" {
-            Ok(Box::new(detail::Detail::new(self, path, framed)?))
+            Ok(Box::new(detail::Detail::new(self, path, query, framed)?))
         } else {
             Ok(Box::new(index::Index::new(self, operation, query, framed)?))
         }
@@ -197,7 +420,7 @@ impl Page<Scope, Error> for Pages {
             "register" => Some("Fixed assets"),
             "categories" => Some("Asset categories"),
             "runs" => Some("Depreciation runs"),
-            "asset" => Some("Asset"),
+            "asset" => Some("Fixed asset"),
             _ => None,
         }
     }
@@ -268,12 +491,13 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
         ("preview_opening", "finance.fixed_assets.opening.stage"),
         ("import_opening", "finance.fixed_assets.opening.stage"),
 
-        ("record_asset","finance.fixed_assets.category.save"),
-        ("record_asset","finance.fixed_assets.asset.acquire"),
-        ("record_asset","finance.fixed_assets.run.post"),
-        ("reverse","finance.fixed_assets.run.reverse"),
+        ("create_category","finance.fixed_assets.category.save"),
+        ("save_category","finance.fixed_assets.category.save"),
+        ("register_asset","finance.fixed_assets.asset.acquire"),
+        ("run_depreciation","finance.fixed_assets.run.post"),
+        ("reverse_run","finance.fixed_assets.run.reverse"),
         ("dispose","finance.fixed_assets.asset.dispose"),
-        ("reverse","finance.fixed_assets.disposal.reverse"),
+        ("reverse_disposal","finance.fixed_assets.disposal.reverse"),
         ("void","finance.fixed_assets.acquisition.void"),
         ("confirm_void","finance.fixed_assets.acquisition.void"),
     ],
@@ -469,72 +693,6 @@ impl Pages {
             }
         }
         Ok((units, accounts))
-    }
-}
-
-impl Operation<'_> {
-    fn form(&self) -> Result<Html> {
-        let mut summary = bilibi_ui::ErrorSummary::new(format!("{}-errors", self.form_dom));
-        for field in &self.fields {
-            for error in &field.errors {
-                summary.push(&field.id, bilibi_ui::error_sentence(&field.label, error));
-            }
-        }
-        let mut body = render(summary)?;
-        for original in &self.fields {
-            let mut field = original.clone();
-            field.errors = field
-                .errors
-                .iter()
-                .map(|e| bilibi_ui::error_sentence(&field.label, e))
-                .collect();
-            if field.name.ends_with("account_id]") {
-                let label = if field.attrs.required {
-                    format!("{} *", field.label)
-                } else {
-                    field.label.clone()
-                };
-                let control = bilibi_ui::Combobox::new(&field.id, &field.name)
-                    .label(label)
-                    .value(&field.value)
-                    .options(
-                        field
-                            .options
-                            .iter()
-                            .filter(|c| !c.value.is_empty())
-                            .cloned()
-                            .collect(),
-                    )
-                    .errors(field.errors.clone())
-                    .attrs(field.attrs.clone())
-                    .aria_label(&field.label);
-                body.push(&render(control)?);
-            } else {
-                body.push(&render(field.clone())?);
-            }
-        }
-        if !self.help.is_empty() {
-            body.push(&render(bilibi_ui::Alert {
-                id: "assets-operation-help",
-                kind: StatusKind::Info,
-                body: Html::text(self.help),
-                ..Default::default()
-            })?);
-        }
-        let actions = render(bilibi_ui::Button {
-            id: self.button_dom,
-            button_type: "submit",
-            working: "Recording…",
-            body: Html::text(self.verb),
-            ..Default::default()
-        })?;
-        render(bilibi_ui::Form {
-            id: self.form_dom,
-            event: self.event_name,
-            body,
-            actions,
-            ..Default::default()
-        })
     }
 }
 

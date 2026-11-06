@@ -227,6 +227,7 @@ impl FixedAssets {
                     run_id: run.id,
                     period: run.period,
                     amount: item.amount,
+                    entry_id: run.entry_id,
                     entry_number: run.entry_number,
                     recorded_by_user_id: run.recorded_by_user_id,
                     recorded_by_impersonator_id: run.recorded_by_impersonator_id,
@@ -247,6 +248,186 @@ impl FixedAssets {
         })
     }
 }
+/// Most acquisition debits a register is offered at once, newest first.
+const SOURCE_LIMIT: usize = 500;
+/// Entries read from the cost account before the list stops, in pages of 500.
+const SOURCE_SCAN: usize = 20_000;
+
+impl FixedAssets {
+    /// The posted debits a category's cost account still has to register,
+    /// newest first: each line that `acquire_from_bill` or
+    /// `acquire_from_entry` would accept for this revision, so a person picks
+    /// the bill or journal line instead of typing its numbers. A line of a
+    /// posted bill is offered as that bill's line when this person may read
+    /// the bill, otherwise as its journal line. The register still decides
+    /// every refusal when it is saved.
+    pub async fn acquisition_sources(
+        &self,
+        s: &Scope,
+        company: i64,
+        category_revision_id: i64,
+    ) -> Result<Vec<AcquisitionSource>> {
+        let c = self.db.get().await.map_err(Error::from)?;
+        self.acquisition_sources_on(&**c, s, company, category_revision_id)
+            .await
+    }
+    pub(super) async fn acquisition_sources_on(
+        &self,
+        c: &dyn OperationClient,
+        s: &Scope,
+        company: i64,
+        category_revision_id: i64,
+    ) -> Result<Vec<AcquisitionSource>> {
+        self.opening_authorize(c, s, company, VIEW).await?;
+        let revision = store::revision(c, s.tenant(), company, category_revision_id).await?;
+        let cost_account = revision.defaults.cost_account_id;
+        let opening = self
+            .ledger
+            .opening_context_on(c, s, company)
+            .await
+            .ok()
+            .map(|o| o.entry.id);
+        let taken: std::collections::HashSet<(i64, i32)> = c
+            .query(
+                "SELECT entry_id, entry_line_number FROM finance_fixed_assets_assets WHERE tenant_id=$1 AND company_id=$2 AND entry_line_number IS NOT NULL",
+                &[&s.tenant(), &company],
+            )
+            .await?
+            .iter()
+            .map(|r| (r.get(0), r.get(1)))
+            .collect();
+        let mut bills = std::collections::HashMap::new();
+        let mut found = Vec::new();
+        let mut query = bilibi_finance_ledger::EntryQuery {
+            limit: Some(500),
+            account_id: Some(cost_account),
+            ..Default::default()
+        };
+        let mut scanned = 0;
+        loop {
+            let entries = self.ledger.list_entries_on(c, s, company, &query).await?;
+            scanned += entries.len();
+            for entry in &entries {
+                if Some(entry.id) == opening
+                    || entry.reversed_by_entry_id.is_some()
+                    || entry.reverses_entry_id.is_some()
+                {
+                    continue;
+                }
+                for line in &entry.lines {
+                    if line.account_id != cost_account
+                        || !line.debit.is_positive()
+                        || !line.credit.is_zero()
+                        || taken.contains(&(entry.id, line.line_number))
+                    {
+                        continue;
+                    }
+                    let bill_id = entry
+                        .owner
+                        .as_ref()
+                        .filter(|o| o.module == bilibi_finance_payables::MODULE)
+                        .and_then(|o| o.record.strip_prefix("document:"))
+                        .and_then(|id| id.parse::<i64>().ok());
+                    let bill = match bill_id {
+                        Some(id) => {
+                            if let std::collections::hash_map::Entry::Vacant(slot) = bills.entry(id)
+                            {
+                                // A person who may not read bills still sees the journal line.
+                                let doc = self
+                                    .payables
+                                    .get_document_on(c, s, company, id)
+                                    .await
+                                    .ok()
+                                    .filter(|d| d.document_type == "bill" && d.status == "posted");
+                                slot.insert(doc);
+                            }
+                            bills[&id].as_ref()
+                        }
+                        None => None,
+                    };
+                    let line_text = line.description.clone().filter(|d| !d.trim().is_empty());
+                    found.push(match bill {
+                        Some(doc) => AcquisitionSource {
+                            source: SourceKind::Bill,
+                            source_id: doc.id,
+                            line_number: line.line_number,
+                            entry_id: entry.id,
+                            entry_number: entry.entry_number,
+                            acquisition_date: entry.entry_date,
+                            amount: line.debit,
+                            description: doc
+                                .lines
+                                .iter()
+                                .find(|l| l.line_number == line.line_number)
+                                .map(|l| l.description.clone())
+                                .or(line_text)
+                                .unwrap_or_else(|| entry.description.clone()),
+                            bill_number: doc
+                                .party_document_number
+                                .clone()
+                                .or_else(|| doc.document_number.map(|n| n.to_string())),
+                            supplier: Some(doc.party.name.clone()),
+                        },
+                        None => AcquisitionSource {
+                            source: SourceKind::Entry,
+                            source_id: entry.id,
+                            line_number: line.line_number,
+                            entry_id: entry.id,
+                            entry_number: entry.entry_number,
+                            acquisition_date: entry.entry_date,
+                            amount: line.debit,
+                            description: line_text.unwrap_or_else(|| entry.description.clone()),
+                            bill_number: None,
+                            supplier: None,
+                        },
+                    });
+                }
+            }
+            match entries.last() {
+                Some(last) if entries.len() == 500 && scanned < SOURCE_SCAN => {
+                    query.after = Some((last.entry_date, last.id));
+                }
+                _ => break,
+            }
+        }
+        found.sort_by(|a, b| {
+            (b.acquisition_date, b.entry_number, a.line_number).cmp(&(
+                a.acquisition_date,
+                a.entry_number,
+                b.line_number,
+            ))
+        });
+        found.truncate(SOURCE_LIMIT);
+        Ok(found)
+    }
+}
+
+/// Where an acquisition debit was posted from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    Bill,
+    Entry,
+}
+/// One debit line `acquisition_sources` offers; `source`, `source_id` and
+/// `line_number` are what `asset.acquire` takes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AcquisitionSource {
+    pub source: SourceKind,
+    pub source_id: i64,
+    pub line_number: i32,
+    pub entry_id: i64,
+    pub entry_number: i64,
+    #[serde(with = "date_serde")]
+    pub acquisition_date: Date,
+    #[serde(deserialize_with = "money_serde::deserialize")]
+    pub amount: Money,
+    pub description: String,
+    /// The supplier's invoice number, or the bill's own number.
+    pub bill_number: Option<String>,
+    pub supplier: Option<String>,
+}
+
 fn acquisition_debit(entry: &Entry, number: i32, cost_account: i64) -> Result<Money> {
     if entry.reversed_by_entry_id.is_some() || entry.reverses_entry_id.is_some() {
         return Err(FixedAssetsError::AcquisitionReversed);

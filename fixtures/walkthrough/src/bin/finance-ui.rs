@@ -526,6 +526,45 @@ async fn main() -> Outcome<()> {
             &NewAccount::new("1290", "Accumulated depreciation", AccountType::Asset),
         )
         .await?;
+    // A posted bill that bought equipment and is not yet registered: "+ Asset"
+    // offers its line under "Bought on".
+    let laptop = payables
+        .create_bill(
+            &manager,
+            COMPANY,
+            &NewDocument {
+                vendor_id: Some(
+                    bilibi_finance_walkthrough_fixture::vendors::vendor(
+                        &db,
+                        services,
+                        &manager,
+                        COMPANY,
+                        "browser-supplier",
+                        "Paper supplier",
+                    )
+                    .await?,
+                ),
+                party_document_number: Some("BROWSER-LAPTOP".into()),
+                document_date: date(2026, 10, 15),
+                due_date: Some(date(2026, 11, 14)),
+                description: Some("Office laptop".into()),
+                lines: vec![DocumentLineInput {
+                    description: "Laptop for the accounts team".into(),
+                    account_id: cost.id,
+                    amount: Money::parse("4200", installed.book.minor_units)?,
+                    tax_code_id: None,
+                    external_order_line_id: None,
+                    order_line_id: None,
+                    quantity: None,
+                }],
+                tax_lines: None,
+            },
+        )
+        .await?;
+    payables
+        .approve_document(&admin, COMPANY, laptop.id)
+        .await?;
+    payables.post_document(&manager, COMPANY, laptop.id).await?;
     let entry = ledger
         .post_entry(
             &manager,

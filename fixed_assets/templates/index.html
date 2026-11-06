@@ -4,11 +4,7 @@
 <span id="assets-browser-clock" data-hook="BrowserTimeZone" hidden></span>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% if flash.error.contains("/finance/reports/approval-exceptions") %}{% call ui::button(id="approval-control-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
-{% call ui::header(title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
-{{ toolbar }}{{ period }}{{ unavailable }}{{ table }}{{ pager }}{{ reconciliation }}
-{% call ui::card(class="mt-4") %}
-<h2 class="font-medium">{{ heading }}</h2>
-{{ form }}
-{% endcall %}
-{{ reverse }}{{ opening }}
+{% call ui::header(actions=actions) %}{{ title }}{% endcall %}
+{% call ui::stack(parts=[filters.clone(), unavailable.clone(), list.clone(), after.clone()], wide=true) %}{% endcall %}
+{{ dialogs }}{{ opening }}
 {% endcall %}

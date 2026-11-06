@@ -201,22 +201,45 @@ async fn main() -> Outcome<()> {
     };
     let empty = HashMap::new();
     let mut categories = mount(services, &manager, "categories", None, &empty).await?;
+    let empty_list = refresh(&mut categories, &manager).await?;
+    has(&empty_list, "No asset categories yet");
+    has(&empty_list, "assets-empty-create");
     has(
-        &refresh(&mut categories, &manager).await?,
-        "No categories yet.",
+        &event(&mut categories, &manager, json!({"type":"new"})).await?,
+        "category-modal",
     );
-    let category_form = json!({"type":"record_asset","asset[name]":"Equipment <record>","asset[cost_account_id]":cost.id.to_string(),"asset[accumulated_account_id]":accumulated.id.to_string(),"asset[expense_account_id]":find("5000").to_string(),"asset[gain_account_id]":find("4000").to_string(),"asset[loss_account_id]":find("5000").to_string(),"asset[method]":"straight_line","asset[life_months]":"3","asset[reason]":"Initial assumptions"});
-    has(
-        &event(&mut categories, &manager, category_form.clone()).await?,
-        "Recorded.",
-    );
+    let category_form = json!({"type":"create_category","asset[name]":"Equipment <record>","asset[cost_account_id]":cost.id.to_string(),"asset[accumulated_account_id]":accumulated.id.to_string(),"asset[expense_account_id]":find("5000").to_string(),"asset[gain_account_id]":find("4000").to_string(),"asset[loss_account_id]":find("5000").to_string(),"asset[method]":"straight_line","asset[life_months]":"3"});
+    let mut blank = category_form.clone();
+    blank["asset[name]"] = "".into();
+    let refused = event(&mut categories, &manager, blank).await?;
+    has(&refused, "Name can&#39;t be blank");
+    has(&refused, "category-modal");
+    let added = event(&mut categories, &manager, category_form.clone()).await?;
+    has(&added, "Added Equipment &#60;record&#62;.");
+    no(&added, "category-modal");
     let original = assets.list_categories(&manager, COMPANY).await?.remove(0);
-    let mut revised = category_form.clone();
-    revised["asset[category_id]"] = original.id.to_string().into();
-    revised["asset[life_months]"] = "4".into();
+    // A default changed in place is a complete new revision.
     has(
-        &event(&mut categories, &manager, revised).await?,
-        "Recorded.",
+        &event(
+            &mut categories,
+            &manager,
+            json!({"type":"save_category","id":original.id.to_string(),"field":"life_months","value":"4"}),
+        )
+        .await?,
+        "Useful life changed to 4 months",
+    );
+    let revised = assets.list_categories(&manager, COMPANY).await?.remove(0);
+    assert_eq!(revised.revisions.len(), 2);
+    assert_eq!(revised.revision.defaults.assumptions.life_months, 4);
+    // Reducing balance waits on the page for its rate; nothing half-set is saved.
+    has(
+        &event(
+            &mut categories,
+            &manager,
+            json!({"type":"save_category","id":original.id.to_string(),"field":"method","value":"reducing_balance"}),
+        )
+        .await?,
+        "Enter the annual rate to switch to reducing balance.",
     );
     assert_eq!(
         assets.list_categories(&manager, COMPANY).await?[0]
@@ -224,6 +247,30 @@ async fn main() -> Outcome<()> {
             .len(),
         2
     );
+    event(
+        &mut categories,
+        &manager,
+        json!({"type":"save_category","id":original.id.to_string(),"field":"annual_rate","value":"20"}),
+    )
+    .await?;
+    let reducing = assets.list_categories(&manager, COMPANY).await?.remove(0);
+    assert_eq!(reducing.revisions.len(), 3);
+    assert_eq!(
+        reducing.revision.defaults.assumptions.method,
+        Method::ReducingBalance
+    );
+    event(
+        &mut categories,
+        &manager,
+        json!({"type":"save_category","id":original.id.to_string(),"field":"method","value":"straight_line"}),
+    )
+    .await?;
+    let original = assets.list_categories(&manager, COMPANY).await?.remove(0);
+    assert_eq!(
+        original.revision.defaults.assumptions.method,
+        Method::StraightLine
+    );
+    assert_eq!(original.revision.defaults.assumptions.annual_rate, None);
     for i in 0..26 {
         assets
             .create_category(&manager, COMPANY, &format!("Category {i:02}"), &defaults)
@@ -274,7 +321,7 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     assert_eq!(applied.query["to"], "2026-12-31");
-    has(&applied, "Whole register reconciliation as of 2026-12-31");
+    has(&applied, "Ledger check as of 2026-12-31");
     let mut ids = Vec::new();
     let mut entries = Vec::new();
     for label in [
@@ -298,8 +345,27 @@ async fn main() -> Outcome<()> {
                 &PostOptions::default(),
             )
             .await?;
-        let body=event(&mut register,&manager,json!({"type":"record_asset","asset[source]":"entry","asset[category_revision_id]":original.revision.id.to_string(),"asset[description]":label,"asset[entry_id]":entry.id.to_string(),"asset[entry_line_number]":"1","asset[in_service_date]":"2026-01-31","asset[residual_value]":"0"})).await?;
-        has(&body, "Recorded.");
+        // The person picks the purchase; nobody types an entry number.
+        let source = format!("entry:{}:1", entry.id);
+        has(
+            &event(&mut register, &manager, json!({"type":"new"})).await?,
+            "asset-modal",
+        );
+        let chosen = event(
+            &mut register,
+            &manager,
+            json!({"type":"asset_change","asset[category_revision_id]":original.revision.id.to_string(),"asset[source]":source}),
+        )
+        .await?;
+        has(&chosen, &source);
+        // The purchase's description and date fill the dialog.
+        has(&chosen, "2026-01-17");
+        let body=event(&mut register,&manager,json!({"type":"register_asset","asset[category_revision_id]":original.revision.id.to_string(),"asset[source]":source,"asset[description]":label,"asset[in_service_date]":"2026-01-31","asset[residual_value]":"0"})).await?;
+        has(&body, "Registered ");
+        no(&body, "asset-modal");
+        let reopened = event(&mut register, &manager, json!({"type":"new"})).await?;
+        no(&reopened, &source);
+        event(&mut register, &manager, json!({"type":"close_asset"})).await?;
         entries.push(entry);
     }
     let report = assets
@@ -310,14 +376,27 @@ async fn main() -> Outcome<()> {
     let first = refresh(&mut detail, &manager).await?;
     has(&first, "data-workspace-record");
     has(&first, "asset-schedule");
-    has(&first, "No depreciation charges posted.");
+    has(&first, "No depreciation posted yet.");
+    has(&first, "Sell or write off");
     has(&first, "Equipment &#60;one&#62;");
     println!("NX3: acquisition form and asset assumptions/schedule rendered");
     let boundary = refresh(&mut register, &manager).await?;
     has(&boundary, "assets-report-reproduce");
-    let bad=event(&mut register,&manager,json!({"type":"record_asset","asset[source]":"bill","asset[bill_id]":"nope","asset[category_revision_id]":original.revision.id.to_string(),"asset[description]":"Keep draft","asset[in_service_date]":"2026-02-01"})).await?;
-    has(&bad, "bill_id: is invalid");
+    // A row's own actions are icon buttons; there is no "Non-local actions"
+    // menu here (its accessible name is "Actions for …" until the Platform
+    // renames it, so both spellings are checked).
+    has(&boundary, &format!("assets-asset-{}-dispose", ids[0]));
+    no(&boundary, "Actions for");
+    no(&boundary, "Non-local actions");
+    event(&mut register, &manager, json!({"type":"new"})).await?;
+    let bad=event(&mut register,&manager,json!({"type":"register_asset","asset[source]":"bill:9999:1","asset[category_revision_id]":original.revision.id.to_string(),"asset[description]":"Keep draft","asset[in_service_date]":"2026-02-01"})).await?;
+    has(&bad, "Bought on can&#39;t be blank");
     has(&bad, "Keep draft");
+    has(&bad, "asset-modal");
+    no(
+        &event(&mut register, &manager, json!({"type":"close_asset"})).await?,
+        "asset-modal",
+    );
     ledger
         .reverse_entry(
             &manager,
@@ -331,28 +410,47 @@ async fn main() -> Outcome<()> {
         )
         .await?;
     let mut runs = mount(services, &manager, "runs", None, &empty).await?;
+    has(
+        &refresh(&mut runs, &manager).await?,
+        "No depreciation runs yet",
+    );
+    has(
+        &event(&mut runs, &manager, json!({"type":"new"})).await?,
+        "run-modal",
+    );
     let off_month = event(
         &mut runs,
         &manager,
-        json!({"type":"record_asset","asset[period]":"2026-01-15"}),
+        json!({"type":"run_depreciation","asset[period]":"2026-01-15"}),
     )
     .await?;
     has(&off_month, "Invalid period");
+    has(&off_month, "run-modal");
     no(&off_month, "base:");
     let run_body = event(
         &mut runs,
         &manager,
-        json!({"type":"record_asset","asset[period]":"2026-01-01"}),
+        json!({"type":"run_depreciation","asset[period]":"2026-01"}),
     )
     .await?;
-    has(&run_body, "Recorded without asset #2");
+    has(&run_body, "Posted without asset #2");
+    no(&run_body, "run-modal");
+    has(&run_body, "/finance/ledger/journals/entry-");
     has(&run_body, "#2 Reversed acquisition");
     has(&run_body, "Skipped assets");
     has(&refresh(&mut detail, &manager).await?, "40");
+    has(
+        &event(&mut detail, &manager, json!({"type":"open_dispose"})).await?,
+        "asset-dispose-modal",
+    );
     let disposal=event(&mut detail,&manager,json!({"type":"dispose","asset[effective_date]":"2026-02-01","asset[proceeds]":"0","asset[reason]":"Write off"})).await?;
-    has(&disposal, "Recorded in the ledger.");
-    has(&disposal, "disposed");
-    has(&event(&mut detail,&manager,json!({"type":"reverse","asset[effective_date]":"2026-02-01","asset[reason]":"Restore"})).await?,"disposal_reversed");
+    has(&disposal, "Disposal posted.");
+    has(&disposal, "Sold or written off");
+    // A disposed asset offers its reversal, and no longer a sale.
+    has(&disposal, "Reverse disposal");
+    no(&disposal, "asset-dispose\"");
+    let restored = event(&mut detail,&manager,json!({"type":"reverse_disposal","asset[effective_date]":"2026-02-01","asset[reason]":"Restore"})).await?;
+    has(&restored, "Disposal reversed");
     ledger
         .reverse_entry(
             &manager,
@@ -366,6 +464,11 @@ async fn main() -> Outcome<()> {
         )
         .await?;
     let mut voided = mount(services, &manager, "asset", Some(ids[2]), &empty).await?;
+    // A reversed purchase offers Void, not a sale.
+    let reversed = refresh(&mut voided, &manager).await?;
+    has(&reversed, "Purchase reversed");
+    has(&reversed, "open_void");
+    no(&reversed, "open_dispose");
     let void_form = json!({"type":"void","asset[effective_date]":"2026-02-01","asset[reason]":"Retire reversed acquisition"});
     has(
         &event(&mut voided, &manager, void_form.clone()).await?,
@@ -379,12 +482,29 @@ async fn main() -> Outcome<()> {
     event(&mut voided, &manager, void_form).await?;
     let body = event(&mut voided, &manager, json!({"type":"confirm_void"})).await?;
     has(&body, "asset-voided");
-    no(&body, "asset-void-form");
+    no(&body, "asset-void-modal");
+    no(&body, "open_void");
     let charge = assets.get_asset(&manager, COMPANY, ids[2]).await?;
     assert_eq!(charge.charges.len(), 1);
     assert!(charge.charges[0].reversal.is_some());
     let run = assets.list_runs(&manager, COMPANY).await?.remove(0);
-    has(&event(&mut runs,&manager,json!({"type":"reverse","asset[run_id]":run.id.to_string(),"asset[effective_date]":"2026-02-01","asset[reason]":"Correct run"})).await?,"Depreciation reversed.");
+    has(
+        &refresh(&mut runs, &manager).await?,
+        &format!("assets-run-{}-reverse", run.id),
+    );
+    let mut reversing = mount(
+        services,
+        &manager,
+        "runs",
+        None,
+        &HashMap::from([("reverse".into(), run.id.to_string())]),
+    )
+    .await?;
+    has(
+        &refresh(&mut reversing, &manager).await?,
+        "run-reverse-modal",
+    );
+    has(&event(&mut reversing,&manager,json!({"type":"reverse_run","asset[effective_date]":"2026-02-01","asset[reason]":"Correct run"})).await?,"Depreciation reversed.");
     assert!(
         assets.get_asset(&manager, COMPANY, ids[0]).await?.charges[0]
             .reversal
@@ -485,21 +605,22 @@ async fn main() -> Outcome<()> {
     grants
         .set_direct(&admin, 1, bilibi_finance_fixed_assets::ACQUIRE, Some(false))
         .await?;
-    let denied = event(&mut register, &manager, json!({"type":"record_asset"})).await?;
+    let denied = event(&mut register, &manager, json!({"type":"new"})).await?;
     has(&denied, "You do not have permission for that action.");
-    has(&denied, "assets-write-withheld");
+    no(&denied, "assets-create");
+    no(&denied, "asset-modal");
     grants
         .set_direct(&admin, 1, bilibi_finance_fixed_assets::ACQUIRE, None)
         .await?;
     let mut restricted = mount(services, &staff, "runs", None, &empty).await?;
     let body = refresh(&mut restricted, &staff).await?;
-    has(&body, "assets-write-withheld");
-    has(&body, "assets-reverse-withheld");
+    no(&body, "assets-create");
+    no(&body, "?reverse=");
     let mut restricted = mount(services, &staff, "asset", Some(ids[0]), &empty).await?;
     let body = refresh(&mut restricted, &staff).await?;
-    has(&body, "asset-dispose-withheld");
-    has(&body, "asset-reverse-withheld");
-    has(&body, "asset-void-withheld");
+    no(&body, "open_dispose");
+    no(&body, "open_reverse");
+    no(&body, "open_void");
     let mut columns = mount(services, &manager, "runs", None, &empty).await?;
     let body = event(
         &mut columns,

@@ -1,13 +1,16 @@
-//! Bilimbi FixedAssets.Web.ListPage and its three small page adapters.
-use super::{
-    input::{self, Draft},
-    *,
+//! Bilimbi FixedAssets.Web.ListPage and its three small page adapters: the
+//! register, categories and runs share search, filters and pages; each one's
+//! "+ X" opens its own dialog (`acquire`, `categories`, `runs`).
+mod register;
+use super::{acquire::Acquire, categories, input::Draft, runs, *};
+use crate::{
+    Category, RegisterReport, ReportPins, Run, ACQUIRE, CONFIGURE, DEPRECIATE, DISPOSE, REVERSE,
+    VIEW,
 };
-use crate::{RegisterReport, ReportPins, ACQUIRE, CONFIGURE, DEPRECIATE, REVERSE, VIEW};
 use bilibi_datetime::{filter::Outcome, Clock, Period, PeriodFilter};
 use bilibi_ui::{
-    Button, Choice, Filter, FilterToolbar, FlashMap, InputKind, ListSpec, ListState, Pagination,
-    RecordLink, ToolbarControl,
+    Choice, CreateButton, Filter, FilterToolbar, FlashMap, ListSpec, ListState, Pagination,
+    RecordLink, SectionHeading, ToolbarControl,
 };
 use std::sync::LazyLock;
 
@@ -67,29 +70,12 @@ impl Kind {
             Self::Runs => "Depreciation runs",
         }
     }
-    /// The empty-table line: "yet" when nothing is filtered, "match" only when a search is.
-    fn empty(self, filtered: bool) -> &'static str {
-        match (self, filtered) {
-            (Self::Register, false) => "No assets yet.",
-            (Self::Register, true) => "No assets match.",
-            (Self::Categories, false) => "No categories yet.",
-            (Self::Categories, true) => "No categories match.",
-            (Self::Runs, false) => "No depreciation runs yet.",
-            (Self::Runs, true) => "No depreciation runs match.",
-        }
-    }
-    fn verb(self) -> &'static str {
+    /// What the list holds, for its empty state.
+    fn noun(self) -> &'static str {
         match self {
-            Self::Register => "Register asset",
-            Self::Categories => "Save category",
-            Self::Runs => "Run depreciation",
-        }
-    }
-    fn heading(self) -> &'static str {
-        match self {
-            Self::Register => "Register acquisition",
-            Self::Categories => "Record category defaults",
-            Self::Runs => "Run monthly depreciation",
+            Self::Register => "fixed assets",
+            Self::Categories => "asset categories",
+            Self::Runs => "depreciation runs",
         }
     }
     fn cap(self) -> &'static str {
@@ -102,8 +88,9 @@ impl Kind {
     fn columns(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Register => &[
-                ("number", "Number"),
+                ("number", "No."),
                 ("description", "Asset"),
+                ("category", "Category"),
                 ("cost", "Cost"),
                 ("accumulated", "Depreciation"),
                 ("carrying", "Carrying value"),
@@ -111,18 +98,21 @@ impl Kind {
                 ("status", "Status"),
             ],
             Self::Categories => &[
-                ("id", "Category ID"),
                 ("name", "Category"),
                 ("method", "Method"),
-                ("life", "Life (months)"),
-                ("revision", "Revision"),
+                ("life", "Useful life"),
+                ("rate", "Annual rate"),
+                ("cost_account_id", "Cost account"),
+                ("accumulated_account_id", "Accumulated depreciation"),
+                ("expense_account_id", "Depreciation expense"),
+                ("gain_account_id", "Disposal gain"),
+                ("loss_account_id", "Disposal loss"),
             ],
             Self::Runs => &[
-                ("id", "Run ID"),
-                ("period", "Period"),
+                ("period", "Month"),
                 ("total", "Depreciation"),
-                ("entry", "Entry"),
-                ("reversed", "Reversed"),
+                ("entry", "Journal entry"),
+                ("status", "Status"),
                 ("exceptions", "Skipped assets"),
             ],
         }
@@ -137,36 +127,40 @@ pub(super) struct Index {
     period: Option<PeriodFilter>,
     query: HashMap<String, String>,
     browser_zone: Option<String>,
-    draft: Draft,
-    reverse: Draft,
     flash: Option<(StatusKind, String)>,
     opening: Option<super::opening::Opening>,
+    /// The register's "+ Asset" dialog while it is open.
+    acquire: Option<Acquire>,
+    categories: categories::State,
+    runs: runs::State,
+    /// What the categories and runs pages last read, for their writes.
+    category_list: Vec<Category>,
+    run_list: Vec<Run>,
+    history: ListColumns,
+    check: ListColumns,
 }
 #[derive(Template)]
 #[template(path = "index.html")]
 struct View<'a> {
     page_dom: String,
-    title: &'static str,
-    title_actions: Html,
     actions: Html,
+    title: &'static str,
     opening: Html,
     flash: FlashMap<'a>,
-    toolbar: Html,
-    period: Html,
+    filters: Html,
     unavailable: Html,
-    table: Html,
-    pager: Html,
-    reconciliation: Html,
-    heading: &'static str,
-    form: Html,
-    reverse: Html,
+    list: Html,
+    after: Html,
+    dialogs: Html,
 }
 #[derive(Template)]
-#[template(path = "reconciliation.html")]
-struct ReconciliationView {
-    heading: String,
-    reproduce: String,
-    rows: Vec<String>,
+#[template(
+    source = r#"<div class="flex flex-wrap items-start gap-x-3"><div class="min-w-0 flex-1">{{ toolbar|safe }}</div>{{ period|safe }}</div>"#,
+    ext = "html"
+)]
+struct Filters {
+    toolbar: Html,
+    period: Html,
 }
 impl Index {
     pub(super) fn new(
@@ -185,11 +179,54 @@ impl Index {
             period: None,
             query: query.clone(),
             browser_zone: None,
-            draft: Draft::default(),
-            reverse: Draft::default(),
             flash: None,
             opening: None,
+            acquire: None,
+            categories: categories::State::default(),
+            runs: runs::State::default(),
+            category_list: Vec::new(),
+            run_list: Vec::new(),
+            history: categories::history_columns()?,
+            check: cols(
+                "assets-ledger-check",
+                &[
+                    ("account", "Account"),
+                    ("ledger", "Ledger"),
+                    ("register", "Register"),
+                    ("difference", "Difference"),
+                    ("other", "Other postings"),
+                ],
+            )?,
         })
+    }
+    /// A dialog the address asks for: `?new=1` opens the page's "+ X", and
+    /// `?reverse=<run>` the reversal of that run.
+    async fn open_from_query(&mut self, s: &Scope) -> Result<()> {
+        if self.query.get("new").map(String::as_str) == Some("1") {
+            self.query.remove("new");
+            self.open_new(s).await?;
+        }
+        if let Some(id) = self.query.remove("reverse").and_then(|v| v.parse().ok()) {
+            if self.kind == Kind::Runs && self.pages.allowed(s, REVERSE).await? {
+                self.runs.reverse = Some((id, Draft::default()));
+            }
+        }
+        Ok(())
+    }
+    async fn open_new(&mut self, s: &Scope) -> Result<()> {
+        if !self.pages.allowed(s, self.kind.cap()).await? {
+            self.flash = Some((StatusKind::Error, DENIED.into()));
+            return Ok(());
+        }
+        match self.kind {
+            Kind::Register => match Acquire::open(&self.pages, s).await {
+                Ok(a) => self.acquire = Some(a),
+                Err(e) => self.flash = Some((StatusKind::Error, refusal(e))),
+            },
+            Kind::Categories => self.categories.new = Some(Draft::default()),
+            Kind::Runs => self.runs.new = Some(Draft::default()),
+        }
+        Ok(())
     }
     fn pins(&self) -> ReportPins {
         let pin = |key| {
@@ -231,6 +268,12 @@ impl Index {
             PINS.into_iter()
                 .filter_map(|key| self.query.get(key).map(|value| (key.into(), value.clone()))),
         );
+        if self.acquire.is_some() || self.categories.new.is_some() || self.runs.new.is_some() {
+            query.insert("new".into(), "1".into());
+        }
+        if let Some((id, _)) = &self.runs.reverse {
+            query.insert("reverse".into(), id.to_string());
+        }
         query
     }
     fn clear_pins(&mut self) {
@@ -244,317 +287,52 @@ impl Index {
             .flat_map(|p| p.period.params().map(|(k, v)| (k.into(), v)))
             .collect()
     }
-    fn fields(&self, accounts: &[(i64, String, String, bool, String)]) -> Vec<Field> {
-        use InputKind::{Date, Number, Select, Text};
-        let d = &self.draft;
-        let mut fields = Vec::new();
-        let specs: &[(&str, &str, InputKind, bool)] = match self.kind {
-            Kind::Categories => &[
-                (
-                    "category_id",
-                    "Existing category ID (blank creates one)",
-                    Number,
-                    false,
-                ),
-                ("name", "New category name", Text, false),
-                ("cost_account_id", "Cost account", Select, true),
-                (
-                    "accumulated_account_id",
-                    "Accumulated depreciation account",
-                    Select,
-                    true,
-                ),
-                (
-                    "expense_account_id",
-                    "Depreciation expense account",
-                    Select,
-                    true,
-                ),
-                ("gain_account_id", "Disposal gain account", Select, true),
-                ("loss_account_id", "Disposal loss account", Select, true),
-            ],
-            Kind::Register => &[
-                ("source", "Acquisition source", Select, false),
-                ("category_revision_id", "Category revision ID", Number, true),
-                ("description", "Asset description", Text, true),
-                ("entry_id", "Manual entry ID", Number, false),
-                (
-                    "entry_line_number",
-                    "Manual entry line number",
-                    Number,
-                    false,
-                ),
-                ("bill_id", "Supplier bill ID", Number, false),
-                (
-                    "bill_line_number",
-                    "Supplier bill line number",
-                    Number,
-                    false,
-                ),
-                ("in_service_date", "In-service date", Date, true),
-                (
-                    "residual_value",
-                    "Residual value (blank means zero)",
-                    Text,
-                    false,
-                ),
-            ],
-            Kind::Runs => &[("period", "First day of month", Date, true)],
-        };
-        for (key, label, kind, required) in specs {
-            let mut f = d.field(key, label, *kind, *required, "asset");
-            if key.ends_with("account_id") {
-                let expected = match *key {
-                    "cost_account_id" | "accumulated_account_id" => "asset",
-                    "expense_account_id" | "loss_account_id" => "expense",
-                    _ => "income",
-                };
-                f = f.options(
-                    std::iter::once(Choice::new("Choose an account", ""))
-                        .chain(
-                            accounts
-                                .iter()
-                                .filter(|a| a.3 && a.2 == expected)
-                                .map(|a| Choice::new(&a.1, a.0.to_string()).detail(&a.4)),
-                        )
-                        .collect(),
-                );
-            }
-            if *key == "source" {
-                f = f.options(vec![
-                    Choice::new("Manual ledger entry", "entry"),
-                    Choice::new("Posted supplier bill", "bill"),
-                ]);
-                if d.value(key).is_empty() {
-                    f = f.value("entry");
-                }
-            }
-            fields.push(f);
-        }
-        if self.kind == Kind::Categories {
-            fields.push(d.method_field());
-            fields.extend([
-                d.field(
-                    "life_months",
-                    "Default useful life (months)",
-                    Number,
-                    true,
-                    "asset",
-                ),
-                d.field(
-                    "annual_rate",
-                    "Annual percentage (reducing balance)",
-                    Text,
-                    false,
-                    "asset",
-                ),
-                d.field("reason", "Reason", Text, true, "asset"),
-            ]);
-        }
-        fields
-    }
-    async fn write_form(
-        &self,
-        s: &Scope,
-        accounts: &[(i64, String, String, bool, String)],
-    ) -> Result<Html> {
-        if !self.pages.allowed(s, self.kind.cap()).await? {
-            return withheld(
-                "assets-write-withheld",
-                "Read-only access",
-                "Ask your company administrator for permission to record this operation.",
-            );
-        }
-        render(Operation {
-            form_dom: "assets-write-form",
-            event_name: "record_asset",
-            button_dom: "assets-record",
-            verb: self.kind.verb(),
-            fields: self.fields(accounts),
-            help: if self.kind == Kind::Runs {
-                "One charge through this month, including any scheduled depreciation still unposted. Closed periods are refused."
-            } else {
-                ""
-            },
-        })
-    }
-    async fn reverse_form(&self, s: &Scope) -> Result<Html> {
-        if self.kind != Kind::Runs {
-            return Ok(Html::EMPTY);
-        }
-        let form = if self.pages.allowed(s, REVERSE).await? {
-            render(Operation {
-                form_dom: "assets-reverse-form",
-                event_name: "reverse",
-                button_dom: "assets-reverse",
-                verb: "Post reversal",
-                help: "",
-                fields: vec![
-                    self.reverse
-                        .field("run_id", "Run ID", InputKind::Number, true, "asset"),
-                    self.reverse.field(
-                        "effective_date",
-                        "Reversal date in an open period",
-                        InputKind::Date,
-                        true,
-                        "asset",
-                    ),
-                    self.reverse
-                        .field("reason", "Reason", InputKind::Text, true, "asset"),
-                ],
-            })?
-        } else {
-            withheld(
-                "assets-reverse-withheld",
-                "Reversals unavailable",
-                "Ask your company administrator for asset reversal permission.",
-            )?
-        };
-        let mut body = render(CardHeading {
-            text: "Reverse a run",
-        })?;
-        body.push(&form);
-        render(bilibi_ui::Card {
-            class: "mt-4",
-            body,
-            ..Default::default()
-        })
-    }
     async fn rows(
-        &self,
+        &mut self,
         s: &Scope,
         units: Option<bilibi_finance_ledger::MinorUnits>,
+        accounts: &categories::Accounts,
     ) -> crate::Result<(Vec<(String, FlexRow)>, Option<RegisterReport>)> {
         let c = company(s).ok_or(FixedAssetsError::CompanyNotFound)?;
         let mut rows = Vec::new();
         let report = match self.kind {
-            Kind::Register => {
-                let as_of = self.period.as_ref().expect("period initialized").period.to;
-                let report = self
-                    .pages
-                    .read::<RegisterReport>(
-                        s,
-                        "finance.fixed_assets.register.get",
-                        {
-                            let mut value =
-                                serde_json::to_value(self.pins()).map_err(|_| Error::Internal)?;
-                            value["company_id"] = c.into();
-                            value["as_of"] = serde_json::json!(as_of.to_string());
-                            for key in ["source", "status"] {
-                                if let Some(filter) =
-                                    self.list.filters.get(key).filter(|v| !v.is_empty())
-                                {
-                                    value[key] = serde_json::json!(filter);
-                                }
-                            }
-                            value
-                        },
-                        "report",
-                    )
-                    .await?;
-                for r in &report.rows {
-                    let a = &r.asset;
-                    let link = render(RecordLink {
-                        workspace: self.framed,
-                        kind: MODULE,
-                        record_id: &a.id.to_string(),
-                        href: &format!("/finance/fixed-assets/register/{}", a.id),
-                        body: Html::text(&a.description),
-                        class: "",
-                    })?;
-                    let row = FlexRow::new(a.id.to_string())
-                        .cell("number", Cell::text(a.asset_number.to_string()))
-                        .slot("description", link)
-                        .cell("cost", Cell::text(a.cost.display(units)))
-                        .cell("accumulated", Cell::text(r.accumulated.display(units)))
-                        .cell("carrying", Cell::text(r.carrying_value.display(units)))
-                        .cell(
-                            "source",
-                            Cell::text(if a.opening_date.is_some() {
-                                "Opening"
-                            } else {
-                                "Ordinary"
-                            }),
-                        )
-                        .cell(
-                            "status",
-                            Cell::text(if r.voided {
-                                "Voided"
-                            } else if r.disposed {
-                                "Disposed"
-                            } else {
-                                "In service"
-                            }),
-                        );
-                    rows.push((format!("{} {}", a.asset_number, a.description), row));
-                }
-                Some(report)
-            }
+            Kind::Register => Some(self.register_rows(s, c, units, &mut rows).await?),
             Kind::Categories => {
-                for c in self
+                self.category_list = self
                     .pages
-                    .read::<Vec<crate::Category>>(
+                    .read::<Vec<Category>>(
                         s,
                         "finance.fixed_assets.category.list",
                         serde_json::json!({"company_id":c}),
                         "records",
                     )
-                    .await?
-                {
-                    let row = FlexRow::new(c.id.to_string())
-                        .cell("id", Cell::text(c.id.to_string()))
-                        .cell("name", Cell::text(c.name.clone()))
-                        .cell(
-                            "method",
-                            Cell::text(input::method(c.revision.defaults.assumptions.method)),
-                        )
-                        .cell(
-                            "life",
-                            Cell::text(c.revision.defaults.assumptions.life_months.to_string()),
-                        )
-                        .cell("revision", Cell::text(c.revision.id.to_string()));
-                    rows.push((c.name, row));
+                    .await?;
+                let can = self.pages.allowed(s, CONFIGURE).await?;
+                for c in &self.category_list {
+                    rows.push((c.name.clone(), self.categories.row(c, accounts, can)?));
                 }
                 None
             }
             Kind::Runs => {
-                for r in self
+                self.run_list = self
                     .pages
-                    .read::<Vec<crate::Run>>(
+                    .read::<Vec<Run>>(
                         s,
                         "finance.fixed_assets.run.list",
                         serde_json::json!({"company_id":c}),
                         "records",
                     )
-                    .await?
-                {
-                    let skipped = if r.exceptions.is_empty() {
-                        "None".into()
-                    } else {
-                        r.exceptions
-                            .iter()
-                            .map(|e| format!("#{} {}", e.asset_number, e.description))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-                    let row = FlexRow::new(r.id.to_string())
-                        .cell("id", Cell::text(r.id.to_string()))
-                        .cell("period", Cell::text(r.period.to_string()))
-                        .cell("total", Cell::text(r.total.display(units)))
-                        .cell(
-                            "entry",
-                            Cell::text(
-                                r.entry_number
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_else(|| "No charge".into()),
-                            ),
-                        )
-                        .cell(
-                            "reversed",
-                            Cell::text(if r.reversed { "Yes" } else { "No" }),
-                        )
-                        .cell("exceptions", Cell::text(skipped));
-                    rows.push((r.period.to_string(), row));
+                    .await?;
+                let reversible = if self.pages.allowed(s, REVERSE).await? {
+                    runs::reversible(&self.run_list)
+                } else {
+                    None
+                };
+                for r in &self.run_list {
+                    rows.push((
+                        format!("{} {}", month(r.period), r.period),
+                        runs::row(r, units, reversible == Some(r.id))?,
+                    ));
                 }
                 None
             }
@@ -564,9 +342,32 @@ impl Index {
         }
         Ok((rows, report))
     }
+    /// The page's one create action, for someone who may take it.
+    async fn create_button(&self, s: &Scope, id: &'static str) -> Result<Html> {
+        if !self.pages.allowed(s, self.kind.cap()).await? {
+            return Ok(Html::EMPTY);
+        }
+        match self.kind {
+            Kind::Register => render(CreateButton {
+                noun: "Asset",
+                id,
+                event: "new",
+                button_type: "button",
+                ..CreateButton::default()
+            }),
+            Kind::Categories => render(CreateButton {
+                noun: "Category",
+                id,
+                event: "new",
+                button_type: "button",
+                ..CreateButton::default()
+            }),
+            Kind::Runs => header_button(id, "new", "Run depreciation", true),
+        }
+    }
     async fn body(&mut self, s: &Scope) -> Result<String> {
         let (units, accounts) = self.pages.account_context(s).await?;
-        let (mut rows, report, unavailable) = match self.rows(s, units).await {
+        let (mut rows, report, unavailable) = match self.rows(s, units, &accounts).await {
             Ok((rows, r)) => (rows, r, Html::EMPTY),
             Err(e) => (
                 vec![],
@@ -576,22 +377,42 @@ impl Index {
                 )?,
             ),
         };
+        let unfiltered = rows.len();
         let search = self.list.search.to_lowercase();
         rows.retain(|(text, _)| text.to_lowercase().contains(&search));
         let page = self.list.paginate(&rows);
         let counts = page.counts;
         let rows = page.entries.iter().map(|(_, row)| row.clone()).collect();
-        let table = if unavailable.is_empty() {
+        let filtered =
+            !self.list.search.is_empty() || self.list.filters.values().any(|v| !v.is_empty());
+        let table = if !unavailable.is_empty() {
+            Html::EMPTY
+        } else if unfiltered == 0 && !filtered {
+            // A true empty list says so and offers the way to fill it.
+            let mut empty = EmptyState::missing(
+                format!("No {} yet", self.kind.noun()),
+                match self.kind {
+                    Kind::Register => {
+                        "Register an asset from the bill or journal entry that bought it."
+                    }
+                    Kind::Categories => {
+                        "A category sets the accounts and useful life its assets start with."
+                    }
+                    Kind::Runs => "A run posts a month's depreciation for every asset in service.",
+                },
+            )
+            .id("assets-empty");
+            empty = empty.action(self.create_button(s, "assets-empty-create").await?);
+            render(empty)?
+        } else {
             table(
                 &format!("assets-{}-table", self.kind.key()),
                 &self.columns,
                 rows,
                 self.kind.title(),
                 "grid",
-                self.kind.empty(!self.list.search.is_empty()),
+                &format!("No {} match these filters.", self.kind.noun()),
             )?
-        } else {
-            Html::EMPTY
         };
         let mut toolbar = FilterToolbar::new(
             "assets-filters",
@@ -600,7 +421,11 @@ impl Index {
                 "search",
                 "Search",
                 &self.list.search,
-                "Search records…",
+                match self.kind {
+                    Kind::Register => "Search assets…",
+                    Kind::Categories => "Search categories…",
+                    Kind::Runs => "Search months…",
+                },
             )],
         );
         if self.kind == Kind::Register {
@@ -635,131 +460,75 @@ impl Index {
         toolbar.event = "filter";
         let mut pager = Pagination::new("assets-pagination", counts, &[25, 50, 100]);
         pager.filters_event = "filter";
-        let reconciliation = if let Some(r) = &report {
-            // The reproduce link carries the filters, period and pins.
-            let mut query = self.list.to_params();
-            query.extend(self.period_params());
-            for (key, value) in PINS.into_iter().zip([
-                r.through_entry_number,
-                r.through_asset_number,
-                r.through_event_number,
-                r.through_category_revision_id,
-            ]) {
-                query.insert(key.into(), value.to_string());
+        let after = match self.kind {
+            Kind::Register => match &report {
+                Some(r) => self.ledger_check(r, units, &accounts)?,
+                None => Html::EMPTY,
+            },
+            Kind::Categories if !self.category_list.is_empty() => {
+                let people = self
+                    .pages
+                    .people(
+                        s,
+                        self.category_list
+                            .iter()
+                            .flat_map(|c| &c.revisions)
+                            .flat_map(|r| {
+                                std::iter::once(r.recorded_by_user_id)
+                                    .chain(r.recorded_by_impersonator_id)
+                            }),
+                    )
+                    .await?;
+                let display = self.pages.display(s).await?;
+                categories::history(&self.category_list, &people, &display, &self.history)?
             }
-            render(ReconciliationView {
-                heading: format!("Whole register reconciliation as of {}", r.as_of),
-                reproduce: params::address("/finance/fixed-assets/register", &query),
-                rows: r
-                    .reconciliation
-                    .iter()
-                    .map(|r| {
-                        let mut line = format!(
-                            "{}: ledger {}, register {}, difference {}",
-                            accounts
-                                .iter()
-                                .find(|a| a.0 == r.account_id)
-                                .map(|a| a.1.as_str())
-                                .unwrap_or("Account unavailable"),
-                            r.ledger_balance.display(units),
-                            r.register_balance.display(units),
-                            r.difference.display(units)
-                        );
-                        if !r.other_postings.is_zero() {
-                            line.push_str(&format!(
-                                "; other postings {}",
-                                r.other_postings.display(units)
-                            ));
-                        }
-                        line.push('.');
-                        line
-                    })
-                    .collect(),
-            })?
-        } else {
-            Html::EMPTY
+            _ => Html::EMPTY,
         };
-        let view = View {
-            page_dom: format!("assets-{}", self.kind.key()),
-            title: self.kind.title(),
-            title_actions: bilibi_ui::Html::EMPTY,
-            actions: if self.kind == Kind::Register && self.pages.allowed(s, VIEW).await? {
-                render(Button {
-                    id: "assets-opening",
-                    button_type: "button",
-                    event: "open_opening",
-                    body: Html::text("Opening asset register"),
-                    ..Button::default()
-                })?
-            } else {
-                Html::EMPTY
-            },
-            opening: if let Some(opening) = &mut self.opening {
-                opening.body(s).await?
-            } else {
-                Html::EMPTY
-            },
-            flash: flash_map(&self.flash),
+        let mut actions = Html::EMPTY;
+        if self.kind == Kind::Register && self.pages.allowed(s, VIEW).await? {
+            actions.push(&header_button(
+                "assets-opening",
+                "open_opening",
+                "Opening asset register",
+                false,
+            )?);
+        }
+        actions.push(&self.create_button(s, "assets-create").await?);
+        let mut dialogs = Html::EMPTY;
+        if let Some(a) = &self.acquire {
+            dialogs.push(&a.render(units)?);
+        }
+        dialogs.push(&self.categories.dialog(&accounts)?);
+        dialogs.push(&self.runs.dialogs(&self.run_list)?);
+        let filters = render(Filters {
             toolbar: render(toolbar)?,
             period: if self.kind == Kind::Register {
                 render(self.period.as_ref().expect("period initialized").clone())?
             } else {
                 Html::EMPTY
             },
+        })?;
+        let view = View {
+            page_dom: format!("assets-{}", self.kind.key()),
+            title: self.kind.title(),
+            actions,
+            opening: if let Some(opening) = &mut self.opening {
+                opening.body(s).await?
+            } else {
+                Html::EMPTY
+            },
+            flash: flash_map(&self.flash),
+            filters,
             unavailable,
-            table,
-            pager: render(pager)?,
-            reconciliation,
-            heading: self.kind.heading(),
-            form: self.write_form(s, &accounts).await?,
-            reverse: self.reverse_form(s).await?,
+            list: {
+                let mut list = table;
+                list.push(&render(pager)?);
+                list
+            },
+            after,
+            dialogs,
         };
         view.render().map_err(|_| Error::Internal)
-    }
-    async fn record(&self, s: &Scope, credential: &str) -> crate::Result<Option<crate::Run>> {
-        let c = company(s).ok_or(FixedAssetsError::CompanyNotFound)?;
-        let d = &self.draft;
-        let (key, input) = match self.kind {
-            Kind::Categories => {
-                let mut input = serde_json::to_value(d.revision()?).map_err(|_| Error::Internal)?;
-                if let Some(id) = d.optional_id("category_id")? {
-                    input["category_id"] = id.into();
-                } else {
-                    input["name"] = serde_json::json!(d.value("name"));
-                }
-                ("finance.fixed_assets.category.save", input)
-            }
-            Kind::Register => {
-                let bill = d.value("source") == "bill";
-                let (id, line) = if bill {
-                    d.source("bill_id", "bill_line_number")?
-                } else {
-                    d.source("entry_id", "entry_line_number")?
-                };
-                let units = self.pages.minor_units(s, c).await?;
-                let mut input =
-                    serde_json::to_value(d.acquisition(units)?).map_err(|_| Error::Internal)?;
-                input["source"] = serde_json::json!(if bill { "bill" } else { "entry" });
-                input["source_id"] = id.into();
-                input["line_number"] = line.into();
-                ("finance.fixed_assets.asset.acquire", input)
-            }
-            Kind::Runs => (
-                "finance.fixed_assets.run.post",
-                serde_json::json!({"period":d.date("period").map_err(|_|FixedAssetsError::InvalidPeriod)?.to_string()}),
-            ),
-        };
-        let result = self
-            .pages
-            .submit(s, credential, "record_asset", key, input)
-            .await?;
-        if self.kind == Kind::Runs {
-            Ok(Some(
-                serde_json::from_value(result).map_err(|_| Error::Internal)?,
-            ))
-        } else {
-            Ok(None)
-        }
     }
     async fn event(&mut self, s: &Scope, credential: &str, v: &serde_json::Value) -> Result<()> {
         let event = v["type"].as_str().unwrap_or("");
@@ -791,73 +560,158 @@ impl Index {
             "grid" => {
                 self.columns.handle(&params::string_values(v));
             }
+            "history_grid" => {
+                self.history.handle(&params::string_values(v));
+            }
+            "check_grid" => {
+                self.check.handle(&params::string_values(v));
+            }
             "browser_timezone" => {
                 self.browser_zone = v["timezone"].as_str().map(str::to_owned);
                 self.period(s).await?;
             }
-            "record_asset" => {
-                self.draft = Draft::posted(v);
-                if !self.pages.allowed(s, self.kind.cap()).await? {
-                    self.flash = Some((StatusKind::Error, DENIED.into()));
-                    return Ok(());
-                }
-                match self.record(s, credential).await {
-                    Ok(run) => {
-                        self.flash = Some(
-                            if let Some(r) = run.filter(|r| !r.exceptions.is_empty()) {
-                                (
-                                    StatusKind::Error,
-                                    format!(
-                                        "Recorded without asset {}: its acquisition entry was reversed. Void the acquisition from the asset page.",
-                                        r.exceptions
-                                            .iter()
-                                            .map(|e| format!("#{}", e.asset_number))
-                                            .collect::<Vec<_>>()
-                                            .join(", ")
-                                    ),
-                                )
-                            } else {
-                                (StatusKind::Success, "Recorded.".into())
-                            },
-                        );
-                        self.draft = Draft::default();
-                    }
-                    Err(e) => {
-                        self.draft.refused(&e);
-                        self.flash = Some((StatusKind::Error, refusal(e)));
+            "new" => self.open_new(s).await?,
+            "close_asset" => self.acquire = None,
+            "close_category" => self.categories.new = None,
+            "close_run" => self.runs.new = None,
+            "close_reverse" => self.runs.reverse = None,
+            "asset_change" if self.kind == Kind::Register => {
+                if let Some(a) = &mut self.acquire {
+                    if let Err(e) = a.change(&self.pages, s, v).await {
+                        a.refused(&e);
                     }
                 }
             }
-            "reverse" => {
-                if self.kind != Kind::Runs {
-                    return Err(Error::Invalid);
+            "register_asset" if self.kind == Kind::Register => {
+                let Some(mut a) = self.acquire.take() else {
+                    return Ok(());
+                };
+                if let Err(e) = a.change(&self.pages, s, v).await {
+                    a.refused(&e);
+                    self.acquire = Some(a);
+                    return Ok(());
                 }
-                self.reverse = Draft::posted(v);
+                if !self.pages.allowed(s, ACQUIRE).await? {
+                    a.refused(&FixedAssetsError::Unauthorized);
+                    self.acquire = Some(a);
+                    return Ok(());
+                }
+                match a.submit(&self.pages, s, credential).await {
+                    Ok(description) => {
+                        self.flash =
+                            Some((StatusKind::Success, format!("Registered {description}.")));
+                    }
+                    Err(e) => {
+                        a.refused(&e);
+                        self.acquire = Some(a);
+                    }
+                }
+            }
+            "category_change" if self.kind == Kind::Categories => self.categories.change(v),
+            "create_category" if self.kind == Kind::Categories => {
+                self.categories.change(v);
+                if !self.pages.allowed(s, CONFIGURE).await? {
+                    self.flash = Some((StatusKind::Error, DENIED.into()));
+                    return Ok(());
+                }
+                match self.categories.create(&self.pages, s, credential).await {
+                    Ok(name) => {
+                        self.categories.new = None;
+                        self.flash = Some((StatusKind::Success, format!("Added {name}.")));
+                    }
+                    Err(e) => {
+                        if let Some(d) = &mut self.categories.new {
+                            d.refused(&e);
+                            if d.errors.is_empty() {
+                                d.errors.push(bilibi_finance_ledger::FieldError::new(
+                                    "base",
+                                    refusal(e),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            "save_category" if self.kind == Kind::Categories => {
+                if !self.pages.allowed(s, CONFIGURE).await? {
+                    self.flash = Some((StatusKind::Error, DENIED.into()));
+                    return Ok(());
+                }
+                let (_, accounts) = self.pages.account_context(s).await?;
+                let list = std::mem::take(&mut self.category_list);
+                let saved = self
+                    .categories
+                    .save(&self.pages, s, credential, &list, &accounts, v)
+                    .await;
+                self.category_list = list;
+                saved?;
+            }
+            "run_depreciation" if self.kind == Kind::Runs => {
+                if let Some(d) = &mut self.runs.new {
+                    *d = Draft::posted(v);
+                }
+                if !self.pages.allowed(s, DEPRECIATE).await? {
+                    self.flash = Some((StatusKind::Error, DENIED.into()));
+                    return Ok(());
+                }
+                match self.runs.run(&self.pages, s, credential).await {
+                    Ok(run) => {
+                        self.runs.new = None;
+                        self.flash = Some(if run.exceptions.is_empty() {
+                            (
+                                StatusKind::Success,
+                                format!("Depreciation for {} posted.", month(run.period)),
+                            )
+                        } else {
+                            (
+                                StatusKind::Error,
+                                format!(
+                                    "Posted without asset {}: its acquisition entry was reversed. Void the acquisition from the asset page.",
+                                    run.exceptions
+                                        .iter()
+                                        .map(|e| format!("#{}", e.asset_number))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
+                            )
+                        });
+                    }
+                    Err(e) => {
+                        if let Some(d) = &mut self.runs.new {
+                            d.refused(&e);
+                            if d.errors.is_empty() {
+                                d.errors.push(bilibi_finance_ledger::FieldError::new(
+                                    "base",
+                                    refusal(e),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            "reverse_run" if self.kind == Kind::Runs => {
+                if let Some((_, d)) = &mut self.runs.reverse {
+                    *d = Draft::posted(v);
+                }
                 if !self.pages.allowed(s, REVERSE).await? {
                     self.flash = Some((StatusKind::Error, DENIED.into()));
                     return Ok(());
                 }
-                let result = async {
-                    let mut input = self.reverse.event_values();
-                    input["run_id"] = self.reverse.id("run_id")?.into();
-                    self.pages
-                        .submit(
-                            s,
-                            credential,
-                            "reverse",
-                            "finance.fixed_assets.run.reverse",
-                            input,
-                        )
-                        .await
-                }
-                .await;
-                match result {
-                    Ok(_) => {
-                        self.flash = Some((StatusKind::Success, "Depreciation reversed.".into()))
+                match self.runs.reverse(&self.pages, s, credential).await {
+                    Ok(()) => {
+                        self.runs.reverse = None;
+                        self.flash = Some((StatusKind::Success, "Depreciation reversed.".into()));
                     }
                     Err(e) => {
-                        self.reverse.refused(&e);
-                        self.flash = Some((StatusKind::Error, refusal(e)));
+                        if let Some((_, d)) = &mut self.runs.reverse {
+                            d.refused(&e);
+                            if d.errors.is_empty() {
+                                d.errors.push(bilibi_finance_ledger::FieldError::new(
+                                    "base",
+                                    refusal(e),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -917,6 +771,7 @@ impl LiveState<Scope, Error> for Index {
                     _ => self.event(r.scope, r.credential, v).await?,
                 },
             }
+            self.open_from_query(r.scope).await?;
             let html = self.body(r.scope).await?;
             Ok(LiveBody {
                 html,
@@ -925,11 +780,4 @@ impl LiveState<Scope, Error> for Index {
             })
         })
     }
-}
-
-/// Bilimbi's plain card heading (`<h2 class="font-medium">`), not a title bar.
-#[derive(Template)]
-#[template(source = r#"<h2 class="font-medium">{{ text }}</h2>"#, ext = "html")]
-struct CardHeading<'a> {
-    text: &'a str,
 }

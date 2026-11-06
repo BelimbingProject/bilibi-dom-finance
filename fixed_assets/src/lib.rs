@@ -16,6 +16,7 @@ mod schedule;
 mod store;
 mod web;
 
+pub use acquisitions::{AcquisitionSource, SourceKind};
 pub use activity::{DisposalInput, Event, EventAction, EventInput, Run, RunException, RunItem};
 use bilibi_agent_api::OperationClient;
 use bilibi_database::{Db, Error, MutationTransaction};
@@ -38,7 +39,7 @@ pub const MODULE: &str = "finance/fixed_assets";
 pub const SERVICE: &str = "finance/fixed_assets.fixed_assets";
 inventory::submit! { Module {
     id: MODULE, layer: Layer::Domains,
-    dependencies: &["base/agent_api", "base/authz", "base/database", "base/tenancy", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/ui", "core/company", "finance/ledger", "finance/payables"],
+    dependencies: &["base/agent_api", "base/authz", "base/database", "base/tenancy", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/ui", "core/company", "finance/ledger", "finance/payables"],
     migrations: &[
         ("finance-fixed-assets-001-acquisitions", include_str!("../migrations/001-acquisitions.sql")),
         ("finance-fixed-assets-002-runs-corrections", include_str!("../migrations/002-runs-corrections.sql")),
@@ -58,6 +59,7 @@ inventory::submit! { Module {
         db: s.get::<Db>("base/database.pool")?.as_ref().clone(),
         display: s.get("base/datetime.display")?,
         locales: s.get("base/locale.locales")?,
+        directory: s.get("base/principal_directory.directory")?,
     })))) }],
 } }
 
@@ -237,6 +239,7 @@ pub struct AssetCharge {
     pub period: Date,
     #[serde(deserialize_with = "money_serde::deserialize")]
     pub amount: Money,
+    pub entry_id: Option<i64>,
     pub entry_number: Option<i64>,
     pub recorded_by_user_id: i64,
     pub recorded_by_impersonator_id: Option<i64>,

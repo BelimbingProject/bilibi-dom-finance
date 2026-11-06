@@ -86,6 +86,12 @@ fn schedule_schema() -> Value {
         json!({"as_of":{"type":"string","format":"date","description":"Dated register and projected schedule, not a range filter."},"through_entry_number":{"type":"integer","minimum":0},"through_asset_number":{"type":"integer","minimum":0},"through_event_number":{"type":"integer","minimum":0},"through_category_revision_id":{"type":"integer","minimum":0}}),
     )
 }
+fn sources_schema() -> Value {
+    schema(
+        &["category_revision_id"],
+        json!({"category_revision_id":{"type":"integer","minimum":1,"description":"The category revision whose cost account the debit must be on."}}),
+    )
+}
 fn asset_schema() -> Value {
     schema(
         &["asset_id"],
@@ -138,7 +144,7 @@ fn acquisition_schema() -> Value {
 fn output() -> Value {
     json!({"type":"object","properties":{
         "record":{"type":"object","description":"The saved revision, asset, run or event. Amounts are exact decimal strings; dates are ISO dates."},
-        "records":{"type":"array","items":{"type":"object"},"description":"Categories with revision history, or runs newest month first with items, exceptions and reversal state."},
+        "records":{"type":"array","items":{"type":"object"},"description":"Categories with revision history, runs newest month first with items, exceptions and reversal state, or acquisition sources newest first."},
         "report":{"type":"object","required":["company_id","as_of","minor_units","through_entry_number","through_asset_number","through_event_number","through_category_revision_id","rows","reconciliation"],"properties":{
             "company_id":{"type":"integer"},"as_of":{"type":"string","format":"date"},"currency_code":{"type":"string"},"minor_units":{"type":"integer"},
             "through_entry_number":{"type":"integer"},"through_asset_number":{"type":"integer"},"through_event_number":{"type":"integer"},"through_category_revision_id":{"type":"integer"},
@@ -155,6 +161,7 @@ enum Read {
     Schedule,
     Asset,
     Runs,
+    Sources,
 }
 impl ReadHandler for Read {
     fn owner(&self) -> &'static str {
@@ -214,6 +221,9 @@ impl ReadHandler for Read {
                     json!({"record":owner.asset_on(c,s,company,id(input,"asset_id").map_err(failure)?).await.map_err(failure)?})
                 }
                 Self::Runs => json!({"records":owner.runs_on(c,s,company).await.map_err(failure)?}),
+                Self::Sources => {
+                    json!({"records":owner.acquisition_sources_on(c,s,company,id(input,"category_revision_id").map_err(failure)?).await.map_err(failure)?})
+                }
             };
             Ok(result.into())
         })
@@ -620,6 +630,7 @@ inventory::submit! {Contribution::new(DEFINITIONS,"finance/fixed_assets.lifecycl
     op!("register.get","Fixed asset register","Read dated posted accumulation, carrying values, projected schedules and account reconciliation. Filter rows by opening or ordinary source and status. Reconciliation always covers the complete register. Reproduce with the filters, date and all four returned pins.",VIEW,register_schema,Handler::Read(&Read::Register)),
     op!("schedule.get","Depreciation schedules","Read projected schedules in the dated pinned register. Scheduled amounts are not posted charges.",VIEW,schedule_schema,Handler::Read(&Read::Schedule)),
     op!("asset.get","Read asset","Read frozen source assumptions, prospective schedule, posted charges and corrections.",VIEW,asset_schema,Handler::Read(&Read::Asset)),
+    op!("acquisition.sources","Acquisition sources","List the posted bill and journal lines a category's cost account still has to register, newest first, with the source, source_id and line_number asset.acquire takes.",VIEW,sources_schema,Handler::Read(&Read::Sources)),
     op!("asset.acquire","Register acquisition","Recognise one complete posted acquisition debit without reposting or taking ownership. Opening aggregates must use opening.import instead.",ACQUIRE,acquisition_schema,Handler::SafeWrite(&Write::Acquire)),
     op!("run.list","Depreciation runs","Read runs newest month first, including items, exceptions and reversals.",VIEW,target,Handler::Read(&Read::Runs)),
     op!("run.post","Post monthly depreciation","Review exact catch-up charges and skipped reversed acquisitions. A month is consumed forever; identical retries return its run.",DEPRECIATE,run_schema,Handler::SafeWrite(&Write::Depreciate)),
