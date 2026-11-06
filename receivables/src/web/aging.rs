@@ -2,14 +2,14 @@
 //! prices every issued invoice at one posting number so the columns agree.
 use super::{
     format::{self as f},
-    render, Flash, Pages, CUSTOMERS, INVOICES,
+    render, Flash, Pages, AGING, CUSTOMERS, INVOICES,
 };
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Button, ButtonVariant, Card, Cell, EmptyState, Facts, Field, FlexRow, Form, Header,
-    Html, InputKind, ListColumns, PageVariant, SectionHeading, StatusKind,
+    params, Button, Card, Cell, EmptyState, FilterToolbar, FlexRow, Header, Html, ListColumns,
+    PageVariant, SectionHeading, StatusKind, ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -37,7 +37,6 @@ struct Bucket {
 #[derive(Deserialize)]
 struct Customer {
     customer_id: i64,
-    code: String,
     name: String,
     documents: Vec<Invoice>,
     credits: Vec<Invoice>,
@@ -69,6 +68,9 @@ fn bucket_label(b: &Bucket) -> String {
 pub(super) struct Aging {
     pages: Pages,
     as_of: String,
+    /// The one customer's bucket a figure was opened on (`?customer=&bucket=`).
+    customer: Option<i64>,
+    bucket: Option<usize>,
     error: Option<String>,
     report: Option<Report>,
     figures: f::Figures,
@@ -97,9 +99,12 @@ impl Aging {
             ("credits", "Unapplied credits"),
             ("total", "Net owed"),
         ]);
+        let (customer, bucket) = narrow(query);
         Ok(Self {
             pages,
             as_of,
+            customer,
+            bucket,
             error: None,
             report: None,
             figures: f::Figures::default(),
@@ -114,7 +119,7 @@ impl Aging {
                 &[
                     ("invoice", "Credit"),
                     ("customer", "Customer"),
-                    ("due", "Source date"),
+                    ("issued", "Date"),
                     ("outstanding", "Unapplied"),
                 ],
                 &["outstanding"],
@@ -124,9 +129,9 @@ impl Aging {
                 &[
                     ("invoice", "Invoice"),
                     ("customer", "Customer"),
+                    ("issued", "Issued"),
                     ("due", "Due"),
                     ("late", "Days late"),
-                    ("bucket", "Age"),
                     ("outstanding", "Owed"),
                 ],
                 &["late", "outstanding"],
@@ -179,37 +184,48 @@ impl Aging {
         Ok(())
     }
 
+    /// The address of this report narrowed to one customer's bucket, or of
+    /// the whole report when `narrow` is `None`.
+    fn href(&self, narrow: Option<(i64, usize)>) -> String {
+        match narrow {
+            Some((customer, bucket)) => format!(
+                "{AGING}?as_of={}&customer={customer}&bucket={bucket}",
+                self.as_of
+            ),
+            None => format!("{AGING}?as_of={}", self.as_of),
+        }
+    }
+
+    /// An amount in a bucket cell: a link to the invoices behind it, or "—".
+    fn bucket_cell(&self, amount: Decimal, narrow: Option<(i64, usize)>) -> Result<Html> {
+        if amount.is_zero() {
+            return f::tabular("—");
+        }
+        let text = self.figures.decimal(amount);
+        match narrow {
+            Some(narrow) => f::link(&self.href(Some(narrow)), &text),
+            None => f::tabular(&text),
+        }
+    }
+
     fn body(&self) -> Result<String> {
-        let form = render(Form {
-            id: "receivables-aging-form",
-            event: "set_date",
-            change: false,
-            class: "",
-            body: render(
-                Field::in_form("aging", "as_of")
-                    .id("receivables-aging-as-of")
-                    .label("As of")
-                    .kind(InputKind::Date)
-                    .value(self.as_of.clone()),
-            )?,
-            actions: render(Button {
-                id: "receivables-aging-show",
-                button_type: "submit",
-                variant: ButtonVariant::Primary,
-                body: Html::text("Show"),
-                ..Button::default()
-            })?,
-        })?;
         let mut body = render(Header {
             title: Html::text("Receivables aging"),
             title_actions: bilibi_ui::Html::EMPTY,
             subtitle: "Who owes you money, and how late it is.",
             ..Header::default()
         })?;
-        body.push(&render(Card {
-            id: "receivables-aging-date",
-            body: form,
-            ..Card::default()
+        body.push(&render(FilterToolbar {
+            event: "filters",
+            ..FilterToolbar::new(
+                "receivables-aging-filters",
+                vec![ToolbarControl::date(
+                    "receivables-aging-as-of",
+                    "as_of",
+                    "As of",
+                    &self.as_of,
+                )],
+            )
         })?);
         let Some(r) = &self.report else {
             let mut empty = EmptyState::missing(
@@ -228,96 +244,95 @@ impl Aging {
                 None,
             );
         };
-        body.push(&render(Facts {
-            id: "receivables-aging-summary",
-            items: vec![
-                f::fact("Owed as of", &r.as_of),
-                f::fact(
-                    "Total owed",
-                    &format!("{} {}", self.figures.decimal(r.total), r.currency_code),
-                ),
-                f::fact("Customers owing", &r.customers.len().to_string()),
-            ],
-        })?);
+        let pins = format!(
+            "as_of={}&through_entry_number={}&through_opening_batch_id={}&through_settlement_number={}",
+            r.as_of, r.through_entry_number, r.through_opening_batch_id, r.through_settlement_number
+        );
+        let mut cards: Vec<Html> = Vec::new();
         // The five default buckets name the columns; a bucket beyond them
         // (the contract allows custom cut-offs) folds into the last.
         let mut rows = Vec::new();
+        let mut credit_total = Decimal::ZERO;
         for c in &r.customers {
+            credit_total += c.credit_total;
             let mut row = FlexRow::new(c.customer_id.to_string());
             row.dom_id = Some(format!("receivables-aging-customer-{}", c.customer_id));
             row = row.slot(
                 "customer",
-                f::link(
-                    &format!("{CUSTOMERS}/{}", c.customer_id),
-                    &format!("{} {}", c.code, c.name),
-                )?,
+                f::link(&format!("{CUSTOMERS}/{}", c.customer_id), &c.name)?,
             );
             for (i, total) in c.bucket_totals.iter().enumerate().take(5) {
                 row = row.slot(
                     &format!("b{i}"),
-                    f::tabular(&if total.is_zero() {
-                        "—".into()
-                    } else {
-                        self.figures.decimal(*total)
-                    })?,
+                    self.bucket_cell(*total, Some((c.customer_id, i)))?,
                 );
             }
             rows.push(
-                row.slot(
-                    "credits",
-                    f::tabular(&self.figures.decimal(c.credit_total))?,
-                )
-                .slot("total", f::tabular(&self.figures.decimal(c.total))?),
+                row.slot("credits", self.bucket_cell(c.credit_total, None)?)
+                    .slot("total", f::tabular(&self.figures.decimal(c.total))?),
             );
         }
-        let labels: Vec<String> = r.buckets.iter().map(bucket_label).collect();
-        let amounts: Vec<String> = r
-            .bucket_totals
-            .iter()
-            .map(|t| self.figures.decimal(*t))
-            .collect();
-        let totals: Vec<_> = labels
-            .iter()
-            .zip(&amounts)
-            .map(|(l, a)| f::fact(l, a))
-            .collect();
-        body.push(&render(SectionHeading {
-            id: "receivables-aging-customers-heading",
-            title: "By customer",
-            class: "mt-4",
-            ..SectionHeading::default()
-        })?);
-        body.push(&render(Card {
+        if !r.customers.is_empty() {
+            let mut row = FlexRow::new("all");
+            row.dom_id = Some("receivables-aging-total".into());
+            row = row.slot("customer", f::strong("Total")?);
+            for (i, total) in r.bucket_totals.iter().enumerate().take(5) {
+                row = row.slot(&format!("b{i}"), self.bucket_cell(*total, None)?);
+            }
+            rows.push(
+                row.slot("credits", self.bucket_cell(credit_total, None)?)
+                    .slot(
+                        "total",
+                        f::strong(&format!(
+                            "{} {}",
+                            self.figures.decimal(r.total),
+                            r.currency_code
+                        ))?,
+                    ),
+            );
+        }
+        cards.push(render(Card {
             id: "receivables-aging-customers",
             role: "region",
             labelledby: "receivables-aging-customers-heading",
             inner_class: "p-0",
             body: {
-                let mut b = f::table(
+                let mut b = render(SectionHeading {
+                    id: "receivables-aging-customers-heading",
+                    title: "By customer",
+                    class: "p-5 pb-0",
+                    ..SectionHeading::default()
+                })?;
+                b.push(&f::table(
                     &self.customers,
                     "customers_grid",
                     "Receivables aging by customer",
                     rows,
                     "Nobody owes anything on this date.",
-                )?;
-                b.push(&render(Facts {
-                    id: "receivables-aging-bucket-totals",
-                    items: totals,
-                })?);
+                )?);
                 b
             },
             ..Card::default()
         })?);
+
+        // The invoices behind the figures, or behind the one figure chosen.
+        let narrowed = self.customer.zip(self.bucket);
         let mut invoice_rows = Vec::new();
         for c in &r.customers {
+            if self.customer.is_some_and(|id| id != c.customer_id) {
+                continue;
+            }
             for d in &c.documents {
+                if self.bucket.is_some_and(|b| b != d.bucket.min(4)) {
+                    continue;
+                }
                 let mut row = FlexRow::new(d.document_id.to_string());
                 row.dom_id = Some(format!("receivables-aging-invoice-{}", d.document_id));
                 invoice_rows.push(
                     row.slot(
                         "invoice",
                         f::link(
-                            &format!("{INVOICES}/{}?as_of={}&through_entry_number={}&through_opening_batch_id={}&through_settlement_number={}",d.document_id,r.as_of,r.through_entry_number,r.through_opening_batch_id,r.through_settlement_number),
+                            &format!("{INVOICES}/{}?{pins}", d.document_id),
                             d.document_reference.as_deref().unwrap_or("Invoice"),
                         )?,
                     )
@@ -329,15 +344,15 @@ impl Aging {
                             format!("{} (invoiced as {})", c.name, d.party_name)
                         }),
                     )
+                    .cell("issued", Cell::text(&d.issue_date))
                     .cell("due", Cell::text(&d.due_date))
-                    .slot("late", f::tabular(&d.days_overdue.to_string())?)
-                    .cell(
-                        "bucket",
-                        Cell::text(
-                            r.buckets
-                                .get(d.bucket)
-                                .map_or_else(String::new, bucket_label),
-                        ),
+                    .slot(
+                        "late",
+                        f::tabular(&if d.days_overdue > 0 {
+                            d.days_overdue.to_string()
+                        } else {
+                            "—".into()
+                        })?,
                     )
                     .slot(
                         "outstanding",
@@ -346,26 +361,51 @@ impl Aging {
                 );
             }
         }
-        body.push(&render(SectionHeading {
-            id: "receivables-aging-invoices-heading",
-            title: "Invoices still owed",
-            class: "mt-4",
-            ..SectionHeading::default()
-        })?);
-        body.push(&render(Card {
+        let (title, show_all) = match narrowed {
+            Some((customer, bucket)) => {
+                let name = r
+                    .customers
+                    .iter()
+                    .find(|c| c.customer_id == customer)
+                    .map_or("", |c| c.name.as_str());
+                let age = r.buckets.get(bucket).map(bucket_label).unwrap_or_default();
+                (
+                    format!("Invoices still owed · {name} · {age}"),
+                    render(Button {
+                        id: "receivables-aging-show-all",
+                        href: &self.href(None),
+                        body: Html::text("Show all"),
+                        ..Button::default()
+                    })?,
+                )
+            }
+            None => ("Invoices still owed".to_owned(), Html::EMPTY),
+        };
+        cards.push(render(Card {
             id: "receivables-aging-invoices",
             role: "region",
             labelledby: "receivables-aging-invoices-heading",
             inner_class: "p-0",
-            body: f::table(
-                &self.invoices,
-                "invoices_grid",
-                "Invoices still owed",
-                invoice_rows,
-                "Nobody owes anything on this date.",
-            )?,
+            body: {
+                let mut b = render(SectionHeading {
+                    id: "receivables-aging-invoices-heading",
+                    title: &title,
+                    class: "p-5 pb-0",
+                    actions: show_all,
+                    ..SectionHeading::default()
+                })?;
+                b.push(&f::table(
+                    &self.invoices,
+                    "invoices_grid",
+                    "Invoices still owed",
+                    invoice_rows,
+                    "Nobody owes anything on this date.",
+                )?);
+                b
+            },
             ..Card::default()
         })?);
+
         let mut credit_rows = Vec::new();
         for c in &r.customers {
             for credit in &c.credits {
@@ -374,7 +414,7 @@ impl Aging {
                         .slot(
                             "invoice",
                             f::link(
-                                &format!("{INVOICES}/{}?as_of={}&through_entry_number={}&through_opening_batch_id={}&through_settlement_number={}",credit.document_id,r.as_of,r.through_entry_number,r.through_opening_batch_id,r.through_settlement_number),
+                                &format!("{INVOICES}/{}?{pins}", credit.document_id),
                                 credit
                                     .document_reference
                                     .as_deref()
@@ -382,7 +422,7 @@ impl Aging {
                             )?,
                         )
                         .cell("customer", Cell::text(&c.name))
-                        .cell("due", Cell::text(&credit.issue_date))
+                        .cell("issued", Cell::text(&credit.issue_date))
                         .slot(
                             "outstanding",
                             f::tabular(&self.figures.decimal(credit.outstanding))?,
@@ -390,26 +430,67 @@ impl Aging {
                 );
             }
         }
-        body.push(&render(SectionHeading{title:"Unapplied customer credits",description:"Customer credits age from their original source dates and are shown separately from unpaid invoices.",class:"mt-4",..SectionHeading::default()})?);
-        body.push(&render(Card {
-            id: "receivables-aging-credits",
-            body: f::table(
-                &self.credits,
-                "credits_grid",
-                "Unapplied customer credits",
-                credit_rows,
-                "No unapplied customer credits on this date.",
-            )?,
-            ..Card::default()
-        })?);
+        if !credit_rows.is_empty() {
+            cards.push(render(Card {
+                id: "receivables-aging-credits",
+                role: "region",
+                labelledby: "receivables-aging-credits-heading",
+                inner_class: "p-0",
+                body: {
+                    let mut b = render(SectionHeading {
+                        id: "receivables-aging-credits-heading",
+                        title: "Unapplied customer credits",
+                        class: "p-5 pb-0",
+                        description:
+                            "They age from their original dates, apart from unpaid invoices.",
+                        ..SectionHeading::default()
+                    })?;
+                    b.push(&f::table(
+                        &self.credits,
+                        "credits_grid",
+                        "Unapplied customer credits",
+                        credit_rows,
+                        "",
+                    )?);
+                    b
+                },
+                ..Card::default()
+            })?);
+        }
         f::frame(
             "receivables-aging",
             PageVariant::List,
             &self.flash,
-            body,
+            {
+                body.push(&render(Stack { parts: cards })?);
+                body
+            },
             None,
         )
     }
+}
+
+/// The one customer's bucket an address narrows the invoices to: both or neither.
+fn narrow(query: &HashMap<String, String>) -> (Option<i64>, Option<usize>) {
+    let customer = params::positive_id(query.get("customer").map(String::as_str));
+    let bucket = query
+        .get("bucket")
+        .and_then(|b| b.parse::<usize>().ok())
+        .filter(|b| *b < 5);
+    match (customer, bucket) {
+        (Some(c), Some(b)) => (Some(c), Some(b)),
+        _ => (None, None),
+    }
+}
+
+/// Cards a section step apart (`ui::stack`, wide).
+#[derive(askama::Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::stack(parts=parts, wide=true) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct Stack {
+    parts: Vec<Html>,
 }
 
 /// The date today in the company's own zone, as `YYYY-MM-DD`.
@@ -429,6 +510,7 @@ impl LiveState<Scope, Error> for Aging {
                         .filter(|d| d.parse::<jiff::civil::Date>().is_ok())
                         .cloned()
                         .unwrap_or_default();
+                    (self.customer, self.bucket) = narrow(values);
                 }
                 LiveInput::Event(v) => match v["type"].as_str().ok_or(Error::Invalid)? {
                     "clear-flash" => self.flash.dismiss(v),
@@ -441,8 +523,8 @@ impl LiveState<Scope, Error> for Aging {
                     "invoices_grid" => {
                         self.invoices.handle(&params::string_values(v));
                     }
-                    "set_date" => {
-                        let form = params::form_values(v, "aging");
+                    "filters" => {
+                        let form = params::form_values(v, "filters");
                         let date = f::posted(&form, "as_of");
                         if date.parse::<jiff::civil::Date>().is_ok() {
                             self.as_of = date.into();
@@ -454,9 +536,14 @@ impl LiveState<Scope, Error> for Aging {
                 },
             }
             self.load(r.scope).await?;
+            let mut query = HashMap::from([("as_of".into(), self.as_of.clone())]);
+            if let (Some(customer), Some(bucket)) = (self.customer, self.bucket) {
+                query.insert("customer".into(), customer.to_string());
+                query.insert("bucket".into(), bucket.to_string());
+            }
             Ok(LiveBody {
                 html: self.body()?,
-                query: HashMap::from([("as_of".into(), self.as_of.clone())]),
+                query,
                 ..LiveBody::default()
             })
         })
