@@ -121,7 +121,7 @@ async fn reference(client: &dyn OperationClient, enabled: &[Currency]) -> Result
 // connection the caller already holds. `TODO(platform)`: drop them once
 // `Currencies` reads through the object-safe client.
 const COLUMNS: &str =
-    "c.code,c.numeric_code,c.name,c.minor_units,c.withdrawn,(e.code IS NOT NULL) AS enabled";
+    "c.code,c.numeric_code,c.name,c.common_names,c.minor_units,c.withdrawn,(e.code IS NOT NULL) AS enabled";
 const FROM: &str =
     "FROM currencies c LEFT JOIN currency_tenant_enabled e ON e.tenant_id=$1 AND e.code=c.code";
 
@@ -130,6 +130,7 @@ fn listed(row: &Row) -> Currency {
         code: row.get("code"),
         numeric_code: row.get("numeric_code"),
         name: row.get("name"),
+        common_names: row.get("common_names"),
         minor_units: row.get::<_, i16>("minor_units") as u32,
         withdrawn: row.get("withdrawn"),
         enabled: row.get("enabled"),
