@@ -7,8 +7,8 @@ use bilibi_datetime::{
     Clock, DisplayContext, DisplayPolicy, Format, Period, PeriodFilter, Precision,
 };
 use bilibi_finance_ledger::{
-    ApprovalExceptionQuery, LedgerError, People, MANAGE_CONTROLLED_BOOKKEEPING, MANAGE_DUTY_SEPARATION,
-    REVIEW_EXCEPTIONS,
+    ApprovalExceptionQuery, LedgerError, People, MANAGE_CONTROLLED_BOOKKEEPING,
+    MANAGE_DUTY_SEPARATION, REVIEW_EXCEPTIONS,
 };
 use bilibi_locale::Locales;
 use bilibi_tenancy::Scope;
@@ -1083,10 +1083,9 @@ impl State {
                     )
                     .cell(
                         "who",
-                        bilibi_ui::Cell::text(people.who(
-                            e["actor"].as_i64(),
-                            e["impersonator"].as_i64(),
-                        )),
+                        bilibi_ui::Cell::text(
+                            people.who(e["actor"].as_i64(), e["impersonator"].as_i64()),
+                        ),
                     )
                     .cell(
                         "reason",

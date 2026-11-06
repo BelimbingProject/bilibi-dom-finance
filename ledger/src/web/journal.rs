@@ -6,8 +6,8 @@
 use super::{
     dialog_actions, error_text, event_type, figure, instant,
     journals::{status_badge, INDEX},
-    no_company, render, shell, unavailable, view, Announce, EntryLink, Failure, Flash,
-    JournalLink, Pages, Read, Refusal, Review,
+    no_company, render, shell, unavailable, view, Announce, EntryLink, Failure, Flash, JournalLink,
+    Pages, Read, Refusal, Review,
 };
 use crate::{APPROVE_JOURNALS, SUBMIT_JOURNALS};
 use bilibi_database::{Error, Result};
@@ -165,7 +165,10 @@ impl Journal {
                     Some(journal.submitted_by_user_id),
                     journal.submitted_by_impersonator_id,
                     journal.decision.as_ref().map(|d| d.actor_user_id),
-                    journal.decision.as_ref().and_then(|d| d.actor_impersonator_id),
+                    journal
+                        .decision
+                        .as_ref()
+                        .and_then(|d| d.actor_impersonator_id),
                 ],
             )
             .await?;
@@ -288,10 +291,9 @@ impl Journal {
                     _ => "Rejected by",
                 },
                 id: "ledger-journal-decided-by",
-                value: Html::text(&people.who(
-                    Some(decision.actor_user_id),
-                    decision.actor_impersonator_id,
-                )),
+                value: Html::text(
+                    &people.who(Some(decision.actor_user_id), decision.actor_impersonator_id),
+                ),
             });
             facts.push(Fact {
                 title: match decision.event.as_str() {

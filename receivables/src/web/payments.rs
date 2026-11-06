@@ -13,10 +13,10 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Attrs, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox,
-    CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
-    InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
-    RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params, Attrs, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome,
+    Combobox, CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form,
+    Header, Html, InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant,
+    Pagination, RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde_json::json;
@@ -188,7 +188,10 @@ impl Payments {
                 Some(d) => {
                     let customer = d.customer_id.to_string();
                     owed = self.open_invoices(scope, &customer).await?;
-                    let due = d.outstanding.map(|m| self.figures.shown(m)).unwrap_or_default();
+                    let due = d
+                        .outstanding
+                        .map(|m| self.figures.shown(m))
+                        .unwrap_or_default();
                     values.insert("customer_id".into(), customer);
                     values.insert("amount".into(), due.clone());
                     values.insert(format!("alloc_{}", d.id), due);

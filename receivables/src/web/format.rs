@@ -73,7 +73,6 @@ pub(super) fn price(value: Decimal) -> String {
     value.to_string()
 }
 
-
 pub(super) fn fact<'a>(title: &'a str, value: &str) -> Fact<'a> {
     Fact {
         title,

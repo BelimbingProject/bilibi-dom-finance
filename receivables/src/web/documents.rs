@@ -13,10 +13,10 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Attrs, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox, CreateButton,
-    EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
-    ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params, Attrs, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox,
+    CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
+    InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
+    RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{
@@ -381,7 +381,6 @@ impl Documents {
             .unwrap_or_default()
     }
 
-
     fn page_customer_name(&self, d: &DocumentPageRow) -> String {
         let customer = self.customers.iter().find(|c| c.id == d.customer_id);
         let name = d
@@ -699,10 +698,7 @@ impl Documents {
                 .credit_invoices
                 .iter()
                 .filter(|d| d.kind == "invoice" && d.status == "issued")
-                .map(|d| {
-                    Choice::new(reference(d), d.id.to_string())
-                        .detail(self.customer_name(d))
-                })
+                .map(|d| Choice::new(reference(d), d.id.to_string()).detail(self.customer_name(d)))
                 .collect();
             body.push(&render(
                 Combobox::new(

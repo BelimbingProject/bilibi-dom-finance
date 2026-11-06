@@ -773,10 +773,9 @@ impl Settings {
                 .slot("to", super::account_html(&self.accounts, c.new_value)?)
                 .cell(
                     "by",
-                    Cell::text(people.who(
-                        Some(c.changed_by_user_id),
-                        c.changed_by_impersonator_id,
-                    )),
+                    Cell::text(
+                        people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id),
+                    ),
                 ),
             );
         }

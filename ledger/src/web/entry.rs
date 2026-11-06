@@ -104,7 +104,10 @@ impl Entry {
         let chart = self.pages.chart(scope).await?.unwrap_or_default();
         let display = self.pages.display(scope).await?;
         let can_post = self.pages.allowed(scope, POST_ENTRIES).await?;
-        let review = entry.late_recording.as_ref().and_then(|r| r.review.as_ref());
+        let review = entry
+            .late_recording
+            .as_ref()
+            .and_then(|r| r.review.as_ref());
         let people = self
             .pages
             .people(
@@ -151,7 +154,10 @@ impl Entry {
             match super::owner_page(&owner.module, &owner.record) {
                 Some((href, noun)) => {
                     let mut body = Html::text(&format!("Posted from a {noun}. Correct it on the "));
-                    body.push(&render(super::RecordLink { href: &href, label: noun })?);
+                    body.push(&render(super::RecordLink {
+                        href: &href,
+                        label: noun,
+                    })?);
                     body.push(&Html::text("."));
                     notices.push(&render(Alert {
                         id: "ledger-entry-owned",

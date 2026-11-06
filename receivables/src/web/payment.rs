@@ -174,7 +174,9 @@ impl Payment {
                     Some(p.recorded_by_user_id),
                     p.recorded_by_impersonator_id,
                     p.reversal.as_ref().map(|r| r.reversed_by_user_id),
-                    p.reversal.as_ref().and_then(|r| r.reversed_by_impersonator_id),
+                    p.reversal
+                        .as_ref()
+                        .and_then(|r| r.reversed_by_impersonator_id),
                 ],
             )
             .await?;
@@ -191,13 +193,8 @@ impl Payment {
         } else {
             p.payment_reference.clone()
         };
-        let actions = RecordActions::render(
-            back,
-            "receivables-receipt-actions",
-            &pin_name,
-            items,
-            None,
-        )?;
+        let actions =
+            RecordActions::render(back, "receivables-receipt-actions", &pin_name, items, None)?;
         let customer_name = self.customer.as_ref().map_or_else(
             || format!("Customer #{}", p.customer_id),
             |c| c.name.clone(),

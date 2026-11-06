@@ -20,9 +20,9 @@ use bilibi_records::{Reference, Resolved};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BackLink, Button, ButtonVariant, Card, Cell, CommitStates, CommitStatus, EmptyState, Facts, Field,
-    FlexRow, Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns, PageVariant,
-    Restricted, SectionHeading, StatusKind,
+    params, BackLink, Button, ButtonVariant, Card, Cell, CommitStates, CommitStatus, EmptyState,
+    Facts, Field, FlexRow, Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns,
+    PageVariant, Restricted, SectionHeading, StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;

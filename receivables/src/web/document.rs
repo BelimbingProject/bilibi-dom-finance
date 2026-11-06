@@ -149,9 +149,13 @@ impl Document {
     }
 
     pub(super) fn title(&self) -> Option<String> {
-        self.record
-            .as_ref()
-            .map(|d| format!("{} {}", f::kind_label(&d.kind), super::documents::reference(d)))
+        self.record.as_ref().map(|d| {
+            format!(
+                "{} {}",
+                f::kind_label(&d.kind),
+                super::documents::reference(d)
+            )
+        })
     }
 
     pub(super) async fn first(&mut self, scope: &Scope) -> Result<String> {

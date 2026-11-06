@@ -78,11 +78,13 @@ impl Document {
 
         let mut document = self.document_card(&d, kind, &customer_name)?;
         document.push(&self.lines_card(&d)?);
-        document.push(
-            &self
-                .write_offs
-                .body(&d, &self.accounts, &self.figures, &display, &people)?,
-        );
+        document.push(&self.write_offs.body(
+            &d,
+            &self.accounts,
+            &self.figures,
+            &display,
+            &people,
+        )?);
         document.push(
             &self
                 .credit_actions

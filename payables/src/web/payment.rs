@@ -12,8 +12,8 @@ use bilibi_finance_ledger::{
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BackLink, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field, FlashMap, FlexRow,
-    FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
+    params, BackLink, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field, FlashMap,
+    FlexRow, FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -155,12 +155,8 @@ impl Request {
     pub(super) async fn open_requested(&mut self, scope: &Scope) -> Result<()> {
         if let Some(action) = self.requested.take() {
             if matches!(action.as_str(), "reject" | "reverse") && self.request.is_some() {
-                self.event(
-                    scope,
-                    "",
-                    &json!({"type": "open_dialog", "dialog": action}),
-                )
-                .await?;
+                self.event(scope, "", &json!({"type": "open_dialog", "dialog": action}))
+                    .await?;
             }
         }
         Ok(())
@@ -366,10 +362,7 @@ impl Request {
             actions: self.header_actions(r, &title)?,
             layout: DocumentLayout::render(
                 "payables-payment-layout",
-                render(Sections {
-                    facts,
-                    allocations,
-                })?,
+                render(Sections { facts, allocations })?,
                 render(Summary {
                     facts: render(Facts {
                         id: "payables-payment-summary",

@@ -661,9 +661,7 @@ impl Pages {
             "receipts" => {
                 State::Receipts(Box::new(payments::Payments::new(pages, r.query, r.framed)?))
             }
-            "receipt" => State::Receipt(Box::new(payment::Payment::new(
-                pages, r.path, r.query,
-            )?)),
+            "receipt" => State::Receipt(Box::new(payment::Payment::new(pages, r.path, r.query)?)),
             "aging" => State::Aging(Box::new(aging::Aging::new(pages, r.query)?)),
             "settings" => State::Settings(Box::new(settings::Settings::new(pages)?)),
             _ => return Err(Error::NotFound),
