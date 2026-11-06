@@ -331,7 +331,7 @@ struct View {
 }
 
 impl Bills {
-    /// A row's one Actions… menu: what its bill page offers for its state.
+    /// A row's local icons and non-local menu: what its bill page offers for its state.
     fn row_actions(&self, d: &DocumentPageRow) -> Result<Html> {
         let here = format!("{INDEX}/{}", d.id);
         let mut items = Vec::new();
@@ -346,13 +346,14 @@ impl Bills {
             && d.match_status.as_deref() == Some("held")
         {
             items.push(RecordAction::here(
+                "check-badge",
                 "Approve exceptions",
                 &here,
                 "approve_exception",
             ));
         }
         if self.can_approve && matches!(d.status.as_str(), "draft" | "approved" | "held") {
-            items.push(RecordAction::here("Void", &here, "void"));
+            items.push(RecordAction::here("no-symbol", "Void", &here, "void"));
         }
         RecordActions::row(
             &format!("payables-bill-{}-actions", d.id),
