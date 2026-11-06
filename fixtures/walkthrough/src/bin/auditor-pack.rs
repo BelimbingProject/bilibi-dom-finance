@@ -131,7 +131,7 @@ async fn main() -> Outcome<()> {
         let admin = sign_in(&db, services, 1, 4).await?;
         let c = db.get().await?;
         if c.query_opt(
-            "SELECT id FROM users WHERE tenant_id=1 AND id=2 AND email='viewer@example.test'",
+            "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id=2 AND i.email='viewer@example.test'",
             &[],
         )
         .await?

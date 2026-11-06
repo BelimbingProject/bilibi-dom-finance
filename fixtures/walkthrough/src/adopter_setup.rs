@@ -23,7 +23,7 @@ fn write(registry: &Registry, key: &str) -> Outcome<&'static dyn WriteHandler> {
 }
 /// Roll every opening back so the existing walkthrough starts unchanged.
 pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
-    bilibi_walkthrough_fixture::install(db).await?;
+    crate::install_platform(db).await?;
     services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
         .reconcile()

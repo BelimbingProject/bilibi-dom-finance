@@ -115,15 +115,23 @@ pub fn services(
     Ok(services)
 }
 
-/// Installs the Platform fixture, reconciles the contributed roles, and opens
-/// Company 001's book and chart through the ledger facade as the manager.
-pub async fn install(db: &Db, services: &Services) -> Result<Installed> {
+/// The Platform fixture's accounts and tenants, plus the Core default
+/// relationship roles (customer, supplier, ...) its tenants are installed
+/// without. A binary that skips [`install`] still calls this, never
+/// `bilibi_walkthrough_fixture::install` alone: a customer or supplier cannot
+/// be added until the tenant has its relationship roles.
+pub async fn install_platform(db: &Db) -> Result<()> {
     bilibi_walkthrough_fixture::install(db).await?;
-    // Fixture tenants are installed after migrations, through the Core defaults.
     let client = db.get().await.map_err(Error::from)?;
     bilibi_company::ensure_default_relationship_roles(&**client, 1).await?;
     bilibi_company::ensure_default_relationship_roles(&**client, 2).await?;
-    drop(client);
+    Ok(())
+}
+
+/// Installs the Platform fixture, reconciles the contributed roles, and opens
+/// Company 001's book and chart through the ledger facade as the manager.
+pub async fn install(db: &Db, services: &Services) -> Result<Installed> {
+    install_platform(db).await?;
     services
         .get::<Grants>("base/authz.grants")
         .map_err(Error::from)?

@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = db.get().await?;
     let admin = client
         .query_one(
-            "SELECT id,tenant_id FROM users WHERE email='ai@agent.my'",
+            "SELECT u.id,u.tenant_id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE i.email='ai@agent.my'",
             &[],
         )
         .await?;
@@ -71,7 +71,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         client.execute("INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES($1,$2,$3,$4,'human',$5) ON CONFLICT DO NOTHING", &[&id,&tenant,&format!("onedoor_{id}"),&label,&email]).await?;
         client.execute("INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES($1,$2,$1,$3,'Proof accountant') ON CONFLICT DO NOTHING", &[&id,&tenant,&company]).await?;
-        client.execute("INSERT INTO users(id,tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) SELECT $1,$2,$3,$4,password_hash,$1,$1,$5 FROM users WHERE id=$6 ON CONFLICT DO NOTHING", &[&id,&tenant,&label,&email,&company,&admin_id]).await?;
+        client.execute("INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff',$3,i.password_hash,$2,$1,$2 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$2 AND u.id=$4 ON CONFLICT DO NOTHING", &[&id,&tenant,&email,&admin_id]).await?;
+        client.execute("INSERT INTO users(id,tenant_id,name,identity_id,person_id,affiliation_id,organisation_id) SELECT $1,$2,$3,id,$1,$1,$4 FROM user_identities WHERE home_tenant_id=$2 AND home_user_id=$1 ON CONFLICT DO NOTHING", &[&id,&tenant,&label,&company]).await?;
         client.execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT tenant_id,$1,role_id FROM principal_roles WHERE tenant_id=$2 AND user_id=$3 ON CONFLICT DO NOTHING", &[&id,&tenant,&admin_id]).await?;
     }
     drop(client);

@@ -98,8 +98,8 @@ async fn main() -> Outcome<()> {
         "INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(6,2,'person_6','Other Manager','human','manager@other.example.test'),(7,2,'person_7','Other Reviewer','human','reviewer@other.example.test'),(8,2,'person_8','Other Reader','human','viewer@other.example.test') ON CONFLICT DO NOTHING;
          INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(5,2,6,100,'Recorder'),(6,2,7,100,'Reviewer'),(7,2,8,100,'Reader') ON CONFLICT DO NOTHING;
          UPDATE users SET person_id=6 WHERE tenant_id=2 AND id=5 AND person_id IS NULL; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=5 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
-         INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) SELECT 8,2,'Other Reviewer','reviewer@other.example.test',password_hash,7 FROM users WHERE id=5 ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=8 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
-         INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) SELECT 9,2,'Other Reader','viewer@other.example.test',password_hash,8 FROM users WHERE id=5 ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=9 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+         INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','reviewer@other.example.test',i.password_hash,2,8,2 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=5 ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 8,2,'Other Reviewer',id,7 FROM user_identities WHERE home_tenant_id=2 AND home_user_id=8 ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=8 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+         INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','viewer@other.example.test',i.password_hash,2,9,2 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=5 ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 9,2,'Other Reader',id,8 FROM user_identities WHERE home_tenant_id=2 AND home_user_id=9 ON CONFLICT DO NOTHING; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=9 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
          INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 2,8,id FROM roles WHERE tenant_id=2 AND code='admin' ON CONFLICT DO NOTHING;
          INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 2,9,id FROM roles WHERE tenant_id=2 AND code='viewer' ON CONFLICT DO NOTHING;
          SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));
@@ -330,12 +330,6 @@ async fn main() -> Outcome<()> {
                 .await?,
             );
         }
-        // A customer recorded before Finance read companies from Companies:
-        // only SQL can still make one, and the page offers to link it.
-        db.get().await?.execute(
-            "INSERT INTO finance_receivables_customers(tenant_id,company_id,code,name,email,line1,locality,postcode,country_iso,payment_terms_days,active,inserted_at,updated_at) VALUES(2,$1,'FAJAR','Fajar Logistics','ops@fajar.example.test','3 Jalan Lama','Melaka','75000','MY',21,true,now(),now())",
-            &[&COMPANY],
-        ).await?;
         let draft = |customer: i64, date: &str, lines: serde_json::Value| {
             let attrs = json!({"kind":"invoice","series_id":invoices.id,"customer_id":customer,"issue_date":date,"lines":lines});
             let (ar, manager) = (&ar, &manager);

@@ -153,7 +153,7 @@ async fn main() -> Outcome<()> {
             .get()
             .await?
             .query_one(
-                "SELECT email FROM users WHERE tenant_id=1 AND id=$1",
+                "SELECT i.email FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id=$1",
                 &[&user],
             )
             .await?

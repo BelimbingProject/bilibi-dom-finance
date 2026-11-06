@@ -27,7 +27,7 @@ def sql(query):
     return subprocess.check_output(["psql", DB, "-XAt", "-v", "ON_ERROR_STOP=1", "-c", query], text=True).strip()
 
 
-require(sql("SELECT count(*) FROM users WHERE id=1 AND email='manager@example.test'") == "1", "not the disposable fixture")
+require(sql("SELECT count(*) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND i.email='manager@example.test'") == "1", "not the disposable fixture")
 
 
 def request(path, body=None, who="manager", channel="api"):

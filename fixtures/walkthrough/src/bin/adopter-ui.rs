@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
     bilibi_finance_walkthrough_fixture::without_step_up(&app.services)?;
     if std::env::var("ADOPTER_EMPTY_BOOK").as_deref() == Ok("1") {
-        bilibi_walkthrough_fixture::install(&db).await?;
+        bilibi_finance_walkthrough_fixture::install_platform(&db).await?;
         app.services
             .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
             .reconcile()
