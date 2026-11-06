@@ -61,7 +61,7 @@ they govern this code and are not copied here.
   Bilimbi's words, never as `Error::Forbidden`/`Error::Internal`: a mutate
   closure that returns no `Change` poisons the transaction, and the live
   transport treats those two errors as fatal.
-- Take a book's currency and its standard decimal places from Core Currency (`ledger/src/currency.rs`, `core/currency` README), never a free-text code (except when Core's currency list is not installed) or a list of your own; a page offers the `finance.ledger.book.currencies` contract's options in a `Combobox` and shows the review's `currency` facts, so a person and an agent see the same name, places and nonstandard flag.
+- Take a book's currency and its standard decimal places from Core Currency (`ledger/src/currency.rs`, `core/currency` README), never a free-text code (except when Core's currency list is not installed) or a list of your own; a page offers the `finance.ledger.book.currencies` contract's options in a `Combobox` and shows the review's `currency` facts, so a person and an agent see the same name, places and nonstandard flag. A currency that is not enabled yet is enabled by `book.open`'s `enable_currency` in the book's own write (`currency::enable_on`, Core's `set_enabled`) for a person with `admin.currency.manage`, never by sending the person to the Currencies page first.
 - Hold amounts as `Money` built with the book's `MinorUnits` (`Money::parse`,
   `Money::new`), never a bare `Decimal` from input: the columns are
   `numeric(20,4)`, and an amount finer than the book's minor units is refused
@@ -153,7 +153,7 @@ they govern this code and are not copied here.
   account for posting or a setting only if `Account::postable()` (active and not
   a group), never `active` alone, and read group totals only through
   `Ledger::chart_balances`, never by adding up rows yourself. A starter chart is
-  bundled data in `ledger/templates/*.json` or an authorized saved company snapshot
+  bundled data in `ledger/templates/*.json` (its `review` field is a product note, never shown in the UI) or an authorized saved company snapshot
   (`ledger/README.md#starter-charts`), previewed and applied only to an empty chart.
   A configured proposal creates no accounts when a book opens; never seed at boot
   or hard-code a chart in Rust.

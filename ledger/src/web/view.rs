@@ -26,8 +26,6 @@ pub(crate) struct Change {
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BookState {
-    #[serde(default)]
-    pub starter_chart: Value,
     pub book: Option<BookRow>,
     /// Null until the book is opened.
     #[serde(default)]
@@ -95,7 +93,6 @@ pub(crate) struct TemplateSection {
 pub(crate) struct TemplateSummary {
     pub key: String,
     pub name: String,
-    pub review: String,
     pub description: String,
     pub sections: Vec<TemplateSection>,
     pub groups: usize,

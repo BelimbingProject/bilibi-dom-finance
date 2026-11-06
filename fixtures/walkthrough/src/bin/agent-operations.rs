@@ -214,6 +214,7 @@ async fn payables_control(
                 || [
                     bilibi_finance_ledger::VIEW,
                     bilibi_finance_ledger::POST_ENTRIES,
+                    bilibi_currency::MANAGE,
                 ]
                 .contains(key) =>
         {

@@ -3,11 +3,13 @@
 //! the code and the decimal places the person confirmed.
 //!
 //! Three states of the list decide what a book may open with: *listed* (the
-//! tenant enabled some currencies: only those open a book), *none enabled* (the
-//! catalog is installed but nothing is enabled: no book opens until someone
-//! enables one) and *unavailable* (the catalog was never imported: a
-//! well-formed code is accepted *unchecked* and the decimal places must be
-//! given, and the review says so).
+//! tenant enabled some currencies, or the person may enable one: a person who
+//! holds `admin.currency.manage` may choose any current currency and opening
+//! the book enables it), *none enabled* (the catalog is installed, nothing is
+//! enabled and the person may not enable one: no book opens until someone
+//! does) and *unavailable* (the catalog was never imported: a well-formed code
+//! is accepted *unchecked* and the decimal places must be given, and the
+//! review says so).
 use crate::FieldError;
 use bilibi_agent_api::OperationClient;
 use bilibi_currency::{normalize, Currencies, Currency, Unusable, BASE_KEY};
@@ -54,22 +56,84 @@ fn refusal(why: Unusable) -> FieldError {
 }
 
 /// The currency for a code on the write's own transaction. The enabled row is
-/// locked until commit, so a concurrent disable waits for the book.
+/// locked until commit, so a concurrent disable waits for the book. `enable`
+/// accepts a current currency the tenant has not enabled when the person may
+/// enable it; the commit enables it with [`enable_on`] first.
 pub(crate) async fn choose_on(
     tx: &bilibi_database::MutationTransaction<'_>,
     scope: &Scope,
     code: &str,
+    enable: bool,
 ) -> Result<std::result::Result<Chosen, FieldError>> {
-    let why = match bound()?.currencies.check(tx, scope, code).await? {
-        Ok(currency) => return Ok(Ok(Some(currency))),
-        Err(why) => why,
-    };
-    let enabled = enabled(tx.sql(), scope).await?;
-    Ok(match reference(tx.sql(), &enabled).await? {
-        Reference::Unavailable => Ok(None),
-        Reference::NoneEnabled => Err(none_enabled()),
-        Reference::Listed => Err(refusal(why)),
-    })
+    if let Ok(currency) = bound()?.currencies.check(tx, scope, code).await? {
+        return Ok(Ok(Some(currency)));
+    }
+    decide(tx.sql(), scope, code, enable).await
+}
+
+/// Enables the chosen currency for the tenant through Core's own write, in
+/// the book's transaction, so the book and the switch commit together. Only
+/// for a person [`can_enable`] admits: Core refuses anyone else as forbidden.
+async fn enable_on(
+    tx: &mut bilibi_database::MutationTransaction<'_>,
+    scope: &Scope,
+    code: &str,
+) -> Result<std::result::Result<(), FieldError>> {
+    Ok(
+        match bound()?
+            .currencies
+            .set_enabled(tx, scope, code, true)
+            .await?
+        {
+            Ok(_) => Ok(()),
+            Err(errors) => Err(FieldError::new(
+                "currency_code",
+                errors
+                    .first()
+                    .map_or("cannot be enabled", |e| e.message.as_str()),
+            )),
+        },
+    )
+}
+
+/// [`choose_on`] inside a write, else [`choose`], with `book.open`'s
+/// `enable_currency`.
+pub(crate) async fn choose_for(
+    client: &dyn OperationClient,
+    tx: Option<&bilibi_database::MutationTransaction<'_>>,
+    scope: &Scope,
+    code: &str,
+    input: &Value,
+) -> Result<std::result::Result<Chosen, FieldError>> {
+    let enable = input["enable_currency"].as_bool().unwrap_or(false);
+    match tx {
+        Some(tx) => choose_on(tx, scope, code, enable).await,
+        None => choose(client, scope, code, enable).await,
+    }
+}
+
+/// Enables the currency when the commit's own review admitted it
+/// (`enables_currency`: asked for, not enabled, and the person may).
+pub(crate) async fn enable_reviewed(
+    tx: &mut bilibi_database::MutationTransaction<'_>,
+    scope: &Scope,
+    code: &str,
+    review: &Value,
+) -> Result<std::result::Result<(), FieldError>> {
+    if review["changes"]["after"]["currency"]["enables_currency"].as_bool() != Some(true) {
+        return Ok(Ok(()));
+    }
+    enable_on(tx, scope, code).await
+}
+
+/// Whether the person may enable a currency (`admin.currency.manage`), asked
+/// without refusing, so a page and a review can offer the choice.
+pub(crate) async fn can_enable(client: &dyn OperationClient, scope: &Scope) -> Result<bool> {
+    Ok(
+        bilibi_authz::decide_proof(client, scope, bilibi_currency::MANAGE)
+            .await?
+            .allowed,
+    )
 }
 
 /// How far the list can help: see the module notes.
@@ -163,22 +227,47 @@ async fn enabled(client: &dyn OperationClient, scope: &Scope) -> Result<Vec<Curr
         .collect())
 }
 
+/// Every current (not withdrawn) currency of the catalog, enabled or not.
+async fn current(client: &dyn OperationClient, scope: &Scope) -> Result<Vec<Currency>> {
+    Ok(client
+        .query(
+            &format!("SELECT {COLUMNS} {FROM} WHERE NOT c.withdrawn ORDER BY c.code"),
+            &[&scope.tenant()],
+        )
+        .await?
+        .iter()
+        .map(listed)
+        .collect())
+}
+
 /// The same answer for a review, which only reads, on the connection it holds.
 pub(crate) async fn choose(
     client: &dyn OperationClient,
     scope: &Scope,
     code: &str,
+    enable: bool,
+) -> Result<std::result::Result<Chosen, FieldError>> {
+    decide(client, scope, code, enable).await
+}
+
+async fn decide(
+    client: &dyn OperationClient,
+    scope: &Scope,
+    code: &str,
+    enable: bool,
 ) -> Result<std::result::Result<Chosen, FieldError>> {
     let enabled = enabled(client, scope).await?;
-    Ok(match reference(client, &enabled).await? {
-        Reference::Unavailable => Ok(None),
-        Reference::NoneEnabled => Err(none_enabled()),
-        Reference::Listed => match get(client, scope, code).await? {
-            Some(currency) if currency.withdrawn => Err(refusal(Unusable::Withdrawn)),
-            Some(currency) if !currency.enabled => Err(refusal(Unusable::NotEnabled)),
-            Some(currency) => Ok(Some(currency)),
-            None => Err(refusal(Unusable::Unknown)),
-        },
+    let reference = reference(client, &enabled).await?;
+    if reference == Reference::Unavailable {
+        return Ok(Ok(None));
+    }
+    Ok(match get(client, scope, code).await? {
+        Some(currency) if currency.withdrawn => Err(refusal(Unusable::Withdrawn)),
+        Some(currency) if currency.enabled => Ok(Some(currency)),
+        Some(currency) if enable && can_enable(client, scope).await? => Ok(Some(currency)),
+        _ if reference == Reference::NoneEnabled => Err(none_enabled()),
+        Some(_) => Err(refusal(Unusable::NotEnabled)),
+        None => Err(refusal(Unusable::Unknown)),
     })
 }
 
@@ -218,6 +307,7 @@ pub(crate) fn facts(code: &str, units: i64, chosen: &Chosen) -> Value {
             "minor_units": units,
             "standard_minor_units": currency.minor_units,
             "nonstandard_minor_units": units != i64::from(currency.minor_units),
+            "enables_currency": !currency.enabled,
             "reference": "iso4217",
         }),
         None => json!({
@@ -226,14 +316,17 @@ pub(crate) fn facts(code: &str, units: i64, chosen: &Chosen) -> Value {
             "minor_units": units,
             "standard_minor_units": null,
             "nonstandard_minor_units": null,
+            "enables_currency": false,
             "reference": "unchecked",
         }),
     }
 }
 
-/// What the Book page and the discovery read offer: the enabled currencies
-/// that match `search` (code or name), and the company's base currency, else
-/// the tenant's, as the proposal. Read on the connection the caller holds.
+/// What the Book page and the discovery read offer: the currencies that match
+/// `search` (code or name), each with whether the tenant enabled it, and the
+/// company's base currency, else the tenant's, as the proposal. A person who
+/// may enable a currency is offered every current one; anyone else only the
+/// enabled ones. Read on the connection the caller holds.
 pub(crate) async fn options(
     client: &dyn OperationClient,
     scope: &Scope,
@@ -241,7 +334,17 @@ pub(crate) async fn options(
     search: &str,
 ) -> Result<Value> {
     let bound = bound()?;
-    let all = enabled(client, scope).await?;
+    let enabled_only = enabled(client, scope).await?;
+    let mut reference = reference(client, &enabled_only).await?;
+    let may_enable = reference != Reference::Unavailable && can_enable(client, scope).await?;
+    if may_enable {
+        reference = Reference::Listed;
+    }
+    let offered = if may_enable {
+        current(client, scope).await?
+    } else {
+        enabled_only
+    };
     let company = OrganisationId::new(company).map_err(|_| Error::Invalid)?;
     let own = base_currency(&bound.settings, client, scope, Target::Company(company)).await?;
     let (base, source) = match own {
@@ -251,16 +354,19 @@ pub(crate) async fn options(
             "tenant",
         ),
     };
-    let proposed = base.filter(|c| c.enabled && !c.withdrawn).map(|base| {
-        json!({
-            "code": base.code,
-            "name": base.name,
-            "minor_units": base.minor_units,
-            "source": source,
-        })
-    });
+    let proposed = base
+        .filter(|c| !c.withdrawn && (c.enabled || may_enable))
+        .map(|base| {
+            json!({
+                "code": base.code,
+                "name": base.name,
+                "minor_units": base.minor_units,
+                "enabled": base.enabled,
+                "source": source,
+            })
+        });
     let needle = search.trim().to_lowercase();
-    let listed: Vec<Value> = all
+    let listed: Vec<Value> = offered
         .iter()
         .filter(|c| {
             needle.is_empty()
@@ -268,10 +374,11 @@ pub(crate) async fn options(
                 || c.name.to_lowercase().contains(&needle)
         })
         .take(300)
-        .map(|c| json!({"code": c.code, "name": c.name, "minor_units": c.minor_units}))
+        .map(|c| json!({"code": c.code, "name": c.name, "minor_units": c.minor_units, "enabled": c.enabled}))
         .collect();
     Ok(json!({
-        "reference": reference(client, &all).await?.as_str(),
+        "reference": reference.as_str(),
+        "can_enable": may_enable,
         "proposed": proposed,
         "currencies": listed,
     }))
