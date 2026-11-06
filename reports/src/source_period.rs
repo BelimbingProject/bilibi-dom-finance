@@ -12,23 +12,26 @@ use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::Scope;
 use jiff::civil::Date;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 const MANAGE: &str = bilibi_finance_ledger::MANAGE_ACCOUNTS;
-fn invalid(field: &str, message: &str) -> bilibi_agent_api::Error {
-    bilibi_agent_api::Error::InvalidInput(BTreeMap::from([(field.into(), vec![message.into()])]))
-}
 fn required<'a>(input: &'a Value, key: &str, max: usize) -> bilibi_agent_api::Result<&'a str> {
     let v = input[key].as_str().unwrap_or("").trim();
     if v.is_empty() || v.chars().count() > max || v.contains('\0') {
-        return Err(invalid(key, "Enter a value within the allowed length."));
+        return Err(bilibi_agent_api::invalid(
+            key,
+            "Enter a value within the allowed length.",
+        ));
     }
     Ok(v)
 }
 fn kind(input: &Value) -> bilibi_agent_api::Result<&str> {
     let value = input["kind"].as_str().unwrap_or("");
     if !["comparative", "movement", "sst", "payroll"].contains(&value) {
-        return Err(invalid("kind", "Choose a source-period schedule kind."));
+        return Err(bilibi_agent_api::invalid(
+            "kind",
+            "Choose a source-period schedule kind.",
+        ));
     }
     Ok(value)
 }
@@ -48,8 +51,8 @@ async fn authorise(
     company: i64,
     cap: &str,
 ) -> bilibi_agent_api::Result<()> {
-    let company =
-        OrganisationId::new(company).map_err(|_| invalid("company_id", "Choose a company."))?;
+    let company = OrganisationId::new(company)
+        .map_err(|_| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
     bilibi_company::authorize_work_target(client, scope, company.get(), cap).await?;
     Ok(())
 }
@@ -57,12 +60,12 @@ fn company(input: &Value) -> bilibi_agent_api::Result<i64> {
     input["company_id"]
         .as_i64()
         .filter(|id| *id > 0)
-        .ok_or_else(|| invalid("company_id", "Choose a company."))
+        .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))
 }
 fn date(input: &Value, field: &str) -> bilibi_agent_api::Result<Date> {
     required(input, field, 10)?
         .parse()
-        .map_err(|_| invalid(field, "Enter a date as YYYY-MM-DD."))
+        .map_err(|_| bilibi_agent_api::invalid(field, "Enter a date as YYYY-MM-DD."))
 }
 
 async fn review(
@@ -78,7 +81,7 @@ async fn review(
     authorise(client, scope, company, VIEW).await?;
     let row = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT", &[&scope.tenant(), &company]).await?.ok_or(Error::NotFound)?;
     if row.get::<_, String>(0) == "archived" {
-        return Err(invalid(
+        return Err(bilibi_agent_api::invalid(
             "company_id",
             "This company is archived and read-only.",
         ));
@@ -86,25 +89,29 @@ async fn review(
     let reference = required(input, "source_reference", 100)?;
     let system = required(input, "source_system", 100)?;
     let timezone = required(input, "accounting_timezone", 100)?;
-    jiff::tz::TimeZone::get(timezone)
-        .map_err(|_| invalid("accounting_timezone", "Choose a recognised time zone."))?;
+    jiff::tz::TimeZone::get(timezone).map_err(|_| {
+        bilibi_agent_api::invalid("accounting_timezone", "Choose a recognised time zone.")
+    })?;
     let book = owner
         .ledger
         .get_book_on(client, scope, company)
         .await
-        .map_err(|_| invalid("company_id", "Open the company book first."))?;
+        .map_err(|_| bilibi_agent_api::invalid("company_id", "Open the company book first."))?;
     if required(input, "currency_code", 3)? != book.currency_code {
-        return Err(invalid("currency_code", "Use the book currency."));
+        return Err(bilibi_agent_api::invalid(
+            "currency_code",
+            "Use the book currency.",
+        ));
     }
     let opening = owner
         .ledger
         .opening_context_on(client, scope, company)
         .await
-        .map_err(|_| invalid("opening", "Approve the opening balances first."))?;
+        .map_err(|_| bilibi_agent_api::invalid("opening", "Approve the opening balances first."))?;
     let start = date(input, "period_start")?;
     let end = date(input, "period_end")?;
     if start > end || end >= opening.entry.entry_date {
-        return Err(invalid(
+        return Err(bilibi_agent_api::invalid(
             "period_end",
             "The source period must end before conversion.",
         ));
@@ -114,40 +121,43 @@ async fn review(
             .ledger
             .list_fiscal_years_on(client, scope, company)
             .await
-            .map_err(|_| invalid("opening", "Read the conversion fiscal year first."))?;
+            .map_err(|_| {
+                bilibi_agent_api::invalid("opening", "Read the conversion fiscal year first.")
+            })?;
         let year = years
             .iter()
             .find(|y| {
                 y.start_date <= opening.entry.entry_date && opening.entry.entry_date <= y.end_date
             })
-            .ok_or_else(|| invalid("opening", "Open the conversion fiscal year first."))?;
-        let last_source_day = opening
-            .entry
-            .entry_date
-            .yesterday()
-            .map_err(|_| invalid("opening", "The conversion date is invalid."))?;
+            .ok_or_else(|| {
+                bilibi_agent_api::invalid("opening", "Open the conversion fiscal year first.")
+            })?;
+        let last_source_day =
+            opening.entry.entry_date.yesterday().map_err(|_| {
+                bilibi_agent_api::invalid("opening", "The conversion date is invalid.")
+            })?;
         if start.day() != 1
             || start < year.start_date
             || end != start.last_of_month().min(last_source_day)
         {
-            return Err(invalid("period_start", "Choose one source month in the conversion fiscal year, ending at cut-off for a partial month."));
+            return Err(bilibi_agent_api::invalid("period_start", "Choose one source month in the conversion fiscal year, ending at cut-off for a partial month."));
         }
     }
     let rows = input["rows"]
         .as_array()
         .filter(|v| !v.is_empty() && v.len() <= 500)
-        .ok_or_else(|| invalid("rows", "Enter between 1 and 500 rows."))?;
+        .ok_or_else(|| bilibi_agent_api::invalid("rows", "Enter between 1 and 500 rows."))?;
     let accounts = owner
         .ledger
         .list_accounts_on(client, scope, company)
         .await
-        .map_err(|_| invalid("company_id", "Read the chart first."))?;
+        .map_err(|_| bilibi_agent_api::invalid("company_id", "Read the chart first."))?;
     let mut seen = HashSet::new();
     let mut facts = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let path = format!("rows.{index}");
         if !row.is_object() {
-            return Err(invalid(&path, "Enter a schedule row."));
+            return Err(bilibi_agent_api::invalid(&path, "Enter a schedule row."));
         }
         let source_id = row["source_id"].as_str().unwrap_or("").trim();
         if source_id.is_empty()
@@ -155,33 +165,36 @@ async fn review(
             || source_id.contains('\0')
             || !seen.insert(source_id.to_owned())
         {
-            return Err(invalid(
+            return Err(bilibi_agent_api::invalid(
                 &format!("{path}.source_id"),
                 "Enter a unique source identifier.",
             ));
         }
         let amount =
             Money::parse(row["amount"].as_str().unwrap_or(""), book.minor_units).map_err(|_| {
-                invalid(
+                bilibi_agent_api::invalid(
                     &format!("{path}.amount"),
                     "Enter an amount at the book's precision.",
                 )
             })?;
         if ["comparative", "movement"].contains(&kind) {
-            let id = row["account_id"]
-                .as_i64()
-                .ok_or_else(|| invalid(&format!("{path}.account_id"), "Choose an account."))?;
+            let id = row["account_id"].as_i64().ok_or_else(|| {
+                bilibi_agent_api::invalid(&format!("{path}.account_id"), "Choose an account.")
+            })?;
             if !accounts.iter().any(|a| a.id == id && !a.is_group) {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.account_id"),
                     "Choose an account in the chart.",
                 ));
             }
             if !["debit", "credit"].contains(&row["side"].as_str().unwrap_or("")) {
-                return Err(invalid(&format!("{path}.side"), "Choose debit or credit."));
+                return Err(bilibi_agent_api::invalid(
+                    &format!("{path}.side"),
+                    "Choose debit or credit.",
+                ));
             }
             if amount < Money::ZERO {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.amount"),
                     "Enter a non-negative amount.",
                 ));
@@ -191,13 +204,13 @@ async fn review(
                 .as_str()
                 .is_none_or(|s| s.trim().is_empty() || s.len() > 100 || s.contains('\0'))
             {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.reference"),
                     "Enter the source filing or remittance reference.",
                 ));
             }
             if amount < Money::ZERO {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.amount"),
                     "Enter a non-negative amount.",
                 ));
@@ -216,7 +229,7 @@ async fn review(
         } else {
             let authority = row["authority"].as_str().unwrap_or("").trim();
             if authority.is_empty() || authority.len() > 100 || authority.contains('\0') {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.authority"),
                     "Enter the authority.",
                 ));
@@ -227,13 +240,13 @@ async fn review(
                     .unwrap_or("")
                     .parse()
                     .map_err(|_| {
-                        invalid(
+                        bilibi_agent_api::invalid(
                             &format!("{path}.event_date"),
                             "Enter the filing or remittance date.",
                         )
                     })?;
             if event_date < start || event_date >= opening.entry.entry_date {
-                return Err(invalid(
+                return Err(bilibi_agent_api::invalid(
                     &format!("{path}.event_date"),
                     "The filing or remittance must not precede the source period and must precede conversion.",
                 ));
@@ -245,7 +258,7 @@ async fn review(
         }
         facts.push(fact);
     }
-    if client.query_opt("SELECT id FROM finance_reports_source_periods WHERE tenant_id=$1 AND company_id=$2 AND kind=$3 AND source_reference=$4", &[&scope.tenant(), &company, &kind, &reference]).await?.is_some() { return Err(invalid("source_reference", "This source reference has already been recorded for this kind.")); }
+    if client.query_opt("SELECT id FROM finance_reports_source_periods WHERE tenant_id=$1 AND company_id=$2 AND kind=$3 AND source_reference=$4", &[&scope.tenant(), &company, &kind, &reference]).await?.is_some() { return Err(bilibi_agent_api::invalid("source_reference", "This source reference has already been recorded for this kind.")); }
     Ok(
         json!({"company_id":company,"kind":kind,"source_reference":reference,"source_system":system,"currency_code":book.currency_code,"minor_units":book.minor_units,"accounting_timezone":timezone,"conversion_date":opening.entry.entry_date.to_string(),"opening_entry_id":opening.entry.id,"period_start":start.to_string(),"period_end":end.to_string(),"rows":facts,"notice":"Retained source evidence only; this creates no historical transactions or statutory submissions."}),
     )
@@ -344,7 +357,7 @@ impl ReadHandler for List {
             let after = input["after"].as_i64().unwrap_or(0);
             let id = input["id"].as_i64();
             if after < 0 {
-                return Err(invalid("after", "Choose a valid cursor."));
+                return Err(bilibi_agent_api::invalid("after", "Choose a valid cursor."));
             }
             let rows = client.query("SELECT id,source_reference,source_system,currency_code,accounting_timezone,conversion_date::text,opening_entry_id,period_start::text,period_end::text,facts,recorded_by_user_id,recorded_by_impersonator_id,to_char(recorded_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM finance_reports_source_periods WHERE tenant_id=$1 AND company_id=$2 AND kind=$3 AND id>$4 AND ($5::bigint IS NULL OR id=$5) ORDER BY id LIMIT 100", &[&scope.tenant(), &company, &kind, &after, &id]).await?;
             let records: Vec<Value> = rows.iter().map(|r| json!({"id":r.get::<_,i64>(0),"kind":kind,"source_reference":r.get::<_,String>(1),"source_system":r.get::<_,String>(2),"currency_code":r.get::<_,String>(3),"accounting_timezone":r.get::<_,String>(4),"conversion_date":r.get::<_,String>(5),"opening_entry_id":r.get::<_,i64>(6),"period_start":r.get::<_,String>(7),"period_end":r.get::<_,String>(8),"rows":r.get::<_,Value>(9),"recorded_by_user_id":r.get::<_,i64>(10),"recorded_by_impersonator_id":r.get::<_,Option<i64>>(11),"recorded_at":r.get::<_,String>(12)})).collect();

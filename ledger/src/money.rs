@@ -87,34 +87,11 @@ impl Money {
     /// [`Money::display`] for a figure that is not an amount of the book, a
     /// unit price or a report total read back as a bare decimal.
     pub fn display_decimal(value: Decimal, units: impl Into<Option<MinorUnits>>) -> String {
-        let mut fixed = value.abs();
-        match units.into() {
-            Some(units) => fixed.rescale(u32::from(units.get())),
-            None => {
-                fixed = fixed.normalize();
-                if fixed.scale() < 2 {
-                    fixed.rescale(2);
-                }
-            }
-        }
-        let fixed = fixed.to_string();
-        let (whole, fraction) = fixed.split_once('.').unwrap_or((&fixed, ""));
-        let mut out = if value.is_sign_negative() && !value.is_zero() {
-            "-".to_owned()
-        } else {
-            String::new()
+        let places = match units.into() {
+            Some(units) => u32::from(units.get()),
+            None => value.normalize().scale().max(2),
         };
-        for (i, digit) in whole.char_indices() {
-            if i > 0 && (whole.len() - i).is_multiple_of(3) {
-                out.push(',');
-            }
-            out.push(digit);
-        }
-        if !fraction.is_empty() {
-            out.push('.');
-            out.push_str(fraction);
-        }
-        out
+        bilibi_locale::money(value, places)
     }
     pub fn amount(self) -> Decimal {
         self.0

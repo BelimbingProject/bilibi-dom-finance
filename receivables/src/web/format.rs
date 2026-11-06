@@ -4,7 +4,7 @@ use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_ui::{
-    error_sentence, Badge, BadgeKind, BuiltinColumn, Fact, FlashGroup, FlexRow, FlexTable, Html,
+    error_sentence, BadgeKind, BuiltinColumn, Fact, FlashGroup, FlexRow, FlexTable, Html,
     ListColumns, Modal, ModalWidth, Page, PageVariant,
 };
 use rust_decimal::Decimal;
@@ -45,34 +45,14 @@ pub(super) fn status_label(status: &str) -> &'static str {
     }
 }
 
-pub(super) fn badge(text: &str, kind: BadgeKind) -> Result<Html> {
-    render(Badge {
-        kind,
-        dot: true,
-        class: "",
-        body: Html::text(text),
-    })
-}
-
 pub(super) fn status_badge(status: &str) -> Result<Html> {
-    badge(
-        status_label(status),
+    Ok(bilibi_ui::status_badge(
         match status {
             "issued" => BadgeKind::Success,
             _ => BadgeKind::Neutral,
         },
-    )
-}
-
-pub(super) fn active_badge(active: bool) -> Result<Html> {
-    badge(
-        if active { "Active" } else { "Inactive" },
-        if active {
-            BadgeKind::Success
-        } else {
-            BadgeKind::Neutral
-        },
-    )
+        status_label(status),
+    ))
 }
 
 pub(super) fn optional(text: &Option<String>) -> &str {

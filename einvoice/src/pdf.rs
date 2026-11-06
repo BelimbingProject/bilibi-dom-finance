@@ -20,7 +20,6 @@ use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use qrcode::render::svg;
 use qrcode::QrCode;
-use rust_decimal::Decimal;
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -322,15 +321,17 @@ fn printable(view: &DocumentView) -> serializer::Document {
                         vec![
                             line.line_number.to_string(),
                             latin1(&line.description),
-                            amount(line.quantity),
-                            amount(line.unit_price),
-                            amount(line.line_extension_amount),
+                            bilibi_locale::money(line.quantity, 2),
+                            bilibi_locale::money(line.unit_price, 2),
+                            bilibi_locale::money(line.line_extension_amount, 2),
                             format!(
                                 "{} {}%",
                                 line.tax_type,
-                                line.tax_rate.map(amount).unwrap_or_default()
+                                line.tax_rate
+                                    .map(|rate| bilibi_locale::money(rate, 2))
+                                    .unwrap_or_default()
                             ),
-                            amount(line.tax_amount),
+                            bilibi_locale::money(line.tax_amount, 2),
                         ]
                     })
                     .collect(),
@@ -343,14 +344,17 @@ fn printable(view: &DocumentView) -> serializer::Document {
                 rows: vec![
                     vec![
                         "Tax exclusive".into(),
-                        amount(document.tax_exclusive_amount),
+                        bilibi_locale::money(document.tax_exclusive_amount, 2),
                     ],
-                    vec!["Tax".into(), amount(document.tax_amount)],
+                    vec!["Tax".into(), bilibi_locale::money(document.tax_amount, 2)],
                     vec![
                         "Tax inclusive".into(),
-                        amount(document.tax_inclusive_amount),
+                        bilibi_locale::money(document.tax_inclusive_amount, 2),
                     ],
-                    vec!["Payable".into(), amount(document.payable_amount)],
+                    vec![
+                        "Payable".into(),
+                        bilibi_locale::money(document.payable_amount, 2),
+                    ],
                 ],
             },
             Block::Text(
@@ -404,14 +408,6 @@ fn party(party: &PartySnapshot) -> String {
     .map(|line| latin1(&line))
     .collect::<Vec<_>>()
     .join("\n")
-}
-
-/// An amount at two places.
-fn amount(value: Decimal) -> String {
-    format!(
-        "{:.2}",
-        value.round_dp_with_strategy(2, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
-    )
 }
 
 /// The serializer's font covers printable ASCII and Latin-1; anything else is

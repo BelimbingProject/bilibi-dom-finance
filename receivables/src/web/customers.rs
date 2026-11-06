@@ -327,7 +327,7 @@ impl Customers {
                     "terms",
                     f::tabular(&format!("{} days", c.payment_terms_days))?,
                 )
-                .slot("status", f::active_badge(c.active)?),
+                .slot("status", bilibi_ui::active_badge(c.active)),
             );
         }
         let mut table = FlexTable::new(
@@ -732,11 +732,11 @@ fn phone(c: &Customer) -> Option<&String> {
 pub(super) fn company_badge(c: &Customer) -> Result<Html> {
     use bilibi_ui::BadgeKind;
     match c.party.status.as_str() {
-        "active" => f::badge("Active", BadgeKind::Success),
-        "pending" => f::badge("Pending", BadgeKind::Warning),
-        "suspended" => f::badge("Suspended", BadgeKind::Warning),
-        "archived" | "retired" => f::badge("Unavailable", BadgeKind::Neutral),
-        _ => f::badge("No access", BadgeKind::Neutral),
+        "active" => Ok(bilibi_ui::status_badge(BadgeKind::Success, "Active")),
+        "pending" => Ok(bilibi_ui::status_badge(BadgeKind::Warning, "Pending")),
+        "suspended" => Ok(bilibi_ui::status_badge(BadgeKind::Warning, "Suspended")),
+        "archived" | "retired" => Ok(bilibi_ui::status_badge(BadgeKind::Neutral, "Unavailable")),
+        _ => Ok(bilibi_ui::status_badge(BadgeKind::Neutral, "No access")),
     }
 }
 

@@ -2,9 +2,8 @@
 //! spot; deactivating it and marking it as the retained-earnings account ask
 //! first, with the ledger's own review of what will change.
 use super::{
-    account_name,
-    accounts::{status_badge, INDEX},
-    event_type, no_company, render, shell, unavailable, view, Failure, Flash, Pages, Read, Review,
+    account_name, accounts::INDEX, event_type, no_company, render, shell, unavailable, view,
+    Failure, Flash, Pages, Read, Review,
 };
 use crate::MANAGE_ACCOUNTS;
 use bilibi_database::{Error, Result};
@@ -209,7 +208,7 @@ impl Account {
             Fact {
                 title: "Status",
                 id: "ledger-account-status",
-                value: status_badge(account.active)?,
+                value: bilibi_ui::active_badge(account.active),
             },
             Fact {
                 title: "Retained earnings",

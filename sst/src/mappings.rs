@@ -159,7 +159,7 @@ impl Sst {
             .into_iter()
             .find(|c| c.id == input.tax_code_id)
             .ok_or(SstError::TaxCodeNotFound)?;
-        let box_key = blank_to_none(input.box_key.as_deref());
+        let box_key = bilibi_ui::params::blank_to_none(input.box_key.as_deref());
         let mut errors = Vec::new();
         if box_key.as_deref().is_some_and(|key| {
             !form::mappable_boxes(source)

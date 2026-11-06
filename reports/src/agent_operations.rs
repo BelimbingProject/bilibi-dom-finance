@@ -22,9 +22,6 @@ pub(crate) fn bind(owner: Arc<Reports>) -> Result<(), RegistryError> {
         .map_err(|_| RegistryError::Service("duplicate report operations".into()))
 }
 const MANAGE: &str = bilibi_finance_ledger::MANAGE_ACCOUNTS;
-fn invalid(field: &str, text: &str) -> bilibi_agent_api::Error {
-    bilibi_agent_api::Error::InvalidInput(BTreeMap::from([(field.into(), vec![text.into()])]))
-}
 async fn read(
     client: &dyn OperationClient,
     scope: &Scope,
@@ -34,7 +31,7 @@ async fn read(
     let company = input["company_id"]
         .as_i64()
         .and_then(|id| OrganisationId::new(id).ok())
-        .ok_or_else(|| invalid("company_id", "Choose a company."))?;
+        .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
     bilibi_company::authorize_work_target(client, scope, company.get(), capability).await?;
     Ok(OWNER
         .get()
@@ -54,7 +51,10 @@ async fn review(
     // The company lock serializes Finance writes, including a plan's layout steps.
     let row = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT", &[&scope.tenant(), &company]).await?.ok_or(bilibi_agent_api::Error::NotFound)?;
     if row.get::<_, String>(0) == "archived" {
-        return Err(invalid("base", "This company is archived and read-only."));
+        return Err(bilibi_agent_api::invalid(
+            "base",
+            "This company is archived and read-only.",
+        ));
     }
     if let Some(sections) = input["sections"].as_array() {
         let fields: BTreeMap<_, _> = sections
@@ -79,7 +79,7 @@ async fn review(
         .is_none_or(|sections| sections.len() > 128)
         || !layout::valid(&input["sections"])
     {
-        return Err(invalid(
+        return Err(bilibi_agent_api::invalid(
             "sections",
             "Choose a report, a heading and accounts for each section.",
         ));
@@ -130,7 +130,7 @@ impl ReadHandler for SetupRead {
             let company = input["company_id"]
                 .as_i64()
                 .and_then(|id| OrganisationId::new(id).ok())
-                .ok_or_else(|| invalid("company_id", "Choose a company."))?;
+                .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
             bilibi_company::authorize_work_target(client, scope, company.get(), VIEW).await?;
             // A read holds no company lock, so the facades' own connections are safe here.
             let overview = OWNER
