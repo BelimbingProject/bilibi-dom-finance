@@ -381,6 +381,7 @@ impl Documents {
             .unwrap_or_default()
     }
 
+
     fn page_customer_name(&self, d: &DocumentPageRow) -> String {
         let customer = self.customers.iter().find(|c| c.id == d.customer_id);
         let name = d
