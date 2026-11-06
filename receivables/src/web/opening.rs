@@ -231,6 +231,7 @@ impl Opening {
                 Value::Null
             }
         };
+        let mut has_form = false;
         let mut flash = bilibi_ui::NO_FLASH;
         if let Some((kind, message)) = &self.message {
             match kind {
@@ -581,7 +582,21 @@ impl Opening {
                     actions: super::format::actions(buttons)?,
                     ..Form::default()
                 })?);
+                has_form = true;
             }
+        }
+        // The form carries the dialog's only Cancel. Without it (the context
+        // read was refused, or the person may not issue) the dialog still
+        // needs a way out: its flash can be dismissed, which would leave an
+        // open modal with nothing to press.
+        if !has_form {
+            page.push(&super::format::actions(render(Button {
+                id: "conversion-close",
+                button_type: "button",
+                event: "close_opening",
+                body: Html::text("Close"),
+                ..Button::default()
+            })?)?);
         }
         if let Some(review) = &self.review {
             let facts = &review.facts;
