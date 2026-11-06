@@ -262,7 +262,7 @@ impl Books {
                                     cell.push(&Html::text(" "));
                                     cell.push(&render(Badge::status(
                                         BadgeKind::Warning,
-                                        "Past due",
+                                        "Not closed",
                                     ))?);
                                 }
                                 row.slot("open", cell)

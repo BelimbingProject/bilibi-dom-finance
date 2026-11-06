@@ -3,7 +3,7 @@
 <h2 class="font-medium">{{ heading }}</h2>
 <p>Cost {{ cost }}; residual {{ residual }}.</p>
 <p>Acquired {{ detail.asset.acquisition_date }}; in service {{ detail.asset.in_service_date }}.</p>
-<p>{{ method }}; {{ detail.asset.assumptions.life_months }} months. Category revision {{ detail.revision.id }}.</p>
+<p>{{ method }}; {{ detail.asset.assumptions.life_months }} months.</p>
 {% match detail.asset.entry_line_number %}{% when Some with (line) %}<p>Acquisition entry {{ detail.asset.entry_number }}, line {{ line }}.</p>{% when None %}<p>Opening register against entry {{ detail.asset.entry_number }}. Source cost and accumulated depreciation retained at conversion. The useful life shown is the remaining life at conversion.</p>{% endmatch %}
 {% if detail.voided %}<p id="asset-voided">Acquisition voided: this asset is excluded from depreciation runs and reconciliation.</p>{% endif %}
 <p>Recorded by user {{ actor }} at {{ recorded }}.</p>

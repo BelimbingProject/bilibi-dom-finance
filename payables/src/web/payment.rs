@@ -145,7 +145,7 @@ impl Request {
     pub(super) fn title(&self) -> Option<String> {
         self.request
             .as_ref()
-            .map(|r| format!("Payment request #{} to {}", r.request_number, r.party_name))
+            .map(|r| format!("Payment #{} to {}", r.request_number, r.party_name))
     }
 
     pub(super) async fn body(&self, scope: &Scope) -> Result<String> {
@@ -160,8 +160,8 @@ impl Request {
         }
         let Some(r) = &self.request else {
             let mut missing = EmptyState::missing(
-                "Payment request not found",
-                "There is no such payment request for this company, or it cannot be read with your current access.",
+                "Payment not found",
+                "There is no such payment for this company, or it cannot be read with your current access.",
             );
             missing.id = "payables-payment-missing".into();
             missing.action = render(AllPayments)?;
@@ -304,7 +304,7 @@ impl Request {
             .payment
             .as_ref()
             .is_some_and(|p| p.reversed_by_payment_id.is_none() && p.reverses_payment_id.is_none());
-        let title = format!("Payment request #{}", r.request_number);
+        let title = format!("Payment #{}", r.request_number);
         View {
             flash,
             title_actions: bilibi_ui::Html::EMPTY,
@@ -493,7 +493,7 @@ impl Request {
                 StatusKind::Success,
                 match event {
                     "approve_payment" => "Payment approved and posted.".to_owned(),
-                    "reject_payment" => "Payment request rejected.".to_owned(),
+                    "reject_payment" => "Payment rejected.".to_owned(),
                     _ => "Payment reversed.".to_owned(),
                 },
             ),
@@ -501,7 +501,7 @@ impl Request {
                 StatusKind::Error,
                 match event {
                     "approve_payment" | "reject_payment" => {
-                        "You do not have permission to decide payment requests.".to_owned()
+                        "You do not have permission to decide payments.".to_owned()
                     }
                     _ => "You do not have permission to reverse payments.".to_owned(),
                 },

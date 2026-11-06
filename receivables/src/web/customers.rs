@@ -84,7 +84,7 @@ impl Customers {
         let columns = vec![
             BuiltinColumn::new("code", "Code").sortable("code"),
             BuiltinColumn::new("name", "Name").sortable("name"),
-            BuiltinColumn::new("company", "Core status"),
+            BuiltinColumn::new("company", "Contact status"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
             BuiltinColumn::new("terms", "Terms").right(),
@@ -331,7 +331,11 @@ impl Customers {
                 .cell("phone", Cell::text(f::optional(&phone(c).cloned())))
                 .slot(
                     "terms",
-                    f::tabular(&format!("{} days", c.payment_terms_days))?,
+                    f::tabular(&if c.payment_terms_days == 0 {
+                        "Due on receipt".to_owned()
+                    } else {
+                        format!("{} days", c.payment_terms_days)
+                    })?,
                 )
                 .slot("status", bilibi_ui::active_badge(c.active)),
             );

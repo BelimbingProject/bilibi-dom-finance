@@ -68,11 +68,12 @@ struct CancelForm {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{{ status }}<span class="ml-2 text-ink-muted">{{ d.document.environment }}</span>{% if d.self_billed %}<span id="einvoice-document-self-billed" class="ml-2">{% call ui::badge(dot=false) %}Self-billed{% endcall %}</span>{% endif %}{% if let Some(month) = d.document.details.consolidation_month %}<span id="einvoice-document-consolidated" class="ml-2">{% call ui::badge(dot=false) %}Consolidated {{ month }}{% endcall %}</span>{% endif %}"#,
+    source = r#"{% import "components.html" as ui %}{{ status }}<span class="ml-2 text-ink-muted">{{ environment }}</span>{% if d.self_billed %}<span id="einvoice-document-self-billed" class="ml-2">{% call ui::badge(dot=false) %}Self-billed{% endcall %}</span>{% endif %}{% if let Some(month) = d.document.details.consolidation_month %}<span id="einvoice-document-consolidated" class="ml-2">{% call ui::badge(dot=false) %}Consolidated {{ month }}{% endcall %}</span>{% endif %}"#,
     ext = "html"
 )]
 struct Subtitle<'a> {
     d: &'a DocumentView,
+    environment: String,
     status: Html,
 }
 
@@ -427,6 +428,7 @@ impl Detail {
             let can_cancel = self.pages.allowed(scope, CANCEL).await?;
             view.header_subtitle = render(Subtitle {
                 d,
+                environment: sentence(&d.document.environment),
                 status: status_badge(&d.status)?,
             })?;
             view.supplier = party_lines(&d.document.supplier);
@@ -636,7 +638,7 @@ impl Detail {
                                 kind: BadgeKind::Neutral,
                                 dot: false,
                                 class: "",
-                                body: Html::text(&e.event),
+                                body: Html::text(&sentence(&e.event)),
                             })?,
                         )
                         .cell("detail", Cell::text(event_detail(e)))

@@ -229,7 +229,6 @@ async fn main() -> Outcome<()> {
     .await?;
     tokio::time::timeout(Duration::from_secs(3), wakes[0].receiver.recv()).await??;
     let first = update(&mut latest, &manager, LiveInput::Refresh).await?;
-    has(&first, "through entry 5");
     assert!(cell(&first.html, "profit-and-loss-net-income").contains("1,101.00"));
     assert!(first
         .html
@@ -259,7 +258,7 @@ async fn main() -> Outcome<()> {
     .await?;
     tokio::time::timeout(Duration::from_secs(3), wakes[0].receiver.recv()).await??;
     let new = update(&mut latest, &manager, LiveInput::Refresh).await?;
-    has(&new, &format!("through entry {after}"));
+    has(&new, &format!("name=\"through\" value=\"{after}\""));
     let pinned = update(
         &mut latest,
         &manager,

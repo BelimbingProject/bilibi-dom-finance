@@ -349,9 +349,7 @@ impl Groups {
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
-        table.empty = Some(TableEmpty::Content(Html::text(
-            "No account groups match. Change the filters, or add a group.",
-        )));
+        table.empty = Some(TableEmpty::Content(Html::text("No account groups yet.")));
         let mut card = render(table)?;
         card.push(&render(Pagination::new(
             "ledger-groups-pagination",

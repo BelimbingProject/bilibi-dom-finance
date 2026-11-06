@@ -193,10 +193,7 @@ impl Setup {
             Some(s) => render(Facts {
                 id: "payables-settings-facts",
                 items: vec![
-                    f::fact(
-                        "Bills are owed on",
-                        &self.account_label(s.payable_account_id),
-                    ),
+                    f::fact("Payable account", &self.account_label(s.payable_account_id)),
                     f::fact("Quantity tolerance", &tolerance_text(&s.quantity_tolerance)),
                     f::fact("Price tolerance", &tolerance_text(&s.price_tolerance)),
                 ],
@@ -278,14 +275,14 @@ impl Setup {
             .wrapper_class("md:col-span-2"),
         );
         let payable = Combobox::new("payables-settings-account", "settings[account]".to_owned())
-            .label("Bills are owed on")
+            .label("Payable account")
             .value(d.account.clone())
             .placeholder("Search liability accounts")
             .options(account_choices(&[AccountType::Liability]))
             .errors(Self::errors_for(
                 &self.settings_errors,
                 "payable_account_id",
-                "Bills are owed on",
+                "Payable account",
             ))
             .hint(
                 "The liability account, such as Trade Payables, that every posted bill is owed on.",
@@ -313,7 +310,7 @@ impl Setup {
                         _ => return None,
                     },
                     match p {
-                        "payable_account_id" => "Bills are owed on",
+                        "payable_account_id" => "Payable account",
                         "quantity_tolerance" | "quantity_tolerance.value" => "Quantity tolerance",
                         "price_tolerance" | "price_tolerance.value" => "Price tolerance",
                         _ => "Reason",

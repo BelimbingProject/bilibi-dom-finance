@@ -8,7 +8,7 @@
 {% if let Some(forbidden) = forbidden %}{{ forbidden|safe }}{% endif %}
 {% if let Some(r) = registration %}
 {% call ui::card(id="sst-registration", inner_class="p-5 sm:p-6", role="region", labelledby="sst-registration-heading") %}
-{% call ui::section_heading(id="sst-registration-heading", title="Registration", description="Each change is recorded as a new version; returns keep the version they were prepared under.") %}{% endcall %}
+{% call ui::section_heading(id="sst-registration-heading", title="Registration", description="Returns already prepared keep the registration details they were prepared with.") %}{% endcall %}
 {% if let Some(none) = r.none %}{{ none|safe }}{% endif %}
 {% if let Some(facts) = r.facts %}{{ facts|safe }}{% endif %}
 {% if let Some(history) = r.history %}<div class="mt-4">{{ history|safe }}</div>{% endif %}

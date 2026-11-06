@@ -225,7 +225,7 @@ impl Index {
                         Cell::text(format!("{} {}", d.payable_amount, d.currency_code)),
                     )
                     .slot("status", status_badge(&d.status)?)
-                    .cell("environment", Cell::text(&d.environment)),
+                    .cell("environment", Cell::text(sentence(&d.environment))),
                 );
             }
         }

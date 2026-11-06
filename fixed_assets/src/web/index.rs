@@ -67,6 +67,24 @@ impl Kind {
             Self::Runs => "Depreciation runs",
         }
     }
+    /// The empty-table line: "yet" when nothing is filtered, "match" only when a search is.
+    fn empty(self, filtered: bool) -> &'static str {
+        match (self, filtered) {
+            (Self::Register, false) => "No assets yet.",
+            (Self::Register, true) => "No assets match.",
+            (Self::Categories, false) => "No categories yet.",
+            (Self::Categories, true) => "No categories match.",
+            (Self::Runs, false) => "No depreciation runs yet.",
+            (Self::Runs, true) => "No depreciation runs match.",
+        }
+    }
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Register => "Register asset",
+            Self::Categories => "Save category",
+            Self::Runs => "Run depreciation",
+        }
+    }
     fn heading(self) -> &'static str {
         match self {
             Self::Register => "Register acquisition",
@@ -145,8 +163,7 @@ struct View<'a> {
 }
 #[derive(Template)]
 #[template(path = "reconciliation.html")]
-struct ReconciliationView<'a> {
-    report: &'a RegisterReport,
+struct ReconciliationView {
     heading: String,
     reproduce: String,
     rows: Vec<String>,
@@ -352,7 +369,7 @@ impl Index {
             form_dom: "assets-write-form",
             event_name: "record_asset",
             button_dom: "assets-record",
-            verb: "Record",
+            verb: self.kind.verb(),
             fields: self.fields(accounts),
             help: if self.kind == Kind::Runs {
                 "One charge through this month, including any scheduled depreciation still unposted. Closed periods are refused."
@@ -571,7 +588,7 @@ impl Index {
                 rows,
                 self.kind.title(),
                 "grid",
-                "No records match these filters.",
+                self.kind.empty(!self.list.search.is_empty()),
             )?
         } else {
             Html::EMPTY
@@ -631,7 +648,6 @@ impl Index {
                 query.insert(key.into(), value.to_string());
             }
             render(ReconciliationView {
-                report: r,
                 heading: format!("Whole register reconciliation as of {}", r.as_of),
                 reproduce: params::address("/finance/fixed-assets/register", &query),
                 rows: r

@@ -471,7 +471,7 @@ impl Page<Scope, Error> for Pages {
         Some(if operation == "activity" {
             "Account entries"
         } else {
-            "Management reports"
+            "Reports"
         })
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {

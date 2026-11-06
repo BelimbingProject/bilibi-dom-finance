@@ -87,7 +87,7 @@ Bilimbi recorded documents, payments and settings through its API, so these page
 
 | Page | Path | Needs | What it does |
 | --- | --- | --- | --- |
-| Vendors | `/finance/payables/vendors` | view; changes need `finance.payables.settings.manage` | Vendors linked to Companies, added through the shared company picker, and the historical supplier-key review (see [Vendors](#vendors)) |
+| Suppliers | `/finance/payables/vendors` | view; changes need `finance.payables.settings.manage` | Vendors linked to Companies, added through the shared company picker, and the historical supplier-key review (see [Vendors](#vendors)) |
 | Record a bill | `/finance/payables/bills/new` | `finance.payables.documents.create` | Vendor (picked from the company's vendors), invoice number, dates, lines with an account picker and tax code, live totals; saves a draft (`bill.create`) and opens it. Choosing a vendor fills the due date and each line's account and tax code from the vendor's defaults, replacing only values empty or last filled by a vendor default, never a value the person entered |
 | Correct a draft | `/finance/payables/bills/new?correct={id}` | create and approve | The same form filled from a draft. Documents are immutable, so saving calls `bill.replace_draft`, which voids the draft and records the corrected bill in one transaction: a refusal leaves the draft as it was, and the corrected bill may reuse its supplier invoice number. A draft that names order lines is not offered, because the form has no place for them |
 | Record a debit note | `/finance/payables/debit-notes/new?bill={id}` | create | Lines against a posted bill (`debit_note.create`); the supplier is the bill's |

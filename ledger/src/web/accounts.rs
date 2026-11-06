@@ -322,7 +322,7 @@ impl Accounts {
                 && self.pages.allowed(scope, crate::MANAGE_TEMPLATES).await?
             {
                 for (event, label) in [
-                    ("propose_chart", "Template proposal"),
+                    ("propose_chart", "Starter chart"),
                     ("publish_chart", "Save reusable chart"),
                 ] {
                     if event == "publish_chart" && chart.is_empty() {
@@ -659,9 +659,7 @@ impl Accounts {
         let mut parents = vec![Choice::new("No group", "")];
         parents.extend(eligible.iter().map(|a| view::account_choice(a)));
         let parent_hint = if eligible.is_empty() {
-            format!(
-                "Optional. This company has no {type_word} account group yet. Add one on Account groups."
-            )
+            format!("Optional. This company has no {type_word} account group yet.")
         } else {
             format!("Optional. An account group of the same type ({type_word}).")
         };

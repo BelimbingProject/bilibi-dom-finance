@@ -411,7 +411,7 @@ impl BillForm {
     fn locate(&self, path: &str) -> Option<(String, String)> {
         let top = |id: &str, label: &str| Some((format!("payables-record-{id}"), label.to_owned()));
         match path {
-            "vendor_id" => top("vendor", "Vendor"),
+            "vendor_id" => top("vendor", "Supplier"),
             "party_document_number" => top("number", "Supplier's invoice number"),
             "document_date" => top("date", "Date"),
             "due_date" => top("due", "Due date"),
@@ -555,11 +555,11 @@ impl BillForm {
         } else {
             Some(
                 Combobox::new("payables-record-vendor", format!("{PREFIX}[vendor]"))
-                    .label("Vendor *")
-                    .aria_label("Vendor")
+                    .label("Supplier *")
+                    .aria_label("Supplier")
                     .attrs(bilibi_ui::Attrs {
                         required: true,
-                        aria_label: Some("Vendor".into()),
+                        aria_label: Some("Supplier".into()),
                         ..bilibi_ui::Attrs::default()
                     })
                     .value(&d.vendor)
@@ -775,7 +775,7 @@ impl BillForm {
             no_accounts,
             totals,
             save,
-            party_heading: if self.note { "Bill" } else { "Vendor" },
+            party_heading: if self.note { "Bill" } else { "Supplier" },
             document_heading: if self.note { "Debit note" } else { "Invoice" },
         }
         .render()

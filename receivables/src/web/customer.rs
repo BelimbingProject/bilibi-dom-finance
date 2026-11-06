@@ -251,8 +251,8 @@ impl Customer {
             _ => Html::text(&company.name),
         };
         let mut items = vec![
-            f::fact_html("Core party", name),
-            f::fact_html("Core status", super::customers::company_badge(c)?),
+            f::fact_html("Contact", name),
+            f::fact_html("Contact status", super::customers::company_badge(c)?),
             f::fact_html(
                 "Tax ID",
                 self.company_fact(company, "tax_id", &company.tax_id)?,
@@ -276,7 +276,7 @@ impl Customer {
                     .reason("Not visible to you: viewing addresses needs permission."),
             )?
         } else if self.company.billing.is_empty() {
-            Html::text("No billing address in Core yet.")
+            Html::text("No billing address yet.")
         } else {
             render(Lines {
                 id: "receivables-customer-billing",
@@ -312,7 +312,7 @@ impl Customer {
             }
             Some(Relation::Hidden) | None => render(
                 Restricted::new("receivables-customer-relationship-restricted")
-                    .reason("Not visible to you: viewing this Core party needs permission."),
+                    .reason("Not visible to you: you need permission to view this contact."),
             )?,
         };
         items.push(f::fact_html("Relationship", relation));
@@ -322,8 +322,8 @@ impl Customer {
             class: "mt-4",
             body: {
                 let mut b = render(SectionHeading {
-                    title: "Core party",
-                    description: "Read from Core. Invoices issued from now on carry these details; invoices already issued keep the details they were issued with.",
+                    title: "Contact details",
+                    description: "From the company record. Invoices issued from now on carry these details; invoices already issued keep the details they were issued with.",
                     ..SectionHeading::default()
                 })?;
                 b.push(&render(Facts {
@@ -514,7 +514,7 @@ impl Customer {
         body.push(&render(Header {
             title: Html::text(&c.name),
             title_actions: bilibi_ui::Html::EMPTY,
-            subtitle: &format!("Customer {}", c.code),
+            subtitle: "Customer",
             actions: back,
         })?);
         for part in parts {

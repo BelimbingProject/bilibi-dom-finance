@@ -1,7 +1,6 @@
 {% import "components.html" as ui %}
 <div id="assets-reconciliation" class="mt-4">
 <h2 class="font-medium">{{ heading }}</h2>
-<p>Ledger entry {{ report.through_entry_number }}; asset {{ report.through_asset_number }}; event {{ report.through_event_number }}; category revision {{ report.through_category_revision_id }}.</p>
-<a id="assets-report-reproduce" href="{{ reproduce }}" data-patch>Keep this report's recorded boundary</a>
+<a id="assets-report-reproduce" href="{{ reproduce }}" data-patch>Keep these figures</a>
 {% for row in rows %}<p>{{ row }}</p>{% endfor %}
 </div>

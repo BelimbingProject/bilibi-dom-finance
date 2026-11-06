@@ -349,7 +349,7 @@ impl Book {
                     if proposed.source == "company" {
                         "company's"
                     } else {
-                        "tenant's"
+                        "organisation's"
                     }
                 ),
                 _ => "Search by code or name. You cannot change it later.".into(),

@@ -213,8 +213,8 @@ refuses a second entry for the document and a reversal by anyone else
 (`OwnedBy`). Its ID is recorded on a `posted` event, and the reversal's on a
 `posting_reversed` event, each in the transaction that posts it, under the
 company lock; the database refuses a second of either. A refusal (book not
-open, the book's currency differs, `posting accounts not set: ...`,
-`accounts not in the chart: ...`, `accounts that are account groups, not posting accounts: ...`, a closed period, a missing ledger grant) is
+open, the book's currency differs, `Choose the ... account in the e-invoice settings.`,
+`accounts not in the chart: ...`, `These are account groups, not accounts that take postings: ...`, a closed period, a missing ledger grant) is
 recorded afterwards, in its own transaction, as `posting_failed` or
 `reversal_failed` with the reason, and the document waits on
 `reconciliation` until `retry_posting` or `retry_reversal` succeeds. Only a

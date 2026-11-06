@@ -309,7 +309,7 @@ impl Reports {
         areas.push(match controls {
             _ if matches!(book, Ok(None)) => area(
                 "controls",
-                "Bookkeeping and approval controls",
+                "Bookkeeping controls",
                 true,
                 "/finance/reports/controls",
                 SetupState::NotTracked,
@@ -317,7 +317,7 @@ impl Reports {
             ),
             (Ok(controlled), Ok(duties)) => area(
                 "controls",
-                "Bookkeeping and approval controls",
+                "Bookkeeping controls",
                 true,
                 "/finance/reports/controls",
                 SetupState::SetUp,
@@ -329,7 +329,7 @@ impl Reports {
             ),
             (Err(LedgerError::Unauthorized), _) | (_, Err(LedgerError::Unauthorized)) => area(
                 "controls",
-                "Bookkeeping and approval controls",
+                "Bookkeeping controls",
                 true,
                 "/finance/reports/controls",
                 SetupState::NoAccess,
@@ -337,7 +337,7 @@ impl Reports {
             ),
             _ => area(
                 "controls",
-                "Bookkeeping and approval controls",
+                "Bookkeeping controls",
                 true,
                 "/finance/reports/controls",
                 SetupState::Unavailable,
@@ -685,7 +685,7 @@ impl Reports {
             true,
             "/authz/roles",
             SetupState::NotTracked,
-            "Give the people who keep this company's books a role, such as External accountant. Roles belong to the tenant, not to one company.",
+            "Give the people who keep this company's books a role, such as External accountant.",
         ));
 
         // A count is shown only when it is true: every required area read.

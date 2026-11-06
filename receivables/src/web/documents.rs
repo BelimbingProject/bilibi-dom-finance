@@ -659,7 +659,7 @@ impl Documents {
             .required()
             .errors(draft.errors.under("series_id", "Series"));
         if credit {
-            series_field = series_field.hint("The numbering the document takes when it is issued.");
+            series_field = series_field.hint("Issued ref no.");
         }
         let mut series_html = Html::raw("<div>");
         series_html.push(&render(series_field)?);
@@ -726,11 +726,7 @@ impl Documents {
             (
                 "issue_date",
                 "Issue date",
-                if credit {
-                    "Leave empty to set it when you issue."
-                } else {
-                    "Leave empty to use the actual date of issue."
-                },
+                "Leave empty to use the actual date of issue.",
             ),
             (
                 "due_date",
@@ -788,11 +784,7 @@ impl Documents {
             } else {
                 "New invoice - draft"
             },
-            if credit {
-                "A draft has no number and posts nothing until you issue it."
-            } else {
-                "Draft: no ref no and no posting until issued."
-            },
+            "Draft: no ref no and no posting until issued.",
             "cancel_create",
             ModalWidth::Wide,
             &self.flash,

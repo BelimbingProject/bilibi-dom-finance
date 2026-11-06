@@ -228,7 +228,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     clearance::jobs_settle(&client).await?;
     let refreshed = event(&mut detail, &manager, json!({"type":"refresh"})).await?;
     has(&refreshed, "Status read from the authority: valid.");
-    has(&refreshed, "sandbox");
+    has(&refreshed, "Sandbox");
     has(&refreshed, "einvoice-document-qr");
     has(&refreshed, "Needs attention");
     let pdf = event(&mut detail, &manager, json!({"type":"generate_pdf"})).await?;

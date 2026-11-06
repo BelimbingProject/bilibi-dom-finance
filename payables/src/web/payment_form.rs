@@ -361,10 +361,10 @@ impl PaymentForm {
             field("date", "date", "Payment date", &d.date)
                 .kind(InputKind::Date)
                 .required(),
-            field("party", "party", "Vendor / historical supplier key", &d.party)
+            field("party", "party", "Supplier", &d.party)
                 .kind(InputKind::Select)
-                .prompt("Choose a vendor or historical key")
-                .hint("Pay each historical supplier key separately, even when matched to the same vendor.")
+                .prompt("Choose a supplier")
+                .hint("Bills under different supplier keys are paid separately, even when they match the same supplier.")
                 .options(
                     self.owed
                         .iter()

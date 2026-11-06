@@ -307,15 +307,15 @@ impl State {
         };
         let (title, subtitle) = match self.operation {
             "consolidation" => (
-                "E-invoice Consolidation",
+                "E-invoice consolidation",
                 "One consolidated document reports a month's sales that no buyer asked an individual e-invoice for.",
             ),
             "reconciliation" => (
-                "E-invoice Reconciliation",
+                "E-invoice reconciliation",
                 "Validated documents without a ledger entry, and entries whose document is cancelled.",
             ),
             _ => (
-                "E-invoice Setup",
+                "E-invoice setup",
                 "Credentials, certificate, and supplier profile for this company.",
             ),
         };
@@ -400,13 +400,13 @@ impl State {
         let window = if c.open {
             (
                 "einvoice-consolidation-open",
-                "open now",
+                "Open now",
                 BadgeKind::Success,
             )
         } else {
             (
                 "einvoice-consolidation-closed",
-                "not open now",
+                "Not open now",
                 BadgeKind::Warning,
             )
         };
@@ -420,7 +420,7 @@ impl State {
             vec![
                 ("Covers documents issued", covered),
                 ("May be issued until", closes),
-                ("Environment", Html::text(&c.environment)),
+                ("Environment", Html::text(&super::sentence(&c.environment))),
                 ("Documents", Html::text(&c.documents.len().to_string())),
                 (
                     "Tax exclusive",
@@ -604,7 +604,7 @@ impl State {
         let mut connection = facts(
             "einvoice-connection-facts",
             vec![
-                ("Environment", Html::text(&s.environment)),
+                ("Environment", Html::text(&super::sentence(&s.environment))),
                 (
                     "Client ID",
                     Html::text(if s.client_id_set { "Set" } else { "Not set" }),
@@ -637,22 +637,61 @@ impl State {
         let mut parts = vec![section(
             "einvoice-connection",
             "Connection",
-            "Values are edited under Settings, in the e-invoice group, with this company chosen.",
+            "Change these in System settings, in the e-invoice group, for this company.",
             false,
             connection,
         )?];
         let certificate = match &s.certificate {
-            CertificateSetup::Missing => render(EmptyState::missing("No certificate", "Store the company's certificate and private key as PEM in the e-invoice settings.").id("einvoice-certificate-missing"))?,
-            CertificateSetup::Unreadable => render(EmptyState::missing("Certificate unreadable", "The stored certificate is not a PEM-encoded X.509 certificate. Store it again.").id("einvoice-certificate-invalid"))?,
-            CertificateSetup::Facts(c) => facts("einvoice-certificate-facts", vec![
-                ("Issuer", Html::text(&c.issuer_name)), ("Serial number", Html::text(&c.serial_number)),
-                ("TIN on certificate", Html::text(c.tax_id.as_deref().unwrap_or("—"))),
-                ("Registration number on certificate", Html::text(c.registration_number.as_deref().unwrap_or("—"))),
-                ("Valid until", instant("einvoice-certificate-expiry", c.not_after, display)?),
-                ("Days left", Html::text(&c.days_until_expiry.to_string())),
-                ("Private key", Html::text(if c.private_key_matches { "Matches the certificate" } else { "Missing or does not match the certificate" })),
-                ("Supplier TIN", Html::text(if s.tax_id_matches_certificate { "Matches the certificate" } else { "Differs from the certificate" })),
-            ])?,
+            CertificateSetup::Missing => render(
+                EmptyState::missing(
+                    "No certificate",
+                    "Add the company's certificate and private key in the e-invoice settings.",
+                )
+                .id("einvoice-certificate-missing"),
+            )?,
+            CertificateSetup::Unreadable => render(
+                EmptyState::missing(
+                    "Certificate unreadable",
+                    "The stored certificate cannot be read as an X.509 certificate. Add it again.",
+                )
+                .id("einvoice-certificate-invalid"),
+            )?,
+            CertificateSetup::Facts(c) => facts(
+                "einvoice-certificate-facts",
+                vec![
+                    ("Issuer", Html::text(&c.issuer_name)),
+                    ("Serial number", Html::text(&c.serial_number)),
+                    (
+                        "TIN on certificate",
+                        Html::text(c.tax_id.as_deref().unwrap_or("—")),
+                    ),
+                    (
+                        "Registration number on certificate",
+                        Html::text(c.registration_number.as_deref().unwrap_or("—")),
+                    ),
+                    (
+                        "Valid until",
+                        instant("einvoice-certificate-expiry", c.not_after, display)?,
+                    ),
+                    ("Days left", Html::text(&c.days_until_expiry.to_string())),
+                    (
+                        "Private key",
+                        Html::text(if c.private_key_matches {
+                            "Matches the certificate"
+                        } else {
+                            "Missing or does not match the certificate"
+                        }),
+                    ),
+                    (
+                        "Supplier TIN",
+                        Html::text(if s.tax_id_matches_certificate {
+                            "Matches the certificate"
+                        } else {
+                            "Differs from the certificate"
+                        }),
+                    ),
+                ],
+            )?,
         };
         parts.push(section(
             "einvoice-certificate",
@@ -1003,9 +1042,9 @@ struct WindowBadge<'a> {
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
-            "consolidation" => Some("E-invoice Consolidation"),
-            "reconciliation" => Some("E-invoice Reconciliation"),
-            "setup" => Some("E-invoice Setup"),
+            "consolidation" => Some("E-invoice consolidation"),
+            "reconciliation" => Some("E-invoice reconciliation"),
+            "setup" => Some("E-invoice setup"),
             _ => None,
         }
     }

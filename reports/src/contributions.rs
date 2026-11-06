@@ -73,7 +73,7 @@ bilibi_menu::contribute!(
 
 bilibi_menu::contribute!(
     "finance/reports",
-    bilibi_menu::MenuItem::page("finance.reports", "Financial reports", "/finance/reports")
+    bilibi_menu::MenuItem::page("finance.reports", "Reports", "/finance/reports")
         .company_scoped()
         .icon("gmdi-money-r")
         .under("finance.group.bookkeeping")

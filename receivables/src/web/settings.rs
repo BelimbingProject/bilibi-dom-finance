@@ -543,7 +543,7 @@ impl Settings {
                     "/system/settings?company={}&search=Invoice+logo",
                     Pages::company(scope).unwrap_or(0)
                 ),
-                "Upload or remove the invoice logo (administrator)",
+                "Change the invoice logo",
             )?,
         ));
         body.push(&render(Card {

@@ -63,8 +63,8 @@ impl Bills {
         let columns = [
             ("number", "Number"),
             ("document_type", "Type"),
-            ("party", "Party"),
-            ("party_document_number", "Party's number"),
+            ("party", "Supplier"),
+            ("party_document_number", "Supplier's invoice number"),
             ("document_date", "Date"),
             ("total", "Total"),
             ("source", "Source"),
@@ -171,7 +171,7 @@ impl Bills {
                     "search",
                     "Search bills",
                     &self.list.search,
-                    "Search by party or party's number…",
+                    "Search by supplier or invoice number…",
                 ),
                 ToolbarControl::select(
                     "payables-bills-source",
@@ -193,11 +193,11 @@ impl Bills {
                     &self.list.filters["status"],
                     [
                         ("All statuses", ""),
-                        ("draft", "draft"),
-                        ("approved", "approved"),
-                        ("held", "held"),
-                        ("posted", "posted"),
-                        ("voided", "voided"),
+                        ("Draft", "draft"),
+                        ("Approved", "approved"),
+                        ("Held", "held"),
+                        ("Posted", "posted"),
+                        ("Voided", "voided"),
                     ]
                     .map(|(l, v)| Choice::new(l, v))
                     .to_vec(),

@@ -148,7 +148,7 @@ impl Payments {
     pub(super) fn body(&self) -> Result<String> {
         let actions = if self.can_submit {
             render(CreateButton {
-                noun: "Payment request",
+                noun: "Payment",
                 href: NEW_PAYMENT,
                 id: "payables-payments-new",
                 ..CreateButton::default()
@@ -163,7 +163,7 @@ impl Payments {
                 ToolbarControl::search(
                     "payables-payments-search",
                     "search",
-                    "Search payment requests",
+                    "Search payments",
                     &self.list.search,
                     "Search by supplier, reference or number…",
                 ),
@@ -187,8 +187,8 @@ impl Payments {
         content.push(&render(toolbar)?);
         if self.unavailable {
             let mut empty = EmptyState::missing(
-                "Payment requests unavailable",
-                "This company's payment requests cannot be read with your current access.",
+                "Payments unavailable",
+                "This company's payments cannot be read with your current access.",
             );
             empty.id = "payables-payments-unavailable".into();
             content.push(&render(empty)?);
@@ -253,16 +253,19 @@ impl Payments {
             let mut table =
                 FlexTable::new("payables-payments-table", self.columns.flex_columns(), rows);
             table.event = "payments_grid";
-            table.caption = "Payment requests";
+            table.caption = "Payments";
             table.framed = false;
             table.zoom = self.columns.zoom;
             table.suggestions = self.columns.flex_suggestions();
             table.add_query = &self.columns.add_query;
-            table.empty = Some(TableEmpty::Content(Html::text(if self.can_submit {
-                "No payment requests match. Request a payment to a supplier to start."
-            } else {
-                "No payment requests match."
-            })));
+            let filtered = !self.list.search.is_empty() || !self.list.filters["status"].is_empty();
+            table.empty = Some(TableEmpty::Content(Html::text(
+                match (filtered, self.can_submit) {
+                    (true, _) => "No payments match.",
+                    (false, true) => "No payments yet. Request a payment to a supplier to start.",
+                    (false, false) => "No payments yet.",
+                },
+            )));
             content.push(&render(table)?);
             let mut pager = Pagination::new(
                 "payables-payments-pagination",

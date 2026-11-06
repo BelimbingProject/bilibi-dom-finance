@@ -586,8 +586,6 @@ impl Journals {
         let mut body = Html::EMPTY;
         let mut actions = Html::EMPTY;
         let mut shown = 0;
-        let guidance =
-            "A submitted journal waits for the approvals required by the company’s journal rules.";
         if Pages::company(scope).is_none() {
             body.push(&no_company("ledger-journals-no-company")?);
         } else {
@@ -630,7 +628,7 @@ impl Journals {
         }
         let mut page = render(Header {
             title: Html::text("Journals"),
-            subtitle: guidance,
+            subtitle: "",
             title_actions: bilibi_ui::Html::EMPTY,
             actions,
         })?;
@@ -638,7 +636,7 @@ impl Journals {
         if self.draft.is_some() && can_submit {
             let accounts = self.pages.chart(scope).await?.unwrap_or_default();
             let form = self.form(&accounts)?;
-            // The line rule, then the approval guidance the page header shows.
+            // The line rule.
             let lines = "Each line takes an account and one amount, a debit or a credit. Debits and credits must balance.";
             let (title, description) = match self.draft.as_ref().and_then(|d| d.replaces.as_ref()) {
                 Some(replaces) => (
@@ -648,7 +646,7 @@ impl Journals {
                         replaces.number
                     ),
                 ),
-                None => ("New manual journal".into(), format!("{lines} {guidance}")),
+                None => ("New manual journal".into(), lines.to_owned()),
             };
             page.push(&render(Modal {
                 id: "ledger-journal-modal",

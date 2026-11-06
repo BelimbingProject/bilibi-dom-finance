@@ -118,7 +118,7 @@ impl State {
                         ("entry", "Entry"),
                         ("date", "Entry date"),
                         ("total", "Total"),
-                        ("standing", "Standing"),
+                        ("standing", "Status"),
                         ("reason", "Reversal reason"),
                     ],
                 ),
@@ -544,7 +544,7 @@ impl State {
         if self.pages.payroll.people_available() {
             parts.extend(self.source_parts(scope).await?);
         } else {
-            parts.push(render(EmptyState::missing("No payroll or claims source is installed", "Runs and claims are listed once the People Domain is mounted. The postings already made are listed below.").id("payroll-source-unavailable"))?);
+            parts.push(render(EmptyState::missing("Payroll is not in use", "Payroll runs and claims appear here once payroll is in use. The postings already made are listed below.").id("payroll-source-unavailable"))?);
         }
         let payroll = self.pages.payroll.clone();
         let company = company(scope)?;
@@ -600,8 +600,8 @@ impl State {
                     } else {
                         "Claim"
                     };
-                    let standing = posting.reversal.as_ref().map_or("posted".into(), |r| {
-                        format!("reversed by entry {}", r.entry_number)
+                    let standing = posting.reversal.as_ref().map_or("Posted".into(), |r| {
+                        format!("Reversed by entry {}", r.entry_number)
                     });
                     let mut row = row(
                         &format!("payroll-posting-{}", posting.id),
@@ -729,15 +729,15 @@ impl State {
                         let failure = source["last_failure"]["reason"].as_str();
                         let standing = if posted {
                             format!(
-                                "{}entry {}{}",
-                                if reversed { "reversed (" } else { "" },
+                                "{}ntry {}{}",
+                                if reversed { "Reversed (e" } else { "E" },
                                 posting["entry_number"],
                                 if reversed { ")" } else { "" }
                             )
                         } else if failure.is_some() {
-                            "failed".into()
+                            "Failed".into()
                         } else {
-                            "not posted".into()
+                            "Not posted".into()
                         };
                         let mut cells = vec![
                             (
@@ -1044,9 +1044,9 @@ impl State {
                     )
                     .kind(InputKind::Select)
                     .options(choices(&[
-                        ("earning", "earning"),
-                        ("deduction", "deduction"),
-                        ("employer", "employer"),
+                        ("earning", "Earning"),
+                        ("deduction", "Deduction"),
+                        ("employer", "Employer"),
                     ])),
                 );
             }

@@ -149,7 +149,7 @@ route!(
 );
 menu!(
     "finance.payables.vendors",
-    "Vendors",
+    "Suppliers",
     "/finance/payables/vendors",
     "iconoir-send-dollars",
     0,
@@ -296,14 +296,14 @@ impl Pages {
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
-            "vendors" => Some("Vendors"),
+            "vendors" => Some("Suppliers"),
             "bills" => Some("Bills"),
             "bill" => Some("Bill"),
             "bill_new" => Some("Record a bill"),
             "note_new" => Some("Record a debit note"),
             "payments" => Some("Payments"),
             "payment_new" => Some("Request a payment"),
-            "payment" => Some("Payment request"),
+            "payment" => Some("Payment"),
             "aged" => Some("Aged payables"),
             "setup" => Some("Payables setup"),
             _ => None,
