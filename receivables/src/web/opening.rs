@@ -207,6 +207,10 @@ impl Opening {
     pub(super) async fn body(&mut self, scope: &Scope) -> Result<Html> {
         let mut page = Html::EMPTY;
         let company = scope.current_company().ok_or(Error::Invalid)?.get();
+        // A refused context read leaves the dialog with no form, so its
+        // refusal is the dialog's own alert, not a flash that floats over it.
+        let mut refusal = None;
+        let mut opening_journal = false;
         let context = match self
             .pages
             .contracts
@@ -223,11 +227,13 @@ impl Opening {
                         self.fields
                             .values()
                             .flatten()
-                            .cloned()
+                            .map(|m| bilibi_ui::error_sentence("", m))
                             .collect::<Vec<_>>()
                             .join(" "),
                     ));
                 }
+                opening_journal = self.fields.contains_key("opening");
+                refusal = self.message.take().map(|(_, message)| message);
                 Value::Null
             }
         };
@@ -245,6 +251,14 @@ impl Opening {
             id: "conversion-flash",
             flash,
         })?);
+        if let Some(refusal) = &refusal {
+            page.push(&render(Alert {
+                id: "conversion-refused",
+                kind: StatusKind::Error,
+                class: "mb-4",
+                body: Html::text(refusal),
+            })?);
+        }
         if !context.is_null() {
             let c = self.pages.db.get().await?;
             let allowed = bilibi_authz::decide(&**c, scope, ISSUE).await?.allowed;
@@ -586,17 +600,27 @@ impl Opening {
             }
         }
         // The form carries the dialog's only Cancel. Without it (the context
-        // read was refused, or the person may not issue) the dialog still
-        // needs a way out: its flash can be dismissed, which would leave an
-        // open modal with nothing to press.
+        // read was refused, or the person may not import) the dialog still
+        // needs a way out, and a refusal that waits on the opening journal
+        // says where to approve it.
         if !has_form {
-            page.push(&super::format::actions(render(Button {
+            let mut buttons = render(Button {
                 id: "conversion-close",
                 button_type: "button",
                 event: "close_opening",
                 body: Html::text("Close"),
                 ..Button::default()
-            })?)?);
+            })?;
+            if opening_journal {
+                buttons.push(&render(Button {
+                    id: "conversion-opening-journal",
+                    href: "/finance/ledger/journals?source=opening",
+                    variant: ButtonVariant::Primary,
+                    body: Html::text("Go to opening journal"),
+                    ..Button::default()
+                })?);
+            }
+            page.push(&super::format::actions(buttons)?);
         }
         if let Some(review) = &self.review {
             let facts = &review.facts;

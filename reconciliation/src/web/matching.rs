@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     BankAccount, LedgerItem, Match, MatchStatus, NewMatch, OpeningItem, PageOptions,
-    StatementLineItem, MANAGE_MATCHES,
+    StatementLineItem, IMPORT_STATEMENTS, MANAGE_MATCHES,
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -19,8 +19,8 @@ use bilibi_datetime::{Format, Precision};
 use bilibi_finance_ledger::{LedgerError, MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, BuiltinColumn, Cell, EmptyState, Field, FlashMap, FlexRow, FlexTable, Html,
-    Instant, ListColumns, RowMode, StatusKind, TableEmpty,
+    page::*, params, BuiltinColumn, Button, ButtonVariant, Cell, EmptyState, Field, FlashMap,
+    FlexRow, FlexTable, Html, Instant, ListColumns, RowMode, StatusKind, TableEmpty,
 };
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,6 +38,10 @@ struct Loaded {
     matches: Vec<Match>,
     units: u8,
     can_match: bool,
+    /// Whether any statement was ever imported: with none, an empty lines
+    /// list is not "every line matched" but "nothing to match yet".
+    has_statements: bool,
+    can_import: bool,
 }
 
 pub(super) struct Matching {
@@ -296,6 +300,23 @@ impl Matching {
             Err(LedgerError::Failed(e)) => return Err(e),
             Err(_) => 2,
         };
+        let has_statements = !unmatched.lines.is_empty()
+            || match told(
+                r.list_statements(
+                    scope,
+                    company,
+                    self.id,
+                    &PageOptions {
+                        limit: Some(1),
+                        after: None,
+                    },
+                )
+                .await,
+            )? {
+                Ok(statements) => !statements.is_empty(),
+                // Unreadable here means unknown: keep the matched wording.
+                Err(_) => true,
+            };
         let lines: BTreeSet<i64> = unmatched.lines.iter().map(|l| l.line.id).collect();
         let entries: BTreeSet<i64> = unmatched.entries.iter().map(|e| e.entry_id).collect();
         self.selected_lines.retain(|id| lines.contains(id));
@@ -309,6 +330,8 @@ impl Matching {
             matches,
             units,
             can_match: self.pages.allowed(scope, MANAGE_MATCHES).await?,
+            has_statements,
+            can_import: self.pages.allowed(scope, IMPORT_STATEMENTS).await?,
         });
         Ok(())
     }
@@ -518,7 +541,7 @@ impl Matching {
         event: &'static str,
         rows: Vec<FlexRow>,
         actions: bool,
-        empty: (&str, &str),
+        empty: EmptyState,
     ) -> Result<Html> {
         let mut table = FlexTable::new(&columns.id, columns.flex_columns(), rows);
         table.event = event;
@@ -527,7 +550,7 @@ impl Matching {
         table.zoom = columns.zoom;
         table.suggestions = columns.flex_suggestions();
         table.add_query = &columns.add_query;
-        table.empty = Some(TableEmpty::State(EmptyState::missing(empty.0, empty.1)));
+        table.empty = Some(TableEmpty::State(empty));
         render(table)
     }
 
@@ -587,10 +610,32 @@ impl Matching {
             "lines_grid",
             rows,
             false,
-            (
-                "Every statement line is matched",
-                "Import the next statement to continue.",
-            ),
+            if l.has_statements {
+                EmptyState::missing(
+                    "Every statement line is matched",
+                    "Import the next statement to continue.",
+                )
+            } else {
+                let empty = EmptyState::missing(
+                    "No statement lines yet",
+                    "Import a statement for this bank account, then match its lines here.",
+                );
+                if l.can_import {
+                    let href = format!(
+                        "/finance/reconciliation/accounts/{}#statement-import",
+                        l.account.id
+                    );
+                    empty.action(render(Button {
+                        id: "matching-import-statement",
+                        href: &href,
+                        variant: ButtonVariant::Primary,
+                        body: Html::text("Import statement"),
+                        ..Button::default()
+                    })?)
+                } else {
+                    empty
+                }
+            },
         )?;
 
         let mode = self.entries_columns.mode();
@@ -629,7 +674,7 @@ impl Matching {
             "entries_grid",
             rows,
             false,
-            (
+            EmptyState::missing(
                 "Every entry on this account is matched",
                 "Entries posted to the bank account appear here until a statement line matches them.",
             ),
@@ -694,7 +739,7 @@ impl Matching {
             "matches_grid",
             rows,
             true,
-            (
+            EmptyState::missing(
                 "No standing matches",
                 "Matches made above are listed here and can be unmatched with a reason.",
             ),
