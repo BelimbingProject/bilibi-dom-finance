@@ -22,6 +22,7 @@ bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true
 bilibi-queue.workspace = true
 bilibi-settings.workspace = true
+bilibi-principal-directory.workspace = true
 bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true
 # The PUT method of a cancellation: Base Integration's `Outgoing` names

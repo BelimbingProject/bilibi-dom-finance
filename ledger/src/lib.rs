@@ -117,7 +117,7 @@ pub const SERVICE: &str = "finance/ledger.ledger";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/records", "base/settings", "base/tenancy", "base/ui", "base/workflow", "core/company", "core/person", "core/party", "core/currency"],
+        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/settings", "base/tenancy", "base/ui", "base/workflow", "core/company", "core/person", "core/party", "core/currency"],
         migrations: &[
             ("finance-ledger-001-books-and-accounts", include_str!("../migrations/001-books-and-accounts.sql")),
             ("finance-ledger-002-entries", include_str!("../migrations/002-entries.sql")),
@@ -152,6 +152,7 @@ inventory::submit! {
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
                 parties: services.get("base/tenancy.parties")?,
+                directory: services.get(people::DIRECTORY)?,
             }))))
         } }],
     }
@@ -4180,6 +4181,10 @@ pub use bilibi_tenancy::PartyIdentity;
 pub use party_links::{PartyFacts, PartyLinks, PartyTarget};
 
 mod party_picker;
+mod people;
+pub use people::{People, DIRECTORY as PEOPLE};
+mod record_page;
+pub use record_page::{AccountName, DocumentLayout, EntryLink, RecordAction, RecordActions};
 pub use party_picker::{
     party_billing_lines, record_relationship as record_party_relationship,
     relation as party_relation, relationship_flash as party_relationship_flash, MultiPartyChooser,

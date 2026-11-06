@@ -405,7 +405,6 @@ impl Credits {
         let _ = (pages, record);
         render(Card {
             id: "credit-settlement-card",
-            class: "mt-4",
             body,
             ..Card::default()
         })

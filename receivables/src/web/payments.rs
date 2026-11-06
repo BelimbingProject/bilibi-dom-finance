@@ -13,7 +13,7 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome,
+    params, Attrs, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox,
     CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
     InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
     RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
@@ -89,6 +89,12 @@ pub(super) struct Payments {
     cut: bool,
     can_record: bool,
     draft: Option<Draft>,
+    /// The invoice an address asked to record a receipt for (`?receive=`),
+    /// as an invoice's own "Record receipt" sends it here.
+    receive: Option<i64>,
+    /// The customer an address asked to record a receipt from (`?customer=`),
+    /// as a customer's own page sends it here.
+    receive_from: Option<i64>,
     flash: Flash,
     framed: bool,
 }
@@ -120,14 +126,84 @@ impl Payments {
             cut: false,
             can_record: false,
             draft: None,
+            receive: params::positive_id(query.get("receive").map(String::as_str)),
+            receive_from: params::positive_id(query.get("customer").map(String::as_str)),
             flash: Flash::default(),
             framed,
         })
     }
 
     pub(super) async fn first(&mut self, scope: &Scope) -> Result<String> {
-        self.load(scope).await?;
+        self.mounted(scope).await?;
         self.body()
+    }
+
+    /// Load, then open Record receipt on the invoice the address named.
+    pub(super) async fn mounted(&mut self, scope: &Scope) -> Result<()> {
+        self.load(scope).await?;
+        if let Some(invoice) = self.receive.take() {
+            self.start_receipt(scope, Some(invoice)).await?;
+        } else if let Some(customer) = self.receive_from.take() {
+            self.start_receipt(scope, None).await?;
+            let open = self.open_invoices(scope, &customer.to_string()).await?;
+            if let Some(draft) = &mut self.draft {
+                draft
+                    .values
+                    .insert("customer_id".into(), customer.to_string());
+                draft.open = open;
+            }
+        }
+        Ok(())
+    }
+
+    /// Open the Record receipt dialog: today, the only open series, and for
+    /// an invoice, its customer with what it still owes applied to it.
+    async fn start_receipt(&mut self, scope: &Scope, invoice: Option<i64>) -> Result<()> {
+        if !self.can_record {
+            self.flash.set(StatusKind::Error, DENIED);
+            return Ok(());
+        }
+        let mut values =
+            HashMap::from([("payment_date".to_owned(), self.pages.today(scope).await)]);
+        let mut open = self
+            .series
+            .iter()
+            .filter(|s| s.kind == "payment" && s.active);
+        if let (Some(only), None) = (open.next(), open.next()) {
+            values.insert("series_id".into(), only.id.to_string());
+        }
+        let mut owed = vec![];
+        if let Some(id) = invoice {
+            let invoice: Option<Document> = self
+                .pages
+                .read(
+                    scope,
+                    "finance.receivables.document.get",
+                    json!({"document_id": id}),
+                )
+                .await
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok());
+            match invoice.filter(|d| d.outstanding.is_some_and(|m| m.is_positive())) {
+                Some(d) => {
+                    let customer = d.customer_id.to_string();
+                    owed = self.open_invoices(scope, &customer).await?;
+                    let due = d.outstanding.map(|m| self.figures.shown(m)).unwrap_or_default();
+                    values.insert("customer_id".into(), customer);
+                    values.insert("amount".into(), due.clone());
+                    values.insert(format!("alloc_{}", d.id), due);
+                }
+                None => self
+                    .flash
+                    .set(StatusKind::Info, "That invoice owes nothing now."),
+            }
+        }
+        self.draft = Some(Draft {
+            values,
+            open: owed,
+            errors: Errors::default(),
+        });
+        Ok(())
     }
 
     async fn load(&mut self, scope: &Scope) -> Result<()> {
@@ -406,7 +482,7 @@ impl Payments {
         let customers: Vec<Choice> = self
             .customers
             .iter()
-            .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.id.to_string()))
+            .map(|c| Choice::new(&c.name, c.id.to_string()).detail(&c.code))
             .collect();
         let series: Vec<Choice> = self
             .series
@@ -418,19 +494,21 @@ impl Payments {
             .accounts
             .iter()
             .filter(|a| a.postable() && a.account_type == "asset" && Some(a.id) != self.control)
-            .map(|a| Choice::new(a.label(), a.id.to_string()))
+            .map(Account::choice)
             .collect();
         let mut who = Html::EMPTY;
         who.push(&render(
-            Field::in_form("receipt", "customer_id")
-                .id("receivables-receipt-customer_id")
-                .label("Customer")
-                .kind(InputKind::Select)
-                .prompt("Choose a customer")
+            Combobox::new("receivables-receipt-customer_id", "receipt[customer_id]")
+                .label("Customer *")
+                .aria_label("Customer")
+                .placeholder("Choose a customer")
                 .options(customers)
                 .value(value("customer_id"))
-                .required()
-                .errors(draft.errors.under("customer_id", "Customer")),
+                .errors(draft.errors.under("customer_id", "Customer"))
+                .attrs(Attrs {
+                    required: true,
+                    ..Attrs::default()
+                }),
         )?);
         who.push(&render(
             Field::in_form("receipt", "series_id")
@@ -471,15 +549,20 @@ impl Payments {
         body.push(&f::two(money)?);
         let mut deposit = Html::EMPTY;
         deposit.push(&render(
-            Field::in_form("receipt", "deposit_account_id")
-                .id("receivables-receipt-deposit_account_id")
-                .label("Deposited to")
-                .kind(InputKind::Select)
-                .prompt("Choose the bank or cash account")
-                .options(deposits)
-                .value(value("deposit_account_id"))
-                .required()
-                .errors(draft.errors.under("deposit_account_id", "Deposited to")),
+            Combobox::new(
+                "receivables-receipt-deposit_account_id",
+                "receipt[deposit_account_id]",
+            )
+            .label("Deposited to *")
+            .aria_label("Deposited to")
+            .placeholder("Choose the bank or cash account")
+            .options(deposits)
+            .value(value("deposit_account_id"))
+            .errors(draft.errors.under("deposit_account_id", "Deposited to"))
+            .attrs(Attrs {
+                required: true,
+                ..Attrs::default()
+            }),
         )?);
         deposit.push(&render(
             Field::in_form("receipt", "reference")
@@ -643,26 +726,7 @@ impl Payments {
                     self.list.next_sort(&column);
                 }
             }
-            "show_record" => {
-                if self.can_record {
-                    let mut values =
-                        HashMap::from([("payment_date".to_owned(), self.pages.today(scope).await)]);
-                    let mut open = self
-                        .series
-                        .iter()
-                        .filter(|s| s.kind == "payment" && s.active);
-                    if let (Some(only), None) = (open.next(), open.next()) {
-                        values.insert("series_id".into(), only.id.to_string());
-                    }
-                    self.draft = Some(Draft {
-                        values,
-                        open: vec![],
-                        errors: Errors::default(),
-                    });
-                } else {
-                    self.flash.set(StatusKind::Error, DENIED);
-                }
-            }
+            "show_record" => self.start_receipt(scope, None).await?,
             "cancel_record" => self.draft = None,
             "receipt_change" => {
                 let form = params::form_values(v, "receipt");

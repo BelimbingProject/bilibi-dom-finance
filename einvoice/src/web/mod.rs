@@ -64,6 +64,19 @@ pub(crate) struct Pages {
     pub einvoice: Arc<Einvoice>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
+}
+
+impl Pages {
+    /// The names of the people a page mentions.
+    pub(crate) async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<bilibi_finance_ledger::People> {
+        let client = self.einvoice.db.get().await?;
+        Ok(bilibi_finance_ledger::People::read(&self.directory, &**client, scope, ids).await)
+    }
 }
 
 fn company(scope: &Scope) -> Result<i64> {

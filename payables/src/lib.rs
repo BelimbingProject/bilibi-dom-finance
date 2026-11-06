@@ -56,7 +56,7 @@ pub const DOCUMENT_SOURCE: &str = "finance/payables/document";
 
 inventory::submit! { Module {
     id: MODULE, layer: Layer::Domains,
-    dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/locale", "base/menu", "base/party_ids", "base/records", "base/tenancy", "base/ui", "core/company", "finance/attachments", "finance/ledger"],
+    dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/company", "finance/attachments", "finance/ledger"],
     migrations: &[
         ("finance-payables-001-documents", include_str!("../migrations/001-documents.sql")),
         ("finance-payables-002-payments", include_str!("../migrations/002-payments.sql")),
@@ -85,6 +85,7 @@ inventory::submit! { Module {
         ledger: s.get(bilibi_finance_ledger::SERVICE)?,
         display: s.get("base/datetime.display")?,
         locales: s.get("base/locale.locales")?,
+        directory: s.get(bilibi_finance_ledger::PEOPLE)?,
     })))) }],
 } }
 

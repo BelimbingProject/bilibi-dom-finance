@@ -98,7 +98,7 @@ inventory::submit! {
         dependencies: &[
             "base/agent_api", "base/artifacts", "base/audit", "base/authz", "base/database", "base/integration",
             "base/datetime", "base/locale", "base/menu", "base/ui",
-            "base/party_ids", "base/queue", "base/settings", "base/tenancy", "core/company",
+            "base/party_ids", "base/principal_directory", "base/queue", "base/settings", "base/tenancy", "core/company",
             "finance/ledger",
         ],
         migrations: &[
@@ -126,6 +126,7 @@ inventory::submit! {
                     einvoice: services.get(SERVICE)?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
+                    directory: services.get(bilibi_finance_ledger::PEOPLE)?,
                 }))
             )) },
             Service { id: web::FILES, factory: |services| Ok(Arc::new(

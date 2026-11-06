@@ -6,7 +6,7 @@
 use super::{
     dialog_actions, error_text, event_type, figure, instant,
     journals::{status_badge, INDEX},
-    no_company, render, shell, unavailable, view, who, Announce, EntryLink, Failure, Flash,
+    no_company, render, shell, unavailable, view, Announce, EntryLink, Failure, Flash,
     JournalLink, Pages, Read, Refusal, Review,
 };
 use crate::{APPROVE_JOURNALS, SUBMIT_JOURNALS};
@@ -157,6 +157,18 @@ impl Journal {
             .map_or(2, |b| b.minor_units);
         let chart = self.pages.chart(scope).await?.unwrap_or_default();
         let display = self.pages.display(scope).await?;
+        let people = self
+            .pages
+            .people(
+                scope,
+                [
+                    Some(journal.submitted_by_user_id),
+                    journal.submitted_by_impersonator_id,
+                    journal.decision.as_ref().map(|d| d.actor_user_id),
+                    journal.decision.as_ref().and_then(|d| d.actor_impersonator_id),
+                ],
+            )
+            .await?;
         let can_decide = self.pages.allowed(scope, APPROVE_JOURNALS).await?;
         let can_submit = self.pages.allowed(scope, SUBMIT_JOURNALS).await?;
         let waiting = journal.status == "submitted";
@@ -253,8 +265,8 @@ impl Journal {
             Fact {
                 title: "Submitted by",
                 id: "ledger-journal-by",
-                value: Html::text(&who(
-                    journal.submitted_by_user_id,
+                value: Html::text(&people.who(
+                    Some(journal.submitted_by_user_id),
                     journal.submitted_by_impersonator_id,
                 )),
             },
@@ -276,7 +288,10 @@ impl Journal {
                     _ => "Rejected by",
                 },
                 id: "ledger-journal-decided-by",
-                value: Html::text(&who(decision.actor_user_id, decision.actor_impersonator_id)),
+                value: Html::text(&people.who(
+                    Some(decision.actor_user_id),
+                    decision.actor_impersonator_id,
+                )),
             });
             facts.push(Fact {
                 title: match decision.event.as_str() {

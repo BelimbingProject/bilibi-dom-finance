@@ -75,6 +75,7 @@ pub(crate) struct Pages {
     pub plans: Arc<bilibi_agent_api::plans::Plans>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 // Menu group (a bookkeeper's section of the Finance menu); its pages sit under it.
@@ -207,6 +208,16 @@ fn record_id(answer: &Value) -> Option<i64> {
 }
 
 impl Pages {
+    /// The names of the people a page mentions.
+    pub(super) async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<bilibi_finance_ledger::People> {
+        let client = self.db.get().await?;
+        Ok(bilibi_finance_ledger::People::read(&self.directory, &**client, scope, ids).await)
+    }
+
     async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
         let c = self.db.get().await?;
         Ok(bilibi_authz::decide(&**c, scope, capability).await?.allowed)
@@ -328,6 +339,7 @@ impl Page<Scope, Error> for Pages {
                 "bill" => {
                     let mut state = bill::Bill::new(self.clone(), r.path, r.query)?;
                     state.reload(scope).await?;
+                    state.open_requested(scope, "").await?;
                     (state.body(scope).await?, state.title())
                 }
                 "bill_new" | "note_new" => {
@@ -347,8 +359,9 @@ impl Page<Scope, Error> for Pages {
                     (state.body()?, None)
                 }
                 "payment" => {
-                    let mut state = payment::Request::new(self.clone(), r.path)?;
+                    let mut state = payment::Request::new(self.clone(), r.path, r.query)?;
                     state.reload(scope).await?;
+                    state.open_requested(scope).await?;
                     (state.body(scope).await?, state.title())
                 }
                 "aged" => {
@@ -390,7 +403,7 @@ impl Page<Scope, Error> for Pages {
                 )?),
                 "payments" => Box::new(payments::Payments::new(self.clone(), r.query, r.framed)?),
                 "payment_new" => Box::new(payment_form::PaymentForm::new(self.clone(), r.query)?),
-                "payment" => Box::new(payment::Request::new(self.clone(), r.path)?),
+                "payment" => Box::new(payment::Request::new(self.clone(), r.path, r.query)?),
                 "aged" => Box::new(aged::Aged::new(self.clone(), r.query)?),
                 "setup" => Box::new(setup::Setup::new(self.clone())?),
                 _ => return Err(Error::NotFound),

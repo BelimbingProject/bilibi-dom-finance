@@ -59,10 +59,6 @@ pub(super) fn optional(text: &Option<String>) -> &str {
     text.as_deref().filter(|t| !t.is_empty()).unwrap_or("—")
 }
 
-pub(super) fn number(number: Option<i64>) -> String {
-    number.map_or_else(|| "—".into(), |n| format!("#{n}"))
-}
-
 /// A quantity or price without trailing zeros.
 pub(super) fn decimal(value: Decimal) -> String {
     value.normalize().to_string()
@@ -77,13 +73,6 @@ pub(super) fn price(value: Decimal) -> String {
     value.to_string()
 }
 
-pub(super) fn actor(user: Option<i64>, impersonator: Option<i64>) -> String {
-    match (user, impersonator) {
-        (Some(u), Some(i)) => format!("User #{u} (impersonated by #{i})"),
-        (Some(u), None) => format!("User #{u}"),
-        (None, _) => "—".into(),
-    }
-}
 
 pub(super) fn fact<'a>(title: &'a str, value: &str) -> Fact<'a> {
     Fact {
@@ -492,6 +481,17 @@ struct Four {
 )]
 struct Two {
     body: Html,
+}
+
+#[derive(askama::Template)]
+#[template(source = r#"<div class="p-5">{{ body|safe }}</div>"#, ext = "html")]
+struct Padded {
+    body: Html,
+}
+
+/// Facts under a table in a flat card, at the card's own padding.
+pub(super) fn padded(body: Html) -> Result<Html> {
+    render(Padded { body })
 }
 
 /// Fields side by side: four on a wide screen, two on a phone.

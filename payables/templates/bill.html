@@ -1,40 +1,12 @@
-{# Bilimbi Finance.Payables.Web.BillLive. Lists use the shared FlexTable. #}
+{# Bilimbi Finance.Payables.Web.BillLive, laid out as its twin the invoice: the
+   document and its summary side by side (`src/web/bill/view.rs`). #}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 {% import "workspace.html" as workspace %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="payables-bill", variant=bilibi_ui::PageVariant::Detail) %}
 {% call workspace::announce(kind="finance/payables", record_id=record) %}{% endcall %}
-{% call ui::header(subtitle_html=self.subtitle()?, title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
-{% if let Some(attention) = attention %}{{ attention|safe }}{% endif %}
-<div class="grid gap-4 lg:grid-cols-2">
-{% call ui::card(id="payables-bill-party", inner_class="p-5 sm:p-6", role="region", labelledby="payables-bill-party-heading") %}
-{% call ui::section_heading(id="payables-bill-party-heading", title="Party") %}{% endcall %}
-{{ party|safe }}
-{% endcall %}
-{% call ui::card(id="payables-bill-facts", inner_class="p-5 sm:p-6", role="region", labelledby="payables-bill-facts-heading") %}
-{% call ui::section_heading(id="payables-bill-facts-heading", title="Document") %}{% endcall %}
-{{ facts|safe }}
-{% if flash.error.contains("separation of duties") %}{% call ui::button(id="payables-approval-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
-{% endcall %}
-</div>
-{% call ui::card(id="payables-bill-lines", inner_class="p-0", role="region", labelledby="payables-bill-lines-heading") %}
-{% call ui::section_heading(id="payables-bill-lines-heading", title="Lines", class="p-5 pb-0") %}{% endcall %}
-{{ lines|safe }}<div class="p-5">{{ totals|safe }}</div>
-{% endcall %}
-{% if let Some(matches) = matches %}
-{% call ui::card(id="payables-bill-match", inner_class="p-0", role="region", labelledby="payables-bill-match-heading") %}
-{% call ui::section_heading(id="payables-bill-match-heading", title="Three-way match", class="p-5 pb-0", description="What the last match compared, line by line: billed against ordered, and against what was received and not yet billed, within the tolerances in force.") %}{% endcall %}
-{{ matches|safe }}
-{% endcall %}
-{% endif %}
-{% if let Some(events) = events %}
-{% call ui::card(id="payables-bill-match-events", inner_class="p-0", role="region", labelledby="payables-bill-match-events-heading") %}
-{% call ui::section_heading(id="payables-bill-match-events-heading", title="Match history", class="p-5 pb-0") %}{% endcall %}
-{{ events|safe }}
-{% endcall %}
-{% endif %}
-{{ credit_actions|safe }}
-<div id="payables-bill-attachments-slot" data-live-ignore><div id="payables-bill-attachments"></div></div>
+{% call ui::header(subtitle=subtitle, title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
+{% call ui::stack(parts=parts, wide=true) %}{% endcall %}
 {% if let Some(dialog) = dialog %}{{ dialog|safe }}{% endif %}
 {% endcall %}

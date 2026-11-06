@@ -7,7 +7,7 @@ use bilibi_datetime::{
     Clock, DisplayContext, DisplayPolicy, Format, Period, PeriodFilter, Precision,
 };
 use bilibi_finance_ledger::{
-    ApprovalExceptionQuery, LedgerError, MANAGE_CONTROLLED_BOOKKEEPING, MANAGE_DUTY_SEPARATION,
+    ApprovalExceptionQuery, LedgerError, People, MANAGE_CONTROLLED_BOOKKEEPING, MANAGE_DUTY_SEPARATION,
     REVIEW_EXCEPTIONS,
 };
 use bilibi_locale::Locales;
@@ -32,9 +32,20 @@ pub(crate) struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 impl Pages {
+    /// The names of the people a page mentions.
+    async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<People> {
+        let client = self.reports.db.get().await?;
+        Ok(People::read(&self.directory, &**client, scope, ids).await)
+    }
+
     async fn company_name(&self, scope: &Scope) -> Result<String> {
         let Some(company) = scope.current_company() else {
             return Ok(String::new());
@@ -579,6 +590,16 @@ impl State {
             .list_controlled_bookkeeping_changes(scope, company)
             .await?;
         changes.reverse();
+        let people = self
+            .pages
+            .people(
+                scope,
+                changes
+                    .iter()
+                    .chain(controlled.change.iter())
+                    .flat_map(|c| [Some(c.changed_by_user_id), c.changed_by_impersonator_id]),
+            )
+            .await?;
         let can_manage = self.allowed(scope, MANAGE_CONTROLLED_BOOKKEEPING).await?;
         let change = controlled.change.as_ref();
         let mut content = html(Summary {
@@ -600,7 +621,7 @@ impl State {
                 .transpose()?
                 .unwrap_or_default(),
             actor: change
-                .map(|c| actor(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
+                .map(|c| people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
                 .unwrap_or_default(),
             reason: change.and_then(|c| c.reason.as_deref()).unwrap_or(""),
             action: if can_manage {
@@ -649,6 +670,7 @@ impl State {
                         c.changed_by_impersonator_id,
                         c.changed_at,
                         display,
+                        &people,
                         true,
                     )
                 })
@@ -702,6 +724,26 @@ impl State {
                 },
             )
             .await?;
+        let mut mentioned: Vec<Option<i64>> = changes
+            .iter()
+            .chain(separation.change.iter())
+            .flat_map(|c| [Some(c.changed_by_user_id), c.changed_by_impersonator_id])
+            .collect();
+        for e in &exceptions {
+            mentioned.extend([
+                e.prepared_by_user_id,
+                e.prepared_by_impersonator_id,
+                Some(e.approved_by_user_id),
+                e.approved_by_impersonator_id,
+            ]);
+            if let Some(review) = &e.review {
+                mentioned.extend([
+                    Some(review.reviewed_by_user_id),
+                    review.reviewed_by_impersonator_id,
+                ]);
+            }
+        }
+        let people = self.pages.people(scope, mentioned).await?;
         let can_manage = self.allowed(scope, MANAGE_DUTY_SEPARATION).await?;
         let can_review = self.allowed(scope, REVIEW_EXCEPTIONS).await?;
         let change = separation.change.as_ref();
@@ -724,7 +766,7 @@ impl State {
                 .transpose()?
                 .unwrap_or_default(),
             actor: change
-                .map(|c| actor(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
+                .map(|c| people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id))
                 .unwrap_or_default(),
             reason: change.and_then(|c| c.reason.as_deref()).unwrap_or(""),
             action: if can_manage {
@@ -761,6 +803,7 @@ impl State {
                         c.changed_by_impersonator_id,
                         c.changed_at,
                         display,
+                        &people,
                         false,
                     )
                 })
@@ -802,14 +845,14 @@ impl State {
                     ("number", exception.exception_number.to_string()),
                     (
                         "prepared",
-                        actor(
+                        people.who(
                             exception.prepared_by_user_id,
                             exception.prepared_by_impersonator_id,
                         ),
                     ),
                     (
                         "approved",
-                        actor(
+                        people.who(
                             Some(exception.approved_by_user_id),
                             exception.approved_by_impersonator_id,
                         ),
@@ -849,7 +892,7 @@ impl State {
             let review = match &exception.review {
                 Some(review) => html(CellView {
                     id: &format!("exception-review-{}", exception.exception_number),
-                    main: &actor(
+                    main: &people.who(
                         Some(review.reviewed_by_user_id),
                         review.reviewed_by_impersonator_id,
                     ),
@@ -974,6 +1017,19 @@ impl State {
             class: "mt-4 mb-3 flex flex-wrap items-center gap-4",
             content: filters,
         })?);
+        let people = self
+            .pages
+            .people(
+                scope,
+                shown.iter().flat_map(|e| {
+                    [
+                        e["reviewer"].as_i64(),
+                        e["actor"].as_i64(),
+                        e["impersonator"].as_i64(),
+                    ]
+                }),
+            )
+            .await?;
         let mut rows = Vec::new();
         for e in &shown {
             let id = e["id"].as_i64().ok_or(Error::Internal)?;
@@ -985,7 +1041,7 @@ impl State {
                 let by = e["reviewer"].as_i64();
                 Html::text(&format!(
                     "Reviewed by {}. {}",
-                    actor(by, None),
+                    people.who(by, None),
                     e["review_note"].as_str().unwrap_or("")
                 ))
             } else if e["reviewable"] == true {
@@ -1027,7 +1083,7 @@ impl State {
                     )
                     .cell(
                         "who",
-                        bilibi_ui::Cell::text(actor(
+                        bilibi_ui::Cell::text(people.who(
                             e["actor"].as_i64(),
                             e["impersonator"].as_i64(),
                         )),
@@ -1201,13 +1257,6 @@ fn company(scope: &Scope) -> Result<i64> {
 fn html(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
-fn actor(user: Option<i64>, impersonator: Option<i64>) -> String {
-    match (user, impersonator) {
-        (None, _) => "—".into(),
-        (Some(user), None) => format!("User #{user}"),
-        (Some(user), Some(by)) => format!("User #{user} (impersonated by #{by})"),
-    }
-}
 fn button(
     id: &str,
     event: &str,
@@ -1255,6 +1304,7 @@ fn history_row(
     by: Option<i64>,
     at: Timestamp,
     display: &DisplayContext,
+    people: &People,
     bookkeeping: bool,
 ) -> Result<FlexRow> {
     let label = match (bookkeeping, enabled) {
@@ -1268,7 +1318,7 @@ fn history_row(
         &[
             ("set", label.into()),
             ("reason", reason.unwrap_or("—").into()),
-            ("by", actor(Some(user), by)),
+            ("by", people.who(Some(user), by)),
         ],
     )
     .slot(

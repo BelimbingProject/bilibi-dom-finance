@@ -1,18 +1,21 @@
 //! Bilimbi Payables.Web.BillLive. The reviewed hold belongs to the dialog,
 //! not to a subsequent refreshed document or a value supplied by the browser.
+//! The page is drawn in `bill/view.rs`; an address with `?do=void` or
+//! `?do=approve_exception` (the "Actions…" menu) opens that dialog.
+mod view;
+
 use super::{company, format as f, render, Pages, Written};
 use crate::{
-    Document, MatchApproval, PayablesError, APPROVE_DOCUMENTS, APPROVE_MATCH, CREATE_DOCUMENTS,
-    POST_DOCUMENTS, SUBMIT_PAYMENTS,
+    Document, MatchApproval, PayablesError, APPROVE_DOCUMENTS, APPROVE_MATCH, POST_DOCUMENTS,
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::MinorUnits;
+use bilibi_finance_ledger::{MinorUnits, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BadgeKind, BuiltinColumn, ButtonVariant, Cell, EmptyState, Fact, Facts, Field,
-    FlashMap, FlexRow, FlexTable, Html, ListColumns, StatusKind, NO_FLASH,
+    params, BuiltinColumn, ButtonVariant, Field, FlashMap, FlexRow, FlexTable, Html, ListColumns,
+    StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -34,6 +37,8 @@ pub(super) struct Bill {
     credit_actions: super::credits::Credits,
     reason: String,
     flash: Option<(StatusKind, String)>,
+    /// The dialog an address asked for (`?do=`), opened once the bill loads.
+    requested: Option<String>,
     lines: ListColumns,
     matches: ListColumns,
     events: ListColumns,
@@ -57,6 +62,7 @@ impl Bill {
             credit_actions: super::credits::Credits::new()?,
             reason: String::new(),
             flash: None,
+            requested: RecordActions::requested(query),
             lines: columns(
                 "payables-bill-lines-table",
                 &[
@@ -146,6 +152,21 @@ impl Bill {
         Ok(())
     }
 
+    /// Opens the dialog an address asked for, as its menu item's link does.
+    pub(super) async fn open_requested(&mut self, scope: &Scope, credential: &str) -> Result<()> {
+        if let Some(action) = self.requested.take() {
+            if matches!(action.as_str(), "void" | "approve_exception") && self.document.is_some() {
+                self.event(
+                    scope,
+                    credential,
+                    &json!({"type": "open_dialog", "dialog": action}),
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// `Bill #3`, or `Bill from Acme` while it has no number to name it by.
     fn heading(&self, d: &Document) -> String {
         match d.document_number {
@@ -159,415 +180,6 @@ impl Bill {
             Some(_) => format!("{} from {}", self.heading(d), d.party.name),
             None => self.heading(d),
         })
-    }
-
-    pub(super) async fn body(&self, scope: &Scope) -> Result<String> {
-        let mut flash = NO_FLASH;
-        if let Some((kind, message)) = &self.flash {
-            match kind {
-                StatusKind::Success => flash.success = message,
-                StatusKind::Warning => flash.warning = message,
-                StatusKind::Error => flash.error = message,
-                StatusKind::Info => flash.info = message,
-            }
-        }
-        let Some(d) = &self.document else {
-            let mut missing = EmptyState::missing(
-                "Document not found",
-                "There is no such document for this company, or it cannot be read with your current access.",
-            );
-            missing.id = "payables-bill-missing".into();
-            missing.action = render(AllBills)?;
-            return Missing {
-                flash,
-                missing: render(missing)?,
-            }
-            .render()
-            .map_err(|_| Error::Internal);
-        };
-        let historical = self.balance_pins.is_object();
-        let can_approve = !historical && self.pages.allowed(scope, APPROVE_DOCUMENTS).await?;
-        let can_post = !historical && self.pages.allowed(scope, POST_DOCUMENTS).await?;
-        let can_match = !historical && self.pages.allowed(scope, APPROVE_MATCH).await?;
-        let can_create = !historical && self.pages.allowed(scope, CREATE_DOCUMENTS).await?;
-        let can_pay = !historical && self.pages.allowed(scope, SUBMIT_PAYMENTS).await?;
-        let display = self.pages.display(scope).await?;
-        let (units, accounts) = (self.units, &self.accounts);
-        let party = render(Facts {
-            id: "payables-bill-party-facts",
-            items: vec![
-                f::fact("Name", &d.party.name),
-                f::fact("Supplier code", &d.party.code),
-                f::fact("Tax ID", f::optional(&d.party.tax_id)),
-                f::fact("Registration", f::optional(&d.party.registration_id)),
-                f::fact("Address", f::optional(&d.party.address)),
-            ],
-        })?;
-        let mut items = vec![
-            f::fact(
-                "Supplier's invoice number",
-                f::optional(&d.party_document_number),
-            ),
-            f::fact("Date", &d.document_date.to_string()),
-            f::fact(
-                "Due",
-                &if d.document_type == "opening_credit" {
-                    "—".into()
-                } else {
-                    d.due_date.to_string()
-                },
-            ),
-            f::fact("Description", f::optional(&d.description)),
-            Fact {
-                title: "Corrects",
-                value: match d.corrects_document_id {
-                    Some(record) => render(Corrects { record })?,
-                    None => Html::text("—"),
-                },
-                ..Fact::default()
-            },
-            f::fact(
-                "Outstanding",
-                &d.outstanding.map_or_else(
-                    || "—".into(),
-                    |m| format!("{} {}", m.display(units), d.currency_code),
-                ),
-            ),
-            f::fact("Ledger entry", &f::number(d.entry_number)),
-            Fact {
-                title: "Recorded",
-                value: f::actor_at(
-                    &display,
-                    Some(d.created_by_user_id),
-                    d.created_by_impersonator_id,
-                    Some(&d.created_at),
-                    "payables-bill-created-at",
-                    " · ",
-                )?,
-                ..Fact::default()
-            },
-            Fact {
-                title: "Approved",
-                value: f::actor_at(
-                    &display,
-                    d.approved_by_user_id,
-                    d.approved_by_impersonator_id,
-                    d.approved_at.as_deref(),
-                    "payables-bill-approved-at",
-                    " ",
-                )?,
-                ..Fact::default()
-            },
-            Fact {
-                title: "Posted",
-                value: f::actor_at(
-                    &display,
-                    d.posted_by_user_id,
-                    d.posted_by_impersonator_id,
-                    d.posted_at.as_deref(),
-                    "payables-bill-posted-at",
-                    " ",
-                )?,
-                ..Fact::default()
-            },
-        ];
-        if d.status == "voided" {
-            let mut value = f::actor_at(
-                &display,
-                d.voided_by_user_id,
-                d.voided_by_impersonator_id,
-                d.voided_at.as_deref(),
-                "payables-bill-voided-at",
-                " ",
-            )?;
-            value.push(&Html::text(&format!(" · {}", f::optional(&d.void_reason))));
-            items.push(Fact {
-                title: "Voided",
-                value,
-                ..Fact::default()
-            });
-        }
-        if let Some(pins) = self.balance_pins.as_object() {
-            for (key, label) in [
-                ("as_of", "Balance as of"),
-                ("through_entry_number", "Read through ledger entry"),
-                ("through_opening_batch_id", "Read through opening batch"),
-                ("through_settlement_number", "Read through settlement"),
-            ] {
-                items.push(f::fact(
-                    label,
-                    &pins
-                        .get(key)
-                        .map(|v| {
-                            v.as_str()
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| v.to_string())
-                        })
-                        .unwrap_or_default(),
-                ));
-            }
-            items.push(f::fact(
-                "Activity shown through",
-                pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
-            ));
-        }
-        if let Some(opening) = &d.opening {
-            items.push(f::fact(
-                "Source item kind",
-                f::opening_item_kind(opening["item_kind"].as_str().unwrap_or("")),
-            ));
-            items.push(f::fact(
-                "Source kind",
-                opening["source_kind"].as_str().unwrap_or(""),
-            ));
-            items.push(f::fact(
-                "Source system",
-                opening["source_system"].as_str().unwrap_or(""),
-            ));
-            items.push(f::fact(
-                "Source tax facts",
-                &opening["source_tax_facts"].to_string(),
-            ));
-            if let Some(batch) = opening["replaced_by_batch_id"].as_i64() {
-                items.push(f::fact(
-                    "Opening register",
-                    &format!("Replaced by register {batch}; retained as source evidence."),
-                ));
-            }
-
-            items.push(f::fact(
-                "Opening source",
-                opening["source_reference"].as_str().unwrap_or(""),
-            ));
-            items.push(f::fact(
-                "Conversion date",
-                opening["conversion_date"].as_str().unwrap_or(""),
-            ));
-            if let Some(amount) = opening["original_total"]
-                .as_str()
-                .and_then(|v| v.parse::<rust_decimal::Decimal>().ok())
-            {
-                items.push(f::fact(
-                    "Source original total",
-                    &bilibi_finance_ledger::Money::display_decimal(amount, units),
-                ));
-            }
-            items.push(f::fact(
-                "Opening amounts",
-                "Residual only. Supplied source tax facts are retained as evidence and create no current tax lines.",
-            ));
-        }
-        let facts = render(Facts {
-            id: "payables-bill-document-facts",
-            items,
-        })?;
-        let totals = render(Facts {
-            id: "payables-bill-totals",
-            items: vec![
-                f::fact(
-                    "Net",
-                    &format!("{} {}", d.total_net.display(units), d.currency_code),
-                ),
-                f::fact(
-                    "Tax",
-                    &format!("{} {}", d.total_tax.display(units), d.currency_code),
-                ),
-                f::fact(
-                    "Total",
-                    &format!("{} {}", d.total.display(units), d.currency_code),
-                ),
-            ],
-        })?;
-        let last_match = f::last_match(d);
-        let attention = matches!(
-            d.match_status.as_deref(),
-            Some("held" | "exception_approved")
-        )
-        .then(|| Attention {
-            approved: d.match_status.as_deref() == Some("exception_approved"),
-            has_match: last_match.is_some(),
-            exceptions: last_match
-                .into_iter()
-                .flat_map(|e| &e.lines)
-                .flat_map(|l| {
-                    l.exceptions.iter().map(move |e| ExceptionView {
-                        line: l.line_number,
-                        code: e.code.clone(),
-                        detail: e.detail.clone(),
-                    })
-                })
-                .collect(),
-        })
-        .map(render)
-        .transpose()?;
-        let mut line_rows = Vec::new();
-        for l in &d.lines {
-            let mut row = FlexRow::new(l.id.to_string());
-            row.dom_id = Some(format!("payables-line-{}", l.line_number));
-            line_rows.push(
-                row.cell("number", Cell::text(l.line_number.to_string()))
-                    .cell("description", Cell::text(&l.description))
-                    .cell(
-                        "account",
-                        Cell::text(
-                            accounts
-                                .iter()
-                                .find(|a| a.0 == l.account_id)
-                                .map(|a| a.1.clone())
-                                .unwrap_or_else(|| "Account unavailable".into()),
-                        ),
-                    )
-                    .cell(
-                        "order_line",
-                        Cell::text(l.order_line_id.map_or_else(
-                            || f::optional(&l.external_order_line_id).to_owned(),
-                            |id| format!("#{id}"),
-                        )),
-                    )
-                    .cell("quantity", Cell::text(f::decimal(l.quantity)))
-                    .cell("amount", Cell::text(l.amount.display(units))),
-            );
-        }
-        let mut match_rows = Vec::new();
-        if let Some(e) = last_match {
-            for l in &e.lines {
-                let mut row = FlexRow::new(l.line_number.to_string());
-                row.dom_id = Some(format!("payables-match-line-{}", l.line_number));
-                let result = if l.exceptions.is_empty() {
-                    f::badge("matched", BadgeKind::Success, true)?
-                } else {
-                    render(MatchResult {
-                        details: l.exceptions.iter().map(|e| e.detail.as_str()).collect(),
-                        compact: self.matches.mode() == bilibi_ui::RowMode::Compact,
-                    })?
-                };
-                match_rows.push(
-                    row.cell("number", Cell::text(l.line_number.to_string()))
-                        .cell(
-                            "order",
-                            Cell::text(format!(
-                                "{} line #{}",
-                                f::number(l.order_number),
-                                l.order_line_id
-                            )),
-                        )
-                        .cell(
-                            "billed",
-                            Cell::text(format!(
-                                "{} at {}",
-                                l.billed_quantity.normalize(),
-                                l.billed_unit_price.normalize()
-                            )),
-                        )
-                        .cell(
-                            "ordered",
-                            Cell::text(format!(
-                                "{} at {}",
-                                f::decimal(l.ordered_quantity),
-                                f::decimal(l.ordered_unit_price)
-                            )),
-                        )
-                        .cell("received", Cell::text(f::decimal(l.received_quantity)))
-                        .cell(
-                            "billed_before",
-                            Cell::text(l.previously_billed_quantity.normalize().to_string()),
-                        )
-                        .cell(
-                            "tolerances",
-                            Cell::text(format!(
-                                "qty {} · price {}",
-                                f::tolerance(&l.quantity_tolerance),
-                                f::tolerance(&l.price_tolerance)
-                            )),
-                        )
-                        .slot("result", result),
-                );
-            }
-        }
-        let mut event_rows = Vec::new();
-        for e in &d.match_events {
-            let mut row = FlexRow::new(e.id.to_string());
-            row.dom_id = Some(format!("payables-match-event-{}", e.id));
-            event_rows.push(
-                row.slot(
-                    "when",
-                    f::time(
-                        &display,
-                        &format!("payables-match-event-at-{}", e.id),
-                        &e.occurred_at,
-                    )?,
-                )
-                .slot(
-                    "event",
-                    f::badge(&e.event.replace('_', " "), BadgeKind::Neutral, false)?,
-                )
-                .cell("exceptions", Cell::text(f::exceptions(e).to_string()))
-                .cell("reason", Cell::text(f::optional(&e.reason)))
-                .cell(
-                    "by",
-                    Cell::text(f::actor(Some(e.actor_user_id), e.actor_impersonator_id)),
-                ),
-            );
-        }
-        let dialog = match self.dialog {
-            Some(Dialog::Void) => Some(DialogView::new("void", &self.reason)),
-            Some(Dialog::ApproveException { .. }) => {
-                Some(DialogView::new("approve-exception", &self.reason))
-            }
-            None => None,
-        }
-        .map(render)
-        .transpose()?;
-        let title = self.heading(d);
-        View {
-            flash,
-            record: d.id,
-            title_actions: bilibi_ui::Html::EMPTY,
-            title,
-            status: f::status(&d.status)?,
-            match_status: d
-                .match_status
-                .as_deref()
-                .map(|s| f::match_badge(s, "Match: "))
-                .transpose()?,
-            actions: render(Actions {
-                correct: (can_create
-                    && can_approve
-                    && d.document_type == "bill"
-                    && d.status == "draft"
-                    && super::bill_form::corrigible(d))
-                .then(|| format!("{}?correct={}", super::NEW_BILL, d.id)),
-                note: (can_create && d.document_type == "bill" && d.status == "posted")
-                    .then(|| format!("{}?bill={}", super::NEW_NOTE, d.id)),
-                pay: (can_pay
-                    && d.document_type == "bill"
-                    && d.status == "posted"
-                    && d.outstanding.is_some_and(|m| m.is_positive()))
-                .then(|| format!("{}?bill={}", super::NEW_PAYMENT, d.id)),
-                approve: can_approve && d.status == "draft",
-                post: can_post && matches!(d.status.as_str(), "approved" | "held"),
-                approve_exception: can_match && d.match_status.as_deref() == Some("held"),
-                void: can_approve && matches!(d.status.as_str(), "draft" | "approved" | "held"),
-            })?,
-            attention,
-            party,
-            facts,
-            totals,
-            lines: table(&self.lines, "lines_grid", "Lines", line_rows)?,
-            matches: last_match
-                .map(|_| table(&self.matches, "matches_grid", "Match lines", match_rows))
-                .transpose()?,
-            events: (!d.match_events.is_empty())
-                .then(|| table(&self.events, "events_grid", "Match events", event_rows))
-                .transpose()?,
-            credit_actions: self
-                .credit_actions
-                .body(&self.pages, d.id, &d.document_type, &d.settlements, units)
-                .await?,
-            dialog,
-        }
-        .render()
-        .map_err(|_| Error::Internal)
     }
 
     async fn event(&mut self, scope: &Scope, credential: &str, v: &Value) -> Result<bool> {
@@ -781,6 +393,7 @@ impl LiveState<Scope, Error> for Bill {
             if reload {
                 self.reload(r.scope).await?;
             }
+            self.open_requested(r.scope, r.credential).await?;
             Ok(LiveBody {
                 html: self.body(r.scope).await?,
                 query: super::credits::balance_params(&self.balance_pins),
@@ -839,43 +452,6 @@ fn reason(v: &serde_json::Value) -> Option<&str> {
 }
 
 #[derive(Template)]
-#[template(path = "bill.html")]
-struct View<'a> {
-    flash: FlashMap<'a>,
-    record: i64,
-    title_actions: Html,
-    title: String,
-    status: Html,
-    match_status: Option<Html>,
-    actions: Html,
-    attention: Option<Html>,
-    party: Html,
-    facts: Html,
-    totals: Html,
-    lines: Html,
-    matches: Option<Html>,
-    events: Option<Html>,
-    dialog: Option<Html>,
-    credit_actions: Html,
-}
-impl View<'_> {
-    fn subtitle(&self) -> askama::Result<Html> {
-        Html::render(&Subtitle {
-            status: &self.status,
-            match_status: self.match_status.as_ref(),
-        })
-    }
-}
-#[derive(Template)]
-#[template(
-    source = r#"{{ status|safe }}{% if let Some(matched) = match_status %}<span id="payables-bill-match-status" class="ml-2">{{ matched|safe }}</span>{% endif %}"#,
-    ext = "html"
-)]
-struct Subtitle<'a> {
-    status: &'a Html,
-    match_status: Option<&'a Html>,
-}
-#[derive(Template)]
 #[template(
     source = r#"{% import "components.html" as ui %}{% import "feedback.html" as feedback %}{% call feedback::flash_group(messages=flash) %}{% endcall %}{% call ui::page(id="payables-bill", variant=bilibi_ui::PageVariant::Detail) %}{{ missing|safe }}{% endcall %}"#,
     ext = "html"
@@ -892,23 +468,6 @@ struct Missing<'a> {
 struct Corrects {
     record: i64,
 }
-#[derive(Template)]
-#[template(path = "bill_actions.html")]
-struct Actions {
-    correct: Option<String>,
-    note: Option<String>,
-    pay: Option<String>,
-    approve: bool,
-    post: bool,
-    approve_exception: bool,
-    void: bool,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<a href="/finance/payables/bills">All bills</a>"#,
-    ext = "html"
-)]
-struct AllBills;
 #[derive(Template)]
 #[template(path = "bill_attention.html")]
 struct Attention {

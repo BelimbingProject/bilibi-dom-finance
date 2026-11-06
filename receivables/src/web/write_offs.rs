@@ -71,32 +71,28 @@ impl Journals {
         };
         Ok(())
     }
+    /// Whether this person may propose a write-off (the record's "Actions…"
+    /// menu offers "Write off" while the invoice is owed).
+    pub(super) fn can_propose(&self) -> bool {
+        self.can_submit
+    }
+
+    /// The invoice's bad-debt journals; nothing until one is proposed.
     pub(super) fn body(
         &mut self,
         d: &Document,
         accounts: &[Account],
         figures: &f::Figures,
         display: &bilibi_datetime::DisplayContext,
+        people: &bilibi_finance_ledger::People,
     ) -> Result<Html> {
-        if d.kind != "invoice" || d.status != "issued" {
+        if d.kind != "invoice" || d.status != "issued" || d.write_offs.is_empty() {
             return Ok(Html::EMPTY);
         }
         self.cols.load(&d.write_offs, |w| w.id.to_string());
-        let actions = if self.can_submit && d.outstanding.is_some_and(|m| m.is_positive()) {
-            render(Button {
-                id: "receivables-propose-write-off",
-                button_type: "button",
-                event: "ask_submit_write_off",
-                body: Html::text("Propose write-off"),
-                ..Button::default()
-            })?
-        } else {
-            Html::EMPTY
-        };
         let mut body = render(SectionHeading {
-            title: "Bad-debt journals",
-            description: "Approved write-offs reduce the invoice balance without changing revenue or tax. Reverse before recording a recovery receipt.",
-            actions,
+            title: "Write-offs",
+            description: "Reverse a write-off before recording a recovery receipt.",
             ..SectionHeading::default()
         })?;
         let mut rows = vec![];
@@ -129,7 +125,7 @@ impl Journals {
             })?;
             history.push(&Html::text(&format!(
                 "Submitted · {} · ",
-                f::actor(Some(w.submitted_by_user_id), w.submitted_by_impersonator_id)
+                people.who(Some(w.submitted_by_user_id), w.submitted_by_impersonator_id)
             )));
             history.push(&f::time(
                 display,
@@ -141,7 +137,7 @@ impl Journals {
                     "; {} {} · {} · {} · ",
                     e.event,
                     e.effective_date,
-                    f::actor(Some(e.actor_user_id), e.actor_impersonator_id),
+                    people.who(Some(e.actor_user_id), e.actor_impersonator_id),
                     e.reason
                 )));
                 history.push(&f::time(
@@ -149,11 +145,11 @@ impl Journals {
                     &format!("write-off-{}-{}", w.id, e.event),
                     &e.occurred_at,
                 )?);
-                if let Some(id) = e.ledger_entry_id {
+                if e.ledger_entry_id.is_some() {
                     history.push(&Html::text(" · "));
-                    history.push(&f::link(
-                        &format!("/finance/ledger/journals/entry-{id}"),
-                        &format!("Entry #{}", e.ledger_entry_number.unwrap_or_default()),
+                    history.push(&bilibi_finance_ledger::EntryLink::html(
+                        e.ledger_entry_id,
+                        e.ledger_entry_number,
                     )?);
                 }
             }
@@ -190,13 +186,12 @@ impl Journals {
         body.push(&f::table(
             &self.cols,
             "write_off_grid",
-            "Bad-debt journals",
+            "Write-offs",
             rows,
-            "No bad-debt journals for this invoice.",
+            "No write-offs for this invoice.",
         )?);
         render(Card {
             id: "receivables-write-offs",
-            class: "mt-4",
             body,
             ..Card::default()
         })
