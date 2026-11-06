@@ -201,7 +201,7 @@ impl Payments {
                     .find(|a| a.id == r.paid_from_account_id)
                     .map_or_else(
                         || "Account unavailable".into(),
-                        |a| format!("{} {}", a.code, a.name),
+                        |a| format!("{} · {}", a.name, a.code),
                     );
                 let amount = r.amount.display(self.units);
                 let payment = r
@@ -219,16 +219,16 @@ impl Payments {
                             kind: "finance/payables_payments",
                             record_id: &r.id.to_string(),
                             href: &format!("{PAYMENTS}/{}", r.id),
-                            class: "font-medium text-ink-strong hover:underline",
+                            class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
                             body: Html::text(&format!("#{}", r.request_number)),
                         })?,
                     )
                     .cell("payment_date", Cell::text(r.payment_date.to_string()))
-                    .cell(
-                        "party",
-                        Cell::text(format!("{} · {}", r.party_code, r.party_name)),
+                    .cell("party", Cell::text(&r.party_name))
+                    .slot(
+                        "paid_from",
+                        bilibi_finance_ledger::AccountName::label(&account)?,
                     )
-                    .cell("paid_from", Cell::text(account))
                     .slot(
                         "amount",
                         render(Tabular {
@@ -259,13 +259,23 @@ impl Payments {
             table.suggestions = self.columns.flex_suggestions();
             table.add_query = &self.columns.add_query;
             let filtered = !self.list.search.is_empty() || !self.list.filters["status"].is_empty();
-            table.empty = Some(TableEmpty::Content(Html::text(
-                match (filtered, self.can_submit) {
-                    (true, _) => "No payments match.",
-                    (false, true) => "No payments yet. Request a payment to a supplier to start.",
-                    (false, false) => "No payments yet.",
-                },
-            )));
+            let mut empty = if filtered {
+                EmptyState::missing(
+                    "No payments match",
+                    "Change the filters to see more payments.",
+                )
+            } else {
+                EmptyState::missing("No payments yet", "Pay a supplier's posted bills.")
+            };
+            if !filtered && self.can_submit {
+                empty.action = render(CreateButton {
+                    noun: "Payment",
+                    href: NEW_PAYMENT,
+                    id: "payables-payments-empty-new",
+                    ..CreateButton::default()
+                })?;
+            }
+            table.empty = Some(TableEmpty::Content(render(empty)?));
             content.push(&render(table)?);
             let mut pager = Pagination::new(
                 "payables-payments-pagination",
