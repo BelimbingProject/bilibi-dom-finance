@@ -378,7 +378,7 @@ impl Request {
         .map_err(|_| Error::Internal)
     }
 
-    /// Back, the "Actions…" menu (Reject, Reverse), then Approve and pay
+    /// Back, the local Reject and Reverse icons, then Approve and pay
     /// while the request waits.
     fn header_actions(&self, r: &PaymentRequest, subject: &str) -> Result<Html> {
         let here = format!("{PAYMENTS}/{}", r.id);
@@ -399,10 +399,15 @@ impl Request {
                 body: Html::text("Approve and pay"),
                 ..bilibi_ui::Button::default()
             })?);
-            items.push(RecordAction::here("Reject", &here, "reject"));
+            items.push(RecordAction::here("x-mark", "Reject", &here, "reject"));
         }
         if self.can_decide && can_reverse {
-            items.push(RecordAction::here("Reverse payment", &here, "reverse"));
+            items.push(RecordAction::here(
+                "arrow-uturn-left",
+                "Reverse payment",
+                &here,
+                "reverse",
+            ));
         }
         RecordActions::render(
             render(BackLink {

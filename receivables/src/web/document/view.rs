@@ -1,7 +1,7 @@
 //! How an invoice or credit note reads: the document itself on the left
 //! (customer, dates, lines, totals) and a narrow summary on the right
 //! (status, amount due, receipts and credits, its journal, files), with Back,
-//! one "Actions…" menu and the one primary verb for its state in the header
+//! its local actions as icon buttons, one "Non-local actions" menu and the one primary verb for its state in the header
 //! (`bilibi_finance_ledger::DocumentLayout`, `RecordActions`). Every action
 //! still raises the same event or opens the same page as before.
 use super::{
@@ -120,7 +120,7 @@ impl Document {
         )
     }
 
-    /// Back, the "Actions…" menu, then the one primary verb for this state:
+    /// Back, the local actions, the "Non-local actions" menu, then the one primary verb for this state:
     /// Issue a draft; Record receipt while an invoice is owed.
     fn header_actions(&self, d: &crate::Document, back: Html) -> Result<Html> {
         let here = format!("{INVOICES}/{}", d.id);
@@ -141,7 +141,12 @@ impl Document {
                 })?);
             }
             if self.can_manage {
-                items.push(RecordAction::here("Discard draft", &here, "discard"));
+                items.push(RecordAction::here(
+                    "trash",
+                    "Discard draft",
+                    &here,
+                    "discard",
+                ));
             }
         }
         if issued && !historical && d.kind == "invoice" {
@@ -161,11 +166,17 @@ impl Document {
                 ));
             }
             if owed && self.write_offs.can_propose() {
-                items.push(RecordAction::here("Write off", &here, "write_off"));
+                items.push(RecordAction::here(
+                    "document-minus",
+                    "Write off",
+                    &here,
+                    "write_off",
+                ));
             }
         }
         if issued && d.opening.is_none() && matches!(d.kind.as_str(), "invoice" | "credit_note") {
-            items.push(RecordAction::link(
+            items.push(RecordAction::local(
+                "printer",
                 "Print / download PDF",
                 format!("{INVOICES}/{}/pdf", d.id),
             ));

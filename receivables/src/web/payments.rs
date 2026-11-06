@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{Customer, Document, Payment, Series, POST_PAYMENTS};
 use bilibi_database::{Error, Result};
+use bilibi_finance_ledger::{RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -252,10 +253,10 @@ impl Payments {
     }
 
     fn customer_name(&self, id: i64) -> String {
-        self.customers.iter().find(|c| c.id == id).map_or_else(
-            || format!("Customer #{id}"),
-            |c| format!("{} · {}", c.code, c.name),
-        )
+        self.customers
+            .iter()
+            .find(|c| c.id == id)
+            .map_or_else(|| format!("Customer #{id}"), |c| c.name.clone())
     }
 
     fn shown(&mut self) -> (Vec<Payment>, u64) {
@@ -274,10 +275,11 @@ impl Payments {
             .filter(|p| {
                 search.is_empty()
                     || p.payment_reference.to_lowercase().contains(&search)
-                    || self
-                        .customer_name(p.customer_id)
-                        .to_lowercase()
-                        .contains(&search)
+                    || self.customers.iter().any(|c| {
+                        c.id == p.customer_id
+                            && (c.name.to_lowercase().contains(&search)
+                                || c.code.to_lowercase().contains(&search))
+                    })
                     || p.reference
                         .as_ref()
                         .is_some_and(|t| t.to_lowercase().contains(&search))
@@ -323,7 +325,7 @@ impl Payments {
         customer_choices.extend(
             self.customers
                 .iter()
-                .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.id.to_string())),
+                .map(|c| Choice::new(&c.name, c.id.to_string())),
         );
         let mut content = render(FilterToolbar {
             event: "filter",
@@ -364,6 +366,20 @@ impl Payments {
         for p in &shown {
             let mut row = FlexRow::new(p.id.to_string());
             row.dom_id = Some(format!("receivables-receipt-{}", p.id));
+            let mut items = Vec::new();
+            if self.can_record && p.reversal.is_none() {
+                items.push(RecordAction::here(
+                    "arrow-uturn-left",
+                    "Reverse receipt",
+                    &format!("{RECEIPTS}/{}", p.id),
+                    "reverse",
+                ));
+            }
+            row.actions = RecordActions::row(
+                &format!("receivables-receipt-{}-actions", p.id),
+                &p.payment_reference,
+                items,
+            )?;
             rows.push(
                 row.slot(
                     "number",
@@ -372,16 +388,16 @@ impl Payments {
                         kind: crate::MODULE,
                         record_id: &p.id.to_string(),
                         href: &format!("{RECEIPTS}/{}", p.id),
-                        class: "font-medium text-ink-strong hover:underline",
+                        class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
                         body: Html::text(&p.payment_reference),
                     })?,
                 )
                 .cell("customer", Cell::text(self.customer_name(p.customer_id)))
                 .cell("payment_date", Cell::text(&p.payment_date))
                 .slot("amount", f::tabular(&self.figures.money(p.amount))?)
-                .cell(
+                .slot(
                     "deposit",
-                    Cell::text(super::account_label(&self.accounts, p.deposit_account_id)),
+                    super::account_html(&self.accounts, p.deposit_account_id)?,
                 )
                 .cell("reference", Cell::text(f::optional(&p.reference)))
                 .slot("status", status_badge(p)?),
@@ -394,18 +410,31 @@ impl Payments {
         )
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Receipts";
+        table.actions = self.can_record;
         table.framed = false;
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
-        table.empty = Some(TableEmpty::Content(render(EmptyState::missing(
-            "No receipts",
-            if self.all.is_empty() {
-                "Record the money customers pay you. Each receipt is applied to the invoices it settles."
-            } else {
-                "No receipt matches the current filters."
-            },
-        ))?));
+        let mut empty = if self.all.is_empty() {
+            EmptyState::missing(
+                "No receipts yet",
+                "Each receipt is applied to the invoices it settles.",
+            )
+        } else {
+            EmptyState::missing(
+                "No receipts match",
+                "Change the filters to see more receipts.",
+            )
+        };
+        if self.all.is_empty() && self.can_record {
+            empty.action = render(CreateButton {
+                noun: "Receipt",
+                id: "receivables-receipts-empty-add",
+                event: "show_record",
+                ..CreateButton::default()
+            })?;
+        }
+        table.empty = Some(TableEmpty::Content(render(empty)?));
         content.push(&render(table)?);
         content.push(&render(Pagination {
             filters_event: "filter",
