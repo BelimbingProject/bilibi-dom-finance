@@ -4,26 +4,29 @@ use super::{
     error_text, event_type, no_company, render, shell, unavailable, view, Failure, Flash, Pages,
     Read, Refusal, Review,
 };
-use crate::MANAGE_ACCOUNTS;
+use crate::{MANAGE_ACCOUNTS, MANAGE_CONTROLLED_BOOKKEEPING, MANAGE_DUTY_SEPARATION};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Choice, Combobox,
-    ConfirmDialog, Fact, Facts, Field, Form, Header, Html, InputKind, PageVariant, SectionHeading,
-    StatusKind,
+    params, Alert, Attrs, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Choice,
+    Combobox, ConfirmDialog, Fact, Facts, Field, Form, Header, Html, InputKind, PageVariant,
+    SectionHeading, StatusKind,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 pub(super) const INDEX: &str = "/finance/ledger/books";
 
-/// What `finance.ledger.book.currencies` answers: the enabled currencies with
-/// their ISO 4217 decimal places and the proposed one.
+/// What `finance.ledger.book.currencies` answers: the currencies offered (every
+/// current one for a person who may enable currencies, else the enabled ones)
+/// with their ISO 4217 decimal places, and the proposed one.
 #[derive(Default, Deserialize)]
 struct Options {
     #[serde(default)]
     reference: String,
+    #[serde(default)]
+    can_enable: bool,
     proposed: Option<Proposed>,
     #[serde(default)]
     currencies: Vec<Listed>,
@@ -39,6 +42,11 @@ struct Listed {
     code: String,
     name: String,
     minor_units: u32,
+    #[serde(default = "enabled")]
+    enabled: bool,
+}
+fn enabled() -> bool {
+    true
 }
 impl Options {
     fn find(&self, code: &str) -> Option<&Listed> {
@@ -66,6 +74,9 @@ pub(super) struct Book {
     seeded: bool,
     review: Option<Review>,
     flash: Flash,
+    /// Chart of accounts, once the book opened: its empty chart offers the
+    /// starter charts.
+    destination: Option<String>,
 }
 
 impl Book {
@@ -83,6 +94,7 @@ impl Book {
             seeded: false,
             review: None,
             flash: Flash::default(),
+            destination: None,
         }
     }
 
@@ -102,13 +114,9 @@ impl Book {
                     body.push(&unavailable("ledger-book-refused", "the book", &refused)?)
                 }
                 Ok(state) => match &state.book {
-                    Some(book) => {
-                        body.push(&self.facts(&state, book)?);
-                        body.push(&self.starter_proposal(&state.starter_chart)?);
-                    }
+                    Some(book) => body.push(&self.facts(scope, &state, book).await?),
                     None => {
                         self.load_options(scope).await?;
-                        body.push(&self.starter_proposal(&state.starter_chart)?);
                         body.push(&self.open_form(scope).await?)
                     }
                 },
@@ -119,20 +127,24 @@ impl Book {
             title: Html::text("Book"),
             subtitle: &company_name,
             title_actions: bilibi_ui::Html::EMPTY,
-            ..Header::default()
+            actions: render(BackLink {
+                href: INDEX,
+                id: "ledger-book-back",
+                title: "Back to company books",
+                ..BackLink::default()
+            })?,
         })?;
-        page.push(&render(Button {
-            href: INDEX,
-            body: Html::text("Company books"),
-            ..Button::default()
-        })?);
         page.push(&render(super::Announce {
             kind: "finance/ledger.book",
             record_id: &self.company.to_string(),
         })?);
         page.push(&body);
+        let redirect = self.destination.take();
+        let flash = redirect.as_ref().and_then(|_| self.flash.0.take());
         Ok(LiveBody {
             html: shell("ledger-book", PageVariant::Detail, &self.flash, page)?,
+            redirect,
+            flash,
             ..LiveBody::default()
         })
     }
@@ -163,48 +175,17 @@ impl Book {
         Ok(())
     }
 
-    fn starter_proposal(&self, proposal: &serde_json::Value) -> Result<Html> {
-        let template = &proposal["proposed"];
-        let Some(name) = template["name"].as_str() else {
-            return if proposal["configured"].is_string() {
-                render(Alert {
-                    id: "ledger-book-starter-unavailable",
-                    kind: StatusKind::Warning,
-                    body: Html::text(
-                        "The proposed starter chart is unavailable. Choose another on Chart of accounts or ask an administrator to change the proposal.",
-                    ),
-                    ..Alert::default()
-                })
-            } else {
-                Ok(Html::EMPTY)
-            };
-        };
-        let mut body = render(SectionHeading {
-            id: "ledger-book-starter-heading",
-            title: "Proposed starter chart",
-            description: name,
-            ..SectionHeading::default()
-        })?;
-        body.push(&render(Badge::status(
-            BadgeKind::Warning,
-            template["review"].as_str().unwrap_or_default(),
-        ))?);
-        body.push(&render(super::accounts::Note {id:"ledger-book-starter-note",text:"Opening the book creates no accounts. Review this proposal and its optional sections on Chart of accounts, choose another template, or start empty."})?);
-        body.push(&render(Button {
-            id: "ledger-book-chart",
-            href: &format!("{}?company={}", super::accounts::INDEX, self.company),
-            body: Html::text("Chart of accounts"),
-            ..Button::default()
-        })?);
-        render(Card {
-            id: "ledger-book-starter-card",
-            class: "mt-4",
-            body,
-            ..Card::default()
-        })
-    }
-
-    fn facts(&self, state: &view::BookState, book: &view::BookRow) -> Result<Html> {
+    async fn facts(
+        &self,
+        scope: &Scope,
+        state: &view::BookState,
+        book: &view::BookRow,
+    ) -> Result<Html> {
+        let can_change = self
+            .pages
+            .allowed(scope, MANAGE_CONTROLLED_BOOKKEEPING)
+            .await?
+            || self.pages.allowed(scope, MANAGE_DUTY_SEPARATION).await?;
         let controlled = state
             .controlled_bookkeeping
             .as_ref()
@@ -239,7 +220,7 @@ impl Book {
                     title: "Currency",
                     id: "ledger-book-currency",
                     value: Html::text(&match &currency.currency_name {
-                        Some(name) => format!("{} — {}", book.currency_code, name),
+                        Some(name) => format!("{} {}", book.currency_code, name),
                         None => book.currency_code.clone(),
                     }),
                 },
@@ -261,7 +242,18 @@ impl Book {
         let mut controls = render(SectionHeading {
             id: "ledger-book-controls-heading",
             title: "Controls",
-            description: "Controlled bookkeeping restricts posting to open periods. Manage other Finance approvals on Approval exceptions, and manual journals on Approval rules.",
+            description: "Controlled bookkeeping lets entries post only into open periods. Manual journals follow their own approval rules.",
+            actions: if can_change {
+                render(bilibi_ui::ActionLink {
+                    id: "ledger-book-controls-change",
+                    href: "/finance/reports/controls",
+                    title: "Change on Bookkeeping controls",
+                    body: Html::text("Change on Bookkeeping controls"),
+                    ..bilibi_ui::ActionLink::default()
+                })?
+            } else {
+                Html::EMPTY
+            },
             ..SectionHeading::default()
         })?;
         controls.push(&render(Facts {
@@ -273,7 +265,7 @@ impl Book {
                     value: yes_no(controlled, "On", "Off")?,
                 },
                 Fact {
-                    title: "Other Finance separation",
+                    title: "Someone else approves Finance records",
                     id: "ledger-book-separation",
                     value: yes_no(required, "Required", "Not required")?,
                 },
@@ -309,21 +301,16 @@ impl Book {
                 .id("ledger-book-not-open"),
             );
         }
+        // Only for a person who may not enable a currency: anyone who may is
+        // offered every currency, and opening the book enables the one chosen.
         if self.options.none_enabled() {
-            let mut empty = bilibi_ui::EmptyState::missing(
-                "No currency is enabled yet",
-                "A book opens in an enabled currency. Enable one on the Currencies page first.",
-            )
-            .id("ledger-book-none-enabled");
-            if self.pages.allowed(scope, bilibi_currency::MANAGE).await? {
-                empty = empty.action(render(Button {
-                    id: "ledger-book-currencies",
-                    href: bilibi_currency::CURRENCIES_PATH,
-                    body: Html::text("Open Currencies"),
-                    ..Button::default()
-                })?);
-            }
-            return render(empty);
+            return render(
+                bilibi_ui::EmptyState::missing(
+                    "No currency is enabled yet",
+                    "Opening the book needs its currency enabled first. Ask an administrator who manages currencies to enable it, then come back.",
+                )
+                .id("ledger-book-none-enabled"),
+            );
         }
         if self.options.reference.is_empty() {
             return render(
@@ -356,14 +343,26 @@ impl Book {
         }
         let chosen = self.options.find(&self.currency);
         if self.options.listed() {
-            let hint = match (&self.options.proposed, chosen) {
+            let mut hint = match (&self.options.proposed, chosen) {
                 (Some(proposed), Some(c)) if proposed.code == c.code => format!(
                     "Proposed from the {} base currency. You cannot change it later.",
-                    if proposed.source == "company" { "company's" } else { "tenant's" }
+                    if proposed.source == "company" {
+                        "company's"
+                    } else {
+                        "tenant's"
+                    }
                 ),
-                (None, None) => "No base currency is set for this company or tenant. Search by code or name. You cannot change it later.".into(),
                 _ => "Search by code or name. You cannot change it later.".into(),
             };
+            if !self.options.can_enable {
+                hint.push_str(" Only enabled currencies are listed; ask an administrator who manages currencies to enable another.");
+            }
+            if let Some(c) = chosen.filter(|c| !c.enabled) {
+                hint.push_str(&format!(
+                    " {} is not enabled yet: opening the book also enables it on the Currencies page.",
+                    c.code
+                ));
+            }
             body.push(&render(
                 Combobox::new("ledger-book-currency-code", "book[currency_code]")
                     .label("Currency *")
@@ -373,9 +372,7 @@ impl Book {
                         self.options
                             .currencies
                             .iter()
-                            .map(|c| {
-                                Choice::new(format!("{} — {}", c.code, c.name), c.code.clone())
-                            })
+                            .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.code.clone()))
                             .collect(),
                     )
                     .placeholder("Search currencies")
@@ -430,20 +427,20 @@ impl Book {
         body.push(&render(
             Field::in_form("book", "approver")
                 .id("ledger-book-approver")
-                .label("Other Finance approvals")
+                .label("Finance approvals")
                 .kind(InputKind::Select)
                 .value(&self.approver)
                 .options(vec![
-                    Choice::new("Independent approval required", "someone_else"),
-                    Choice::new("Self-approval permitted", "one_person"),
+                    Choice::new("Someone else must approve", "someone_else"),
+                    Choice::new("The preparer may approve their own", "one_person"),
                 ])
-                .hint("This controls other Finance approvals. Manual journals follow their rules on Approval rules."),
+                .hint("For bills, payments and other Finance records. Manual journals follow their own approval rules."),
         )?);
         if self.approver == "one_person" {
             body.push(&render(
                 Field::in_form("book", "approval_reason")
                     .id("ledger-book-approval-reason")
-                    .label("Reason for allowing self-approval")
+                    .label("Why the preparer may approve")
                     .value(&self.approval_reason)
                     .required()
                     .errors(errors("reason")),
@@ -484,7 +481,7 @@ impl Book {
             let code = after["currency_code"].as_str().unwrap_or_default();
             let units = after["minor_units"].as_i64().unwrap_or_default();
             let label = match currency["currency_name"].as_str() {
-                Some(name) => format!("{code} — {name}"),
+                Some(name) => format!("{code} {name}"),
                 None => code.to_owned(),
             };
             let mut detail = String::new();
@@ -494,12 +491,17 @@ impl Book {
                     currency["standard_minor_units"]
                 ));
             }
+            if currency["enables_currency"].as_bool() == Some(true) {
+                detail.push_str(&format!(
+                    "This also enables {code} on the Currencies page, for every company. "
+                ));
+            }
             if currency["reference"].as_str() == Some("unchecked") {
                 detail.push_str(&format!(
                     "The currency list has not been imported, so {code} was not checked against ISO 4217. "
                 ));
             }
-            detail.push_str(if self.approver == "one_person" { "The currency and decimal places are permanent. Other Finance approvals permit preparer approval and record exceptions. Manual journal rules are set separately on Approval rules." } else { "The currency and decimal places are permanent. Other Finance approvals require another person. Manual journal rules are set separately on Approval rules." });
+            detail.push_str(if self.approver == "one_person" { "The currency and decimal places are permanent. The preparer may approve their own bills, payments and other Finance records; each such approval is listed in Approval exceptions. Manual journals follow their own approval rules." } else { "The currency and decimal places are permanent. Bills, payments and other Finance records need someone else's approval. Manual journals follow their own approval rules." });
             html.push(&render(ConfirmDialog {
                 id: "ledger-book-confirm",
                 consequence: &format!(
@@ -550,6 +552,10 @@ impl LiveState<Scope, Error> for Book {
                         self.refusal = Refusal::default();
                         self.notice.clear();
                         let units: i64 = self.units.parse().unwrap_or(-1);
+                        let enable = self
+                            .options
+                            .find(&self.currency)
+                            .is_some_and(|c| !c.enabled);
                         match self
                             .pages
                             .review_in(
@@ -558,7 +564,7 @@ impl LiveState<Scope, Error> for Book {
                                 r.credential,
                                 "review_open",
                                 "finance.ledger.book.open",
-                                json!({"currency_code": self.currency.trim().to_uppercase(), "minor_units": units,"separation_required":self.approver != "one_person","approval_reason": self.approval_reason}),
+                                json!({"currency_code": self.currency.trim().to_uppercase(), "minor_units": units,"separation_required":self.approver != "one_person","approval_reason": self.approval_reason,"enable_currency": enable}),
                             )
                             .await?
                         {
@@ -587,7 +593,14 @@ impl LiveState<Scope, Error> for Book {
                             )
                             .await?
                         {
-                            Ok(_) => self.flash.success("The book is open."),
+                            Ok(_) => {
+                                self.flash.success("The book is open.");
+                                self.destination = Some(format!(
+                                    "{}?company={}",
+                                    super::accounts::INDEX,
+                                    self.company
+                                ));
+                            }
                             Err(Failure::Refused(refusal)) => self.refusal = refusal,
                             Err(failure) => self.notice = failure.text("The book"),
                         }

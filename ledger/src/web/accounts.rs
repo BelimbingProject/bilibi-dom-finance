@@ -142,7 +142,6 @@ struct Preview {
     key: String,
     sections: Vec<view::TemplateSection>,
     name: String,
-    status: String,
     notes: Vec<String>,
     rows: Vec<view::TemplateRow>,
 }
@@ -945,10 +944,6 @@ impl Accounts {
                     "Proposed starter chart",
                 ))?);
             }
-            card.push(&render(Badge::status(
-                BadgeKind::Warning,
-                &template.review,
-            ))?);
             card.push(&render(Note {
                 id: &format!("ledger-starter-{index}-description"),
                 text: &template.description,
@@ -1046,7 +1041,6 @@ impl Accounts {
             title: &preview.name,
             ..SectionHeading::default()
         })?;
-        body.push(&render(Badge::status(BadgeKind::Warning, &preview.status))?);
         body.push(&render(Note {
             id: "ledger-preview-note",
             text: "Review every group and account below. The core chart is always created; tick the optional sections that apply to this business and the list shows exactly what would be created. Nothing is ticked to start. Applying creates them as this company's own chart, with the retained earnings account marked. The chart is never changed once it has accounts.",
@@ -1143,10 +1137,6 @@ impl Accounts {
                     key: key.to_owned(),
                     sections: view::parse(review.facts["sections"].clone()).unwrap_or_default(),
                     name: review.facts["template"]["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    status: review.facts["template"]["review"]
                         .as_str()
                         .unwrap_or_default()
                         .to_owned(),

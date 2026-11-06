@@ -115,6 +115,36 @@ pub fn services(
     Ok(services)
 }
 
+/// Once Core's currency list is seeded (`seed-production`), a book opens only
+/// in an enabled currency: the administrator enables the fixture's through
+/// Core's own write. Without the list the book opens unchecked.
+async fn enable_currency(db: &Db, services: &Services, administrator: &Scope) -> Result<()> {
+    let currencies = services
+        .get::<bilibi_currency::Currencies>(bilibi_currency::SERVICE)
+        .map_err(Error::from)?;
+    let mut client = db.get().await.map_err(Error::from)?;
+    let off = currencies
+        .get(&**client, administrator, CURRENCY)
+        .await?
+        .is_some_and(|currency| !currency.enabled);
+    if off {
+        let mut tx = services
+            .get::<bilibi_database::MutationBoundary>("base/database.mutations")
+            .map_err(Error::from)?
+            .begin(
+                &mut client,
+                administrator.mutation_context("finance.walkthrough.currency"),
+            )
+            .await?;
+        currencies
+            .set_enabled(&mut tx, administrator, CURRENCY, true)
+            .await?
+            .map_err(|_| Error::Invalid)?;
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
 /// The Platform fixture's accounts and tenants, plus the Core default
 /// relationship roles (customer, supplier, ...) its tenants are installed
 /// without. A binary that skips [`install`] still calls this, never
@@ -159,6 +189,7 @@ pub async fn install(db: &Db, services: &Services) -> Result<Installed> {
             .set_desk(&administrator, 2, 1, true)
             .await?;
     }
+    enable_currency(db, services, &administrator).await?;
     let manager = sign_in(db, services, 1, MANAGER).await?;
     let book = match ledger.get_book(&manager, COMPANY).await {
         Err(LedgerError::BookNotOpen) => {

@@ -10,6 +10,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from decimal import Decimal
+from pathlib import Path
 
 if os.environ.get("BILIBI_AGENT_PROOF") != "disposable":
     raise SystemExit("BILIBI_AGENT_PROOF=disposable is required")
@@ -95,6 +96,12 @@ def refused(channel, key, company, contains, who="manager", **values):
     require(body.get("valid") is False and contains in json.dumps(body), f"{key}: expected refusal {contains}")
 
 
+def control(*args):
+    platform = Path(__file__).resolve().parents[5]
+    binary = Path(os.environ.get("CARGO_TARGET_DIR", platform / "target")) / "debug" / "agent-operations"
+    subprocess.run([str(binary), "payables-control", *map(str, args)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 unavailable_proved = False
 for channel, company in [("api", 1), ("mcp", 2)]:
     print(f"\n== {channel}: company {company}")
@@ -115,11 +122,25 @@ for channel, company in [("api", 1), ("mcp", 2)]:
         sql("INSERT INTO currencies (code, numeric_code, name, minor_units) VALUES ('MYR','458','Malaysian ringgit',2),('JPY','392','Japanese yen',0),('KWD','414','Kuwaiti dinar',3),('CHF','756','Swiss franc',2) ON CONFLICT DO NOTHING")
         tenant = sql(f"SELECT tenant_id FROM companies WHERE id={company}")
         sql(f"DELETE FROM currency_tenant_enabled WHERE tenant_id={tenant}")
+        # Without admin.currency.manage, nothing enabled means no book opens, and asking to enable changes nothing.
+        control("grant", "admin.currency.manage", "false")
         none = read(channel, "book.currencies", company)
-        require(none["reference"] == "none_enabled" and none["currencies"] == [], "installed list with nothing enabled should say so")
+        require(none["reference"] == "none_enabled" and none["currencies"] == [] and none["can_enable"] is False, "installed list with nothing enabled should say so")
         refused(channel, "book.open", company, "no currency is enabled yet", currency_code="MYR", minor_units=2)
         refused(channel, "book.open", company, "no currency is enabled yet", currency_code="QQQ", minor_units=2)
-        print("catalog installed, nothing enabled: reported as none_enabled, every book.open refused in the same words")
+        refused(channel, "book.open", company, "no currency is enabled yet", currency_code="MYR", enable_currency=True)
+        print("catalog installed, nothing enabled, no currency manage: reported as none_enabled, every book.open refused in the same words, enable_currency refused")
+        # With it, every current currency is offered and the review says opening enables the chosen one.
+        control("grant", "admin.currency.manage", "true")
+        offered = read(channel, "book.currencies", company)
+        require(offered["reference"] == "iso4217" and offered["can_enable"] is True, "a currency manager should be offered the list")
+        require(any(c["code"] == "CHF" and c["enabled"] is False for c in offered["currencies"]), "a currency manager should see currencies not enabled")
+        refused(channel, "book.open", company, "no currency is enabled yet", currency_code="CHF", minor_units=2)
+        enabling = plan(channel, [operation("book.open", company, currency_code="CHF", enable_currency=True)])
+        require(enabling.get("valid") is True, f"enable on open preview refused: {enabling}")
+        require(enabling["results"][0]["preview"]["result"]["changes"]["after"]["currency"]["enables_currency"] is True, "review should say the currency is enabled")
+        require(sql(f"SELECT count(*) FROM currency_tenant_enabled WHERE tenant_id={tenant}") == "0", "preview enabled a currency")
+        print("currency manager: every current currency offered with its enabled state; enable_currency reviewed, preview enabled nothing")
         sql(f"INSERT INTO currency_tenant_enabled (tenant_id, code) VALUES ({tenant},'MYR'),({tenant},'JPY'),({tenant},'KWD')")
         currencies = read(channel, "book.currencies", company)
         require(currencies["reference"] == "iso4217", "list should be available once currencies are enabled")
@@ -134,14 +155,20 @@ for channel, company in [("api", 1), ("mcp", 2)]:
         require(standard["minor_units"] == 3 and standard["currency"]["currency_name"] == "Kuwaiti dinar" and standard["currency"]["nonstandard_minor_units"] is False, "default decimal places not the standard")
         require(nonstandard["minor_units"] == 2 and nonstandard["currency"]["nonstandard_minor_units"] is True and nonstandard["currency"]["standard_minor_units"] == 3, "nonstandard not flagged")
         print("currency list: search by name and code, refusals, standard default, nonstandard flagged, proposal:", (currencies["proposed"] or {}).get("source", "none"))
+        # The book opens in MYR before MYR is enabled: one write enables it and opens the book.
+        sql(f"DELETE FROM currency_tenant_enabled WHERE tenant_id={tenant} AND code='MYR'")
+    enable = sql(f"SELECT count(*) FROM currencies WHERE code='MYR'") == "1" and sql(f"SELECT count(*) FROM currency_tenant_enabled e JOIN companies c ON c.tenant_id=e.tenant_id WHERE c.id={company} AND e.code='MYR'") == "0"
     direct = invoke(channel, "read", operation("book.open", company, currency_code="MYR", minor_units=2))
     require(direct.get("error") == "writes_not_enabled", "direct write was not refused")
-    ops = [operation("book.open", company, currency_code="myr", minor_units=2)]
+    ops = [operation("book.open", company, currency_code="myr", minor_units=2, **({"enable_currency": True} if enable else {}))]
     preview = plan(channel, ops)
     require(preview.get("valid") is True, "book preview failed")
     require(sql(f"SELECT count(*) FROM finance_ledger_books WHERE company_id={company}") == "0", "preview wrote a book")
     require("results" in commit(channel, ops, preview), "book commit failed")
     require(read(channel, "book.get", company)["book"]["currency_code"] == "MYR", "currency not normalized")
+    if enable:
+        require(sql(f"SELECT count(*) FROM currency_tenant_enabled e JOIN companies c ON c.tenant_id=e.tenant_id WHERE c.id={company} AND e.code='MYR'") == "1", "opening the book did not enable MYR")
+        print("book opened in MYR and enabled MYR in the same write")
     print("book preview wrote no business rows; commit normalized currency; direct write refused")
 
     asset = write(channel, "account.create", company, code="A", name="Asset", account_type="asset")
