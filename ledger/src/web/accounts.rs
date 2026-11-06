@@ -379,7 +379,7 @@ impl Accounts {
                 if current {
                     empty = empty.action(render(Button {
                         id: "ledger-accounts-open-book",
-                        href: super::book::INDEX,
+                        href: &format!("{}/{}", super::book::INDEX, company.id),
                         body: Html::text("Go to the book"),
                         variant: ButtonVariant::Primary,
                         ..Button::default()

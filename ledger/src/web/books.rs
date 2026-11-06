@@ -122,6 +122,16 @@ struct CompanyCell<'a> {
 /// years page to the company; it does not switch the current company.
 #[derive(askama::Template)]
 #[template(
+    source = r#"<a id="ledger-books-open-{{ id }}" href="/finance/ledger/books/{{ id }}" aria-label="Open book of {{ name }}" class="text-link hover:underline">Open book</a>"#,
+    ext = "html"
+)]
+struct OpenLink<'a> {
+    id: i64,
+    name: &'a str,
+}
+
+#[derive(askama::Template)]
+#[template(
     source = r#"<a id="ledger-books-years-{{ id }}" href="/finance/ledger/fiscal-years?company={{ id }}" aria-label="Fiscal years of {{ name }}" class="text-link hover:underline">Fiscal years</a>"#,
     ext = "html"
 )]
@@ -129,13 +139,6 @@ struct YearsLink<'a> {
     id: i64,
     name: &'a str,
 }
-
-#[derive(askama::Template)]
-#[template(
-    source = r#"<p id="ledger-books-note" class="mt-3 text-xs text-ink-muted">Companies you cannot work in are not listed. A row shows one company in its own currency; figures are never added across companies. Choosing a company here does not make it your current company: use the top bar for that.</p>"#,
-    ext = "html"
-)]
-struct Note;
 
 /// Just the id of a row, for the column manager.
 struct Line(String);
@@ -163,6 +166,7 @@ impl Books {
         current: Option<i64>,
         today: Date,
     ) -> Result<Option<FlexRow>> {
+        let can_open = self.pages.allowed(scope, crate::MANAGE_ACCOUNTS).await?;
         let book = match self.pages.book_in(scope, company.id).await? {
             Ok(state) => match state.book {
                 Some(book) => Book::Open(book),
@@ -322,6 +326,14 @@ impl Books {
                     name: &company.name,
                 })?,
             );
+        } else if matches!(book, Book::NotOpen) && can_open {
+            row = row.slot(
+                "view",
+                render(OpenLink {
+                    id: company.id,
+                    name: &company.name,
+                })?,
+            );
         } else {
             row = row.cell("view", dash());
         }
@@ -423,11 +435,10 @@ impl Books {
                 body: render(table)?,
                 ..Card::default()
             })?);
-            body.push(&render(Note)?);
         }
         let mut page = render(Header {
             title: Html::text("Company books"),
-            subtitle: "The book and fiscal calendar of each company you can work in",
+            subtitle: "Company books you can access",
             title_actions: bilibi_ui::Html::EMPTY,
             ..Header::default()
         })?;
