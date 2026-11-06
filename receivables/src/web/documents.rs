@@ -639,18 +639,18 @@ impl Documents {
             .collect();
         let mut who = Html::EMPTY;
         let mut series_field = Field::in_form("draft", "series_id")
-                .id("receivables-draft-series_id")
-                .label("Series")
-                .kind(InputKind::Select)
-                .prompt(if series.is_empty() {
-                    "No series yet — add one in Settings"
-                } else {
-                    "Choose a series"
-                })
-                .options(series)
-                .value(value("series_id"))
-                .required()
-                .errors(draft.errors.under("series_id", "Series"));
+            .id("receivables-draft-series_id")
+            .label("Series")
+            .kind(InputKind::Select)
+            .prompt(if series.is_empty() {
+                "No series yet — add one in Settings"
+            } else {
+                "Choose a series"
+            })
+            .options(series)
+            .value(value("series_id"))
+            .required()
+            .errors(draft.errors.under("series_id", "Series"));
         if credit {
             series_field = series_field.hint("The numbering the document takes when it is issued.");
         }
