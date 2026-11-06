@@ -1055,6 +1055,40 @@ pub(crate) struct JournalLink<'a> {
     pub label: &'a str,
 }
 
+/// A list filter that picks one coded record (an account, a currency): a
+/// searchable combobox, name first and code muted, sized like the toolbar's
+/// selects and posted on the same `filters` event. `TODO(platform)`: the
+/// shared `FilterToolbar` has no combobox control yet, so it sits beside it.
+pub(crate) fn filter_combobox(
+    id: &str,
+    key: &str,
+    label: &str,
+    value: &str,
+    all: &str,
+    options: Vec<bilibi_ui::Choice>,
+) -> Result<Html> {
+    let mut choices = vec![bilibi_ui::Choice::new(all, "")];
+    choices.extend(options);
+    render(bilibi_ui::Form {
+        id: &format!("{id}-filter"),
+        event: "filters",
+        change: true,
+        class: "ui-compact-controls mb-2 w-full sm:w-fit sm:min-w-36",
+        body: render(
+            bilibi_ui::Combobox::new(
+                id,
+                format!("{}[{key}]", bilibi_ui::list_state::FILTERS_FORM),
+            )
+            .aria_label(label)
+            .placeholder(all)
+            .wrapper_class("mb-0")
+            .value(value)
+            .options(choices),
+        )?,
+        actions: Html::EMPTY,
+    })
+}
+
 pub(crate) fn figure(text: &str) -> Result<Html> {
     render(Figure {
         text: text.to_owned(),
@@ -1156,7 +1190,8 @@ impl Pages {
                         .ok()
                         .filter(|id| *id > 0)
                         .ok_or(Error::NotFound)?;
-                    Box::new(entry::Entry::new(pages, id))
+                    let reverse = r.query.get("reverse").map(String::as_str) == Some("1");
+                    Box::new(entry::Entry::new(pages, id, reverse))
                 } else {
                     Box::new(journal::Journal::new(pages, id_param(r.path)?))
                 }

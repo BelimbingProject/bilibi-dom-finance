@@ -7,7 +7,7 @@ use crate::{
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
-use bilibi_finance_ledger::{AccountType, MinorUnits, Money};
+use bilibi_finance_ledger::{AccountType, MinorUnits, Money, People};
 use bilibi_ui::{
     params, Alert, BackLink, BuiltinColumn, Button, Card, EmptyState, Fact, Facts, FlexRow,
     FlexTable, Html, ListColumns, ListState, RecordLink, SectionHeading, StatItem, StatStrip,
@@ -38,6 +38,7 @@ impl Report {
         list: &ListState,
         query: &HashMap<String, String>,
         display: &DisplayContext,
+        names: &People,
         framed: bool,
     ) -> Result<Vec<Html>> {
         let mut parts = Vec::new();
@@ -60,7 +61,7 @@ impl Report {
         }
         match self {
             Self::Overview(r) => parts.extend(overview(r, columns, list, query)?),
-            Self::Activity(r) => parts.extend(activity(r, columns, list, query, display)?),
+            Self::Activity(r) => parts.extend(activity(r, columns, list, query, display, names)?),
             Self::Profit(r) => {
                 let mut rows = Vec::new();
                 for g in &r.groups {
@@ -161,7 +162,7 @@ pub(super) fn header(
             ..BackLink::default()
         })?;
         if let Some(Report::Activity(a)) = report {
-            title = format!("{} {}", a.account.code, a.account.name);
+            title = format!("{} · {}", a.account.name, a.account.code);
             account_id = Some(a.account.id.to_string());
             subtitle.push(&Html::text(&format!(
                 "{} · {}",
@@ -215,6 +216,14 @@ pub(super) fn header(
     // Bilimbi shows only the back link above a refused account's empty state.
     let missing = activity && !matches!(report, Some(Report::Activity(_)));
     let title_actions = Html::EMPTY;
+    // Back is the header's last action, as on every record page; it stands
+    // alone only when there is no header to hold it.
+    let back = if missing {
+        back
+    } else {
+        actions.push(&back);
+        Html::EMPTY
+    };
     render(HeaderView {
         title: &title,
         subtitle,
@@ -395,8 +404,13 @@ fn sections(
         }
         for a in &section.rows {
             let dom_id = format!("{id}-account-{}", a.account_id);
-            let mut row =
-                row(&dom_id).slot("account", Html::text(&format!("{} {}", a.code, a.name)));
+            let mut row = row(&dom_id).slot(
+                "account",
+                render(AccountName {
+                    name: &a.name,
+                    code: &a.code,
+                })?,
+            );
             for (i, value) in a.amounts.iter().enumerate() {
                 let mut q = HashMap::from([("through".into(), h.through_entry_number.to_string())]);
                 match h.columns[i] {
@@ -570,6 +584,7 @@ fn activity(
     list: &ListState,
     query: &HashMap<String, String>,
     display: &DisplayContext,
+    names: &People,
 ) -> Result<Vec<Html>> {
     let units = a.minor_units;
     let totals = render(Facts {
@@ -619,13 +634,18 @@ fn activity(
                 &instant.utc,
                 instant.mode.as_str(),
             ),
-            user: e.posted_by_user_id,
-            impersonator: e.posted_by_impersonator_id,
+            by: &names.who(Some(e.posted_by_user_id), e.posted_by_impersonator_id),
             compact,
         })?;
         rows.push(
             row(&format!("activity-entry-{}", e.id))
-                .slot("entry", text("", &e.entry_number.to_string(), false)?)
+                .slot(
+                    "entry",
+                    render(EntryLink {
+                        id: e.id,
+                        number: e.entry_number,
+                    })?,
+                )
                 .slot("date", Html::text(&e.entry_date.to_string()))
                 .slot("description", Html::text(&desc))
                 .slot(
@@ -733,6 +753,26 @@ struct Text<'a> {
     text: &'a str,
     emphasis: bool,
 }
+/// An account as a person reads it: the name, then the code muted.
+#[derive(Template)]
+#[template(
+    source = r#"{{ name }} <span class="italic text-ink-muted">{{ code }}</span>"#,
+    ext = "html"
+)]
+struct AccountName<'a> {
+    name: &'a str,
+    code: &'a str,
+}
+/// An entry's number, opening the entry in the ledger.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="tabular-nums text-link hover:underline">{{ number }}</a>"#,
+    ext = "html"
+)]
+struct EntryLink {
+    id: i64,
+    number: i64,
+}
 #[derive(Template)]
 #[template(path = "header.html")]
 struct HeaderView<'a> {
@@ -754,7 +794,6 @@ struct OverviewView {
 struct Posted<'a> {
     id: &'a str,
     instant: bilibi_ui::flex_table::Instant,
-    user: i64,
-    impersonator: Option<i64>,
+    by: &'a str,
     compact: bool,
 }

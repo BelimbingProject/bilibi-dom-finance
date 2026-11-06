@@ -237,17 +237,19 @@ impl Years {
             _ => ALL_COMPANIES.to_owned(),
         };
         // The shared filter toolbar has no combobox, so the filter is its own
-        // `filters` form around one (Platform follow-up).
+        // `filters` form around one (Platform follow-up), laid out and sized
+        // as the toolbar is: one row of compact controls.
         render(Form {
             id: "ledger-years-filter",
             event: "company_filter",
             change: true,
-            class: "mb-4 max-w-sm",
+            class: "ui-compact-controls mb-3 flex flex-wrap items-start gap-x-3 gap-y-2",
             body: {
                 let mut body = render(
                     Combobox::new("ledger-years-company", format!("{FILTER_FORM}[company]"))
-                        .label("Company")
-                        .wrapper_class("mb-0")
+                        .aria_label("Company")
+                        .placeholder("All companies")
+                        .wrapper_class("mb-0 w-full sm:w-96")
                         .value(value)
                         .options(options),
                 )?;
@@ -255,6 +257,8 @@ impl Years {
                     Field::in_form(FILTER_FORM, "status")
                         .id("ledger-years-status")
                         .label("Status")
+                        .label_class("sr-only")
+                        .wrapper_class("mb-0 w-full sm:w-auto sm:min-w-36")
                         .kind(InputKind::Select)
                         .value(&self.list.filters["status"])
                         .options(vec![

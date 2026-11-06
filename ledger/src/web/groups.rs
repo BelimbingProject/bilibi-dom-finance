@@ -179,7 +179,8 @@ impl Groups {
                     } else {
                         None
                     };
-                    rows_shown = self.table(&chart, figures.as_ref(), &mut body, company)?;
+                    rows_shown =
+                        self.table(&chart, figures.as_ref(), &mut body, company, can_manage)?;
                 }
             }
         }
@@ -229,6 +230,7 @@ impl Groups {
         figures: Option<&view::ChartBalances>,
         body: &mut Html,
         company: i64,
+        can_manage: bool,
     ) -> Result<usize> {
         let search = self.list.search.trim().to_lowercase();
         let by_id: HashMap<i64, &view::Account> = chart.iter().map(|a| (a.id, a)).collect();
@@ -349,7 +351,26 @@ impl Groups {
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
-        table.empty = Some(TableEmpty::Content(Html::text("No account groups yet.")));
+        // "Match" only when a filter is set; a chart with no group yet offers
+        // the button that adds the first one.
+        let filtered = !self.list.search.trim().is_empty() || self.list.filters["type"] != "all";
+        table.empty = Some(TableEmpty::State(if filtered {
+            EmptyState::missing("No account groups match these filters", "")
+                .id("ledger-groups-empty")
+        } else {
+            let mut empty =
+                EmptyState::missing("No account groups yet", "").id("ledger-groups-empty");
+            if can_manage {
+                empty = empty.action(render(CreateButton {
+                    noun: "Group",
+                    id: "ledger-group-new-empty",
+                    event: "new",
+                    button_type: "button",
+                    ..CreateButton::default()
+                })?);
+            }
+            empty
+        }));
         let mut card = render(table)?;
         card.push(&render(Pagination::new(
             "ledger-groups-pagination",

@@ -1,6 +1,8 @@
 //! The trial balance: every account with a posting on or before a date, with
 //! its debit and credit balance. The page pins the figures to the last entry
 //! it counted, so reloading shows the same numbers; "Show latest" lets them move.
+//! Each balance is the link to the entries that make it up, as the reports'
+//! figures are.
 use super::{event_type, figure, no_company, render, shell, unavailable, view, Flash, Pages, Read};
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -161,7 +163,6 @@ impl Trial {
                         BuiltinColumn::new("credit_balance", "Credit balance").right(),
                         BuiltinColumn::new("debits", "Total debits").right(),
                         BuiltinColumn::new("credits", "Total credits").right(),
-                        BuiltinColumn::new("entries", "Entries"),
                     ],
                 )
                 .map_err(|_| Error::Internal)?,
@@ -171,6 +172,24 @@ impl Trial {
         columns.load(&trial.rows, |r| r.id.to_string());
         let mut rows = Vec::new();
         for row in &trial.rows {
+            // What makes up this balance: the account's entries up to the date,
+            // counted at the same entry, on the reports' figure drill-down.
+            let entries = format!(
+                "/finance/reports/accounts/{}?to={}&through={}",
+                row.id, trial.as_of, trial.through_entry_number
+            );
+            let balance = |text: &str, side: &str| -> Result<Html> {
+                let shown = view::amount_or_dash(text, units);
+                if shown == "—" {
+                    return figure(&shown);
+                }
+                render(BalanceLink {
+                    id: &format!("ledger-trial-{}-{side}", row.id),
+                    href: &entries,
+                    title: &format!("Entries of {}", row.name),
+                    text: &shown,
+                })
+            };
             rows.push(
                 FlexRow::new(row.id.to_string())
                     .slot(
@@ -182,25 +201,10 @@ impl Trial {
                     )
                     .cell("name", Cell::text(&row.name))
                     .cell("type", Cell::text(view::type_label(&row.account_type)))
-                    .slot(
-                        "debit_balance",
-                        figure(&view::amount_or_dash(&row.debit_balance, units))?,
-                    )
-                    .slot(
-                        "credit_balance",
-                        figure(&view::amount_or_dash(&row.credit_balance, units))?,
-                    )
+                    .slot("debit_balance", balance(&row.debit_balance, "debit")?)
+                    .slot("credit_balance", balance(&row.credit_balance, "credit")?)
                     .slot("debits", figure(&view::amount(&row.debits, units))?)
-                    .slot("credits", figure(&view::amount(&row.credits, units))?)
-                    .slot(
-                        "entries",
-                        render(EntriesLink {
-                            href: format!(
-                                "/finance/ledger/journals?account={}&to={}&through={}",
-                                row.id, trial.as_of, trial.through_entry_number
-                            ),
-                        })?,
-                    ),
+                    .slot("credits", figure(&view::amount(&row.credits, units))?),
             );
         }
         let totals: (Decimal, Decimal) = trial
@@ -266,13 +270,17 @@ struct StatusRow {
     body: Html,
 }
 
+/// A balance that opens the entries behind it.
 #[derive(Template)]
 #[template(
-    source = r#"<a href="{{ href }}" class="text-link hover:underline">Entries</a>"#,
+    source = r#"<a id="{{ id }}" href="{{ href }}" title="{{ title }}" class="tabular-nums text-link hover:underline">{{ text }}</a>"#,
     ext = "html"
 )]
-struct EntriesLink {
-    href: String,
+struct BalanceLink<'a> {
+    id: &'a str,
+    href: &'a str,
+    title: &'a str,
+    text: &'a str,
 }
 
 impl LiveState<Scope, Error> for Trial {

@@ -122,8 +122,10 @@ they govern this code and are not copied here.
   carries a trailing `*` in its `label` with the plain name as `aria_label`
   (a stopgap until the Platform's Combobox draws the shared required marker),
   and the filter
-  toolbar has no combobox, so the Journals account filter is a shared
-  `Form` on the `filters` event around one.
+  toolbar has no combobox, so a coded filter (an account, a currency) is
+  `filter_combobox` (`ledger/src/web/mod.rs`) beside the toolbar, posting the
+  same `filters` event at the toolbar's height; give the toolbar
+  `class = "min-w-0 flex-1"` to share its row (`books.rs`, `journals.rs`).
 - Declare every page or panel service's write events in its `PageWrites`
   (Bilibi `apps/base/agent_api/README.md`): the host refuses, as
   `Error::Internal` at run time, a live-event write its service has not
@@ -133,6 +135,11 @@ they govern this code and are not copied here.
   facade writes keep a `Pending::Every` allowance with its reason beside
   their routes, and a new write event calls its operation contract through
   `PageContracts` where one exists.
+- A row's Actions… item is a link (`AddToMenu`), so it may open only a dialog
+  that needs no review on open (`entry-{id}?reverse=1`, `?correct=`, `?copy=`):
+  the host refuses a contract review or write outside a live event, and a
+  review on mount ends the session. Keep a confirmation that reviews first
+  (closing a period) as its row's button until `AddToMenu` can raise events.
 - Offer an action on another module's record (New invoice on a customer, company or contact) as a `bilibi_records::drop_target!` beside the page's `PageWrites`, whose page opens its own dialog from `?drop=`/`drop_records` (`receivables/src/web/documents/new_draft.rs`), never a button or link of the list's own: every list of that kind then shows it in its row actions menu, only to people holding the contract's capability. A list of records that are a party shows that menu per row through `Records::add_to` (`receivables/src/web/actions.rs`).
 - Build a page on contracts, not the facade: use `Pages::read`, `read_all` and `write` in `receivables/src/web/mod.rs` (they go through `PageContracts` and unwrap the envelope), and name each write event's contract in `PAGE_WRITES` with `Pending::None`. A read with no contract gets a contract in the owning module (`aging.get`), not a facade call from the page.
 - A settings page names the company it changes (header subtitle and each dialog's description, through `Pages::company_name`); edit a settings row's name, status or account in place with `InlineEdit`/`InlineChoice` keyed per row on a `save_event` listed in `PAGE_WRITES`, and open a dialog only for a new record whose fields are fixed once saved. `receivables/src/web/settings.rs` is the running pattern, including a setup that needs two values in one write (the first choice waits on the page, nothing half-set is persisted) and a change history folded under `Fold` (`DESIGN.md`: History is a quiet disclosure).
