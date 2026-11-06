@@ -613,7 +613,7 @@ impl Accounts {
                         if account.is_group {
                             Html::text("—")
                         } else {
-                            status_badge(account.active)?
+                            bilibi_ui::active_badge(account.active)
                         },
                     )
                     .cell(
@@ -786,17 +786,6 @@ impl Accounts {
             actions: dialog_actions(actions)?,
         })
     }
-}
-
-pub(super) fn status_badge(active: bool) -> Result<Html> {
-    render(Badge::status(
-        if active {
-            BadgeKind::Success
-        } else {
-            BadgeKind::Neutral
-        },
-        if active { "Active" } else { "Inactive" },
-    ))
 }
 
 impl LiveState<Scope, Error> for Accounts {

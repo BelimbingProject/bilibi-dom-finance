@@ -480,7 +480,7 @@ impl Receivables {
                     &owner(w.id),
                     &Reversal {
                         entry_date: day,
-                        description: input["reason"].as_str().unwrap_or_default().trim().into(),
+                        description: bilibi_agent_api::text_field(input, "reason"),
                         reference: None,
                     },
                 )

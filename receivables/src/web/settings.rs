@@ -587,7 +587,7 @@ impl Settings {
                     "status",
                     self.row_choice(
                         &field("active", "Status", &s.active.to_string()),
-                        f::active_badge(s.active)?,
+                        bilibi_ui::active_badge(s.active),
                         Self::status_choices(),
                     )?,
                 );
@@ -676,7 +676,7 @@ impl Settings {
                     "status",
                     self.row_choice(
                         &field("active", "Status", &t.active.to_string()),
-                        f::active_badge(t.active)?,
+                        bilibi_ui::active_badge(t.active),
                         Self::status_choices(),
                     )?,
                 );

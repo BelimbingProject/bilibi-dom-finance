@@ -395,7 +395,7 @@ impl Customer {
                 "Status",
                 render(InlineChoice {
                     field: status_field,
-                    display: f::active_badge(c.active)?,
+                    display: bilibi_ui::active_badge(c.active),
                     editor: render(status_editor)?,
                 })?,
             ),

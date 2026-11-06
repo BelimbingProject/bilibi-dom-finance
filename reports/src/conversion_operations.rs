@@ -9,13 +9,9 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_tenancy::Scope;
 use jiff::civil::Date;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 const SIGN_ATTESTATION: &str = "I have reviewed this exact issued snapshot, its differences, excluded history and schedule limits. My note explains my conclusion and any qualifications. This attestation does not change the figures or resolve differences.";
 fn owner() -> bilibi_agent_api::Result<&'static Reports> {
     Ok(OWNER.get().ok_or(Error::Internal)?)
-}
-fn invalid(field: &str, text: impl Into<String>) -> bilibi_agent_api::Error {
-    bilibi_agent_api::Error::InvalidInput(BTreeMap::from([(field.into(), vec![text.into()])]))
 }
 fn refusal(e: ReportsError) -> bilibi_agent_api::Error {
     match e {
@@ -24,21 +20,21 @@ fn refusal(e: ReportsError) -> bilibi_agent_api::Error {
             bilibi_agent_api::Error::NotFound
         }
         ReportsError::Failed(e) => e.into(),
-        e => invalid("base", e.to_string()),
+        e => bilibi_agent_api::invalid("base", e.to_string()),
     }
 }
 fn id(input: &Value, key: &str) -> bilibi_agent_api::Result<i64> {
     input[key]
         .as_i64()
         .filter(|n| *n > 0)
-        .ok_or_else(|| invalid(key, "Choose a record."))
+        .ok_or_else(|| bilibi_agent_api::invalid(key, "Choose a record."))
 }
 fn pins(input: &Value) -> bilibi_agent_api::Result<crate::ConversionPins> {
     if input["pins"].is_null() {
         Ok(Default::default())
     } else {
         serde_json::from_value(input["pins"].clone()).map_err(|_| {
-            invalid(
+            bilibi_agent_api::invalid(
                 "pins",
                 "Use the complete boundaries returned by the report.",
             )
@@ -49,12 +45,15 @@ fn day(input: &Value) -> bilibi_agent_api::Result<Date> {
     input["as_of"]
         .as_str()
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| invalid("as_of", "Choose the reporting date."))
+        .ok_or_else(|| bilibi_agent_api::invalid("as_of", "Choose the reporting date."))
 }
 fn text(input: &Value, key: &str, max: usize) -> bilibi_agent_api::Result<String> {
     let value = input[key].as_str().unwrap_or("").trim();
     if value.is_empty() || value.chars().count() > max || value.contains('\0') {
-        Err(invalid(key, format!("Enter 1 to {max} characters.")))
+        Err(bilibi_agent_api::invalid(
+            key,
+            format!("Enter 1 to {max} characters."),
+        ))
     } else {
         Ok(value.into())
     }
@@ -71,7 +70,7 @@ async fn writable(
         .map_err(refusal)?;
     bilibi_company::require_writable(c, s, company, true)
         .await
-        .map_err(|e| invalid("base", e.to_string()))?;
+        .map_err(|e| bilibi_agent_api::invalid("base", e.to_string()))?;
     Ok(())
 }
 async fn fence(c: &dyn OperationClient, v: &Value, consume: bool) -> bilibi_agent_api::Result<()> {
@@ -160,7 +159,10 @@ impl ReadHandler for List {
                 .map_err(refusal)?;
             let after = input["after"].as_i64().unwrap_or(0);
             if after < 0 {
-                return Err(invalid("after", "Choose a nonnegative cursor."));
+                return Err(bilibi_agent_api::invalid(
+                    "after",
+                    "Choose a nonnegative cursor.",
+                ));
             }
             let rows=c.query("SELECT id,issued_at::text,through_entry_number,content->>'as_of',EXISTS(SELECT 1 FROM finance_reports_conversion_signoffs s WHERE s.tenant_id=$1 AND s.company_id=$2 AND s.report_id=r.id) FROM finance_reports_issued r WHERE tenant_id=$1 AND company_id=$2 AND kind='conversion' AND id>$3 ORDER BY id LIMIT 100",&[&s.tenant(),&company,&after]).await.map_err(Error::from)?.iter().map(|r|json!({"id":r.get::<_,i64>(0),"issued_at":r.get::<_,String>(1),"through_entry_number":r.get::<_,i64>(2),"as_of":r.get::<_,String>(3),"signed":r.get::<_,bool>(4)})).collect::<Vec<_>>();
             let next = if rows.len() == 100 {
@@ -196,7 +198,7 @@ async fn issue_review(
         let reference_key = format!("{area}_reference");
         let status = input[&status_key].as_str().unwrap_or("not_assessed");
         if !["not_assessed", "applicable", "not_applicable"].contains(&status) {
-            return Err(invalid(
+            return Err(bilibi_agent_api::invalid(
                 &status_key,
                 "Choose whether this schedule applies.",
             ));
@@ -263,14 +265,17 @@ async fn sign_review(
         .await
         .map_err(refusal)?;
     if record["signoffs"].as_array().is_none_or(|a| !a.is_empty()) {
-        return Err(invalid("report_id", "This report is already signed."));
+        return Err(bilibi_agent_api::invalid(
+            "report_id",
+            "This report is already signed.",
+        ));
     }
     let approval = Reports::conversion_approval(&record, None).map_err(refusal)?;
     let decision = owner()?
         .ledger
         .preview_approval_on(c, s, company, &approval)
         .await
-        .map_err(|e| invalid("base", e.to_string()))?;
+        .map_err(|e| bilibi_agent_api::invalid("base", e.to_string()))?;
     Ok(
         json!({"record":record,"reviewer_reference":text(input,"reviewer_reference",2000)?,"note":text(input,"note",8000)?,"approval":decision,"attestation":SIGN_ATTESTATION}),
     )

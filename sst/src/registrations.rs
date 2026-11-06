@@ -187,7 +187,7 @@ impl Sst {
         let current = latest(tx.sql(), tenant, company).await?;
         let mut errors = Vec::new();
         let number = |given: &Option<String>, carried: Option<&String>| match given {
-            Some(text) => blank_to_none(Some(text)).map(|t| t.to_uppercase()),
+            Some(text) => bilibi_ui::params::blank_to_none(Some(text)).map(|t| t.to_uppercase()),
             None => carried.cloned(),
         };
         let sales_tax_number = number(

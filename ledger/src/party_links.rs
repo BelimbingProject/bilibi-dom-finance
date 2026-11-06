@@ -52,10 +52,6 @@ pub struct PartyLinks<'a> {
 fn invalid(field: &'static str, message: impl Into<String>) -> LedgerError {
     LedgerError::Invalid(vec![FieldError::new(field, message)])
 }
-fn optional(value: String) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
-}
 fn party_id(kind: &str, id: i64) -> Result<bilibi_party::PartyId> {
     match kind {
         "company" => Ok(bilibi_party::PartyId::Organisation(
@@ -164,7 +160,8 @@ impl<'a> PartyLinks<'a> {
                             facts.restricted.push(key.into());
                             continue;
                         }
-                        let value = value.and_then(optional);
+                        let value =
+                            value.and_then(|value| bilibi_ui::params::blank_to_none(Some(&value)));
                         match key {
                             "tax_id" => facts.tax_id = value,
                             "registration_number" => facts.registration_number = value,

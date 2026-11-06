@@ -52,9 +52,9 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
 
 pub(super) fn status_badge(p: &Payment) -> Result<Html> {
     if p.reversal.is_some() {
-        f::badge("Reversed", BadgeKind::Warning)
+        Ok(bilibi_ui::status_badge(BadgeKind::Warning, "Reversed"))
     } else {
-        f::badge("Posted", BadgeKind::Success)
+        Ok(bilibi_ui::status_badge(BadgeKind::Success, "Posted"))
     }
 }
 

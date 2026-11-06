@@ -88,7 +88,7 @@ pub(crate) fn validate_change(
     required: bool,
     reason: Option<&str>,
 ) -> std::result::Result<Option<String>, Vec<FieldError>> {
-    let reason = trimmed(reason);
+    let reason = bilibi_ui::params::blank_to_none(reason);
     match &reason {
         Some(text) if text.chars().count() > TEXT_LIMIT => Err(vec![too_long("reason")]),
         None if !required => Err(vec![FieldError::new(
@@ -450,7 +450,7 @@ pub(crate) async fn exception(
 pub(crate) fn validate_note(
     note: Option<&str>,
 ) -> std::result::Result<Option<String>, Vec<FieldError>> {
-    let note = trimmed(note);
+    let note = bilibi_ui::params::blank_to_none(note);
     if note
         .as_ref()
         .is_some_and(|text| text.chars().count() > TEXT_LIMIT)
@@ -521,12 +521,6 @@ fn exception_from_row(row: &Row) -> Result<ApprovalException> {
         recorded_at: parse(row.get(15))?,
         review,
     })
-}
-
-fn trimmed(text: Option<&str>) -> Option<String> {
-    text.map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
 }
 
 fn too_long(field: &'static str) -> FieldError {

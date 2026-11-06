@@ -95,8 +95,7 @@ impl Payments {
             self.unavailable = true;
             return Ok(());
         };
-        let status = params::blank_to_none(self.list.filters.get("status").map(String::as_str))
-            .map(str::to_owned);
+        let status = params::blank_to_none(self.list.filters.get("status").map(String::as_str));
         self.unavailable = false;
         let page = self
             .pages

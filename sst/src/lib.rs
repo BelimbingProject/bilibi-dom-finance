@@ -408,15 +408,8 @@ async fn authorize(
         })
 }
 
-/// Trimmed text, or `None` when nothing is left.
-fn blank_to_none(text: Option<&str>) -> Option<String> {
-    text.map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-}
-
 fn reason(text: Option<&str>, errors: &mut Vec<FieldError>) -> Option<String> {
-    let reason = blank_to_none(text);
+    let reason = bilibi_ui::params::blank_to_none(text);
     if reason.as_ref().is_some_and(|r| r.chars().count() > 500) {
         errors.push(FieldError::new(
             "reason",

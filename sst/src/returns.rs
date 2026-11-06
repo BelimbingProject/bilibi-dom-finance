@@ -664,7 +664,7 @@ fn adjustment_amount(
     minor_units: u32,
     errors: &mut Vec<FieldError>,
 ) -> Option<Decimal> {
-    let Some(text) = blank_to_none(text) else {
+    let Some(text) = bilibi_ui::params::blank_to_none(text) else {
         if taken {
             errors.push(FieldError::new(field, "can't be blank"));
             return None;
@@ -1086,8 +1086,8 @@ impl Sst {
                 ));
             }
         }
-        let description = blank_to_none(input.description.as_deref());
-        let reference = blank_to_none(input.reference.as_deref());
+        let description = bilibi_ui::params::blank_to_none(input.description.as_deref());
+        let reference = bilibi_ui::params::blank_to_none(input.reference.as_deref());
         if description.is_none() {
             errors.push(FieldError::new("description", "can't be blank"));
         }
@@ -1160,7 +1160,7 @@ impl Sst {
             return Err(SstError::AdjustmentWithdrawn);
         }
         loaded.open()?;
-        let description = blank_to_none(reason);
+        let description = bilibi_ui::params::blank_to_none(reason);
         let mut errors = Vec::new();
         if description.is_none() {
             errors.push(FieldError::new("description", "can't be blank"));

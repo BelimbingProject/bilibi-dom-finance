@@ -1427,8 +1427,8 @@ impl Einvoice {
             Some(format!(
                 "ledger entry {} recognises {}, not the document's {}",
                 entry.id,
-                money(recognised),
-                money(billed)
+                bilibi_locale::money(recognised, 2),
+                bilibi_locale::money(billed, 2)
             ))
         } else {
             None
@@ -2090,12 +2090,4 @@ fn owner_record(text: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         && number.starts_with(|c: char| ('1'..='9').contains(&c))
         && number.chars().all(|c| c.is_ascii_digit())
-}
-
-/// An amount as a source refusal names it: two places.
-fn money(amount: rust_decimal::Decimal) -> String {
-    format!(
-        "{:.2}",
-        amount.round_dp_with_strategy(2, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
-    )
 }

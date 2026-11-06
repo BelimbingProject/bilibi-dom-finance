@@ -589,7 +589,7 @@ impl Setup {
         let input = MappingInput {
             source,
             tax_code_id,
-            box_key: params::blank_to_none(Some(d.value("box"))).map(str::to_owned),
+            box_key: params::blank_to_none(Some(d.value("box"))),
             reason: Some(d.value("reason").to_owned()),
         };
         let result = match company(scope) {
