@@ -257,7 +257,6 @@ impl Opening {
                 kind: StatusKind::Error,
                 class: "mb-4",
                 body: Html::text(refusal),
-                ..Alert::default()
             })?);
         }
         if !context.is_null() {
