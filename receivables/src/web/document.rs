@@ -443,19 +443,17 @@ impl Document {
             ));
         }
         if let Some(pins) = self.balance_pins.as_object() {
-            for (key, label) in [("as_of", "Balance as of")] {
-                items.push(f::fact(
-                    label,
-                    &pins
-                        .get(key)
-                        .map(|v| {
-                            v.as_str()
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| v.to_string())
-                        })
-                        .unwrap_or_default(),
-                ));
-            }
+            items.push(f::fact(
+                "Balance as of",
+                &pins
+                    .get("as_of")
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| v.to_string())
+                    })
+                    .unwrap_or_default(),
+            ));
         }
         if let Some(order) = &d.sales_order {
             items.push(f::fact("Sales order", &order.order_number));
