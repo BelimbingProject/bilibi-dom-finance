@@ -55,6 +55,7 @@ pub(super) struct Bills {
     units: Option<MinorUnits>,
     can_create: bool,
     can_approve: bool,
+    can_match: bool,
     unavailable: bool,
     framed: bool,
 }
@@ -95,6 +96,7 @@ impl Bills {
             units: None,
             can_create: false,
             can_approve: false,
+            can_match: false,
             unavailable: false,
             framed,
         })
@@ -103,6 +105,7 @@ impl Bills {
     pub(super) async fn reload(&mut self, scope: &Scope) -> Result<()> {
         self.can_create = self.pages.allowed(scope, CREATE_DOCUMENTS).await?;
         self.can_approve = self.pages.allowed(scope, APPROVE_DOCUMENTS).await?;
+        self.can_match = self.pages.allowed(scope, crate::APPROVE_MATCH).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
         self.documents.clear();
         self.total = 0;
@@ -285,7 +288,7 @@ impl Bills {
             }
             let mut table =
                 FlexTable::new("payables-bills-table", self.columns.flex_columns(), rows);
-            table.actions = self.can_create || self.can_approve;
+            table.actions = self.can_create || self.can_approve || self.can_match;
             table.event = "bills_grid";
             table.caption = "Bills";
             table.framed = false;
@@ -336,6 +339,16 @@ impl Bills {
             items.push(RecordAction::link(
                 "Record debit note",
                 format!("{NEW_NOTE}?bill={}", d.id),
+            ));
+        }
+        if self.can_match
+            && matches!(d.status.as_str(), "approved" | "held")
+            && d.match_status.as_deref() == Some("held")
+        {
+            items.push(RecordAction::here(
+                "Approve exceptions",
+                &here,
+                "approve_exception",
             ));
         }
         if self.can_approve && matches!(d.status.as_str(), "draft" | "approved" | "held") {
