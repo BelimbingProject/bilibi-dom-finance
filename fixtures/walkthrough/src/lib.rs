@@ -39,6 +39,7 @@ pub mod receivables_documents;
 pub mod reconciliation;
 pub mod reconciliation_first_import;
 pub mod reports;
+pub mod source_bridge;
 pub mod totals;
 
 pub mod clearance;

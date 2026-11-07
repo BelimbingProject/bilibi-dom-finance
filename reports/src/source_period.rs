@@ -45,7 +45,7 @@ fn capability(kind: &str, write: bool) -> &'static str {
         _ => VIEW,
     }
 }
-async fn authorise(
+pub(crate) async fn authorise(
     client: &dyn OperationClient,
     scope: &Scope,
     company: i64,
@@ -56,7 +56,7 @@ async fn authorise(
     bilibi_company::authorize_work_target(client, scope, company.get(), cap).await?;
     Ok(())
 }
-fn company(input: &Value) -> bilibi_agent_api::Result<i64> {
+pub(crate) fn company(input: &Value) -> bilibi_agent_api::Result<i64> {
     input["company_id"]
         .as_i64()
         .filter(|id| *id > 0)
