@@ -17,15 +17,17 @@ use serde_json::{json, Value};
 use std::fmt::Debug;
 
 fn field<T: Debug>(result: Result<T, R>, name: &str, message: &str) {
-    match result {
-        Err(R::Invalid(errors)) => assert!(
-            errors
-                .iter()
-                .any(|e| e.field == name && e.message == message),
-            "expected {name}: {message}; got {errors:?}"
-        ),
-        other => panic!("expected {name}: {message}; got {other:?}"),
-    }
+    // A refusal from the party facts frozen at issue arrives through the ledger.
+    let found = match &result {
+        Err(R::Invalid(errors)) => errors
+            .iter()
+            .any(|e| e.field == name && e.message == message),
+        Err(R::Ledger(LedgerError::Invalid(errors))) => errors
+            .iter()
+            .any(|e| e.field == name && e.message == message),
+        _ => false,
+    };
+    assert!(found, "expected {name}: {message}; got {result:?}");
 }
 
 pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error::Error>> {
@@ -1153,7 +1155,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         "boundaries: due-today bucket zero; tax entry pins; competing settlements/reversals serialize; received-tax fractions stay unrounded"
     );
     let datasets = Receivables::evidence_datasets();
-    assert_eq!(datasets.len(), 17);
+    assert_eq!(datasets.len(), 20);
     for dataset in datasets {
         let mut after = None;
         let mut count = 0;
@@ -1192,6 +1194,9 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
                         | "opening_decision"
                         | "opening_batch"
                         | "opening_item"
+                        | "sales_order"
+                        | "sales_order_part"
+                        | "settlement"
                 ),
             "empty evidence {dataset}"
         );

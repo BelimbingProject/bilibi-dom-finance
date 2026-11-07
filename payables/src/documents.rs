@@ -213,8 +213,8 @@ impl Payables {
         if due < input.document_date {
             return Err(invalid("due_date", "cannot be before the document date"));
         }
-        if bill.is_none() && c.query_opt("SELECT id FROM finance_payables_documents WHERE tenant_id=$1 AND company_id=$2 AND (party_key=$3 OR party_key IN (SELECT supplier_key FROM finance_payables_vendor_keys WHERE tenant_id=$1 AND company_id=$2 AND vendor_id=$6)) AND party_document_number=$4 AND document_type='bill' AND status<>'voided' AND id<>COALESCE($5::bigint,0) AND NOT EXISTS(SELECT 1 FROM finance_payables_opening_items i JOIN finance_payables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=finance_payables_documents.id)",&[&tenant,&company,&key,&number,&replacing,&input.vendor_id]).await?.is_some() {
-            return Err(invalid("party_document_number","is already recorded for this vendor or a confirmed historical supplier key"));
+        if bill.is_none() && c.query_opt("SELECT id FROM finance_payables_documents WHERE tenant_id=$1 AND company_id=$2 AND party_key=$3 AND party_document_number=$4 AND document_type='bill' AND status<>'voided' AND id<>COALESCE($5::bigint,0) AND NOT EXISTS(SELECT 1 FROM finance_payables_opening_items i JOIN finance_payables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=finance_payables_documents.id)",&[&tenant,&company,&key,&number,&replacing]).await?.is_some() {
+            return Err(invalid("party_document_number","is already recorded for this vendor"));
         }
         let book = self.ledger.get_book_on(c, s, company).await?;
         let accounts = self.ledger.list_accounts_on(c, s, company).await?;

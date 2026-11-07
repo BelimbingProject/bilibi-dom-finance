@@ -125,22 +125,6 @@ const DATASETS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
-        "vendor_key",
-        "finance_payables_vendor_keys",
-        &[
-            "id",
-            "tenant_id",
-            "company_id",
-            "vendor_id",
-            "supplier_key",
-            "reason",
-            "confirmed_by_user_id",
-            "confirmed_by_impersonator_id",
-            "inserted_at",
-            "updated_at",
-        ],
-    ),
-    (
         "allocation",
         "finance_payables_payment_allocations",
         &[

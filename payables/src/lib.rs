@@ -13,7 +13,7 @@ mod opening_lifecycle;
 mod opening_operations;
 mod settlements;
 mod vendors;
-pub use vendors::{SupplierHistory, Vendor, VendorInput};
+pub use vendors::{Vendor, VendorInput};
 mod payments;
 pub use payments::{
     Allocation, AllocationInput, NewPayment, Payment, PaymentDecision, PaymentQuery,
@@ -68,6 +68,7 @@ inventory::submit! { Module {
         ("finance-payables-008-core-party-code", include_str!("../migrations/008-core-party-code.sql")),
             ("finance-payables-009-opening-credits", include_str!("../migrations/009-opening-credits.sql")),
             ("finance-payables-010-credit-settlements", include_str!("../migrations/010-credit-settlements.sql")),
+            ("finance-payables-011-drop-vendor-keys", include_str!("../migrations/011-drop-vendor-keys.sql")),
     ],
     services: &[Service { id: SERVICE, factory: |s| { let payables = Arc::new(Payables {
         db: s.get::<Db>("base/database.pool")?.as_ref().clone(),

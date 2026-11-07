@@ -422,27 +422,28 @@ impl Payables {
         let key = first_bill.party.key.clone();
         if let Some(vendor) = input.vendor_id {
             self.vendor_on(c, s, company, vendor).await?;
-            if vendors::mapped(c, s.tenant(), company, &key).await? != Some(vendor) {
+            if vendors::of_key(c, s.tenant(), company, &key).await? != Some(vendor) {
                 return Err(invalid(
                     "vendor_id",
-                    "does not match the allocated bill's confirmed supplier key",
+                    "does not match the allocated bill's supplier",
                 ));
             }
         } else if input.supplier_key.as_deref() != Some(key.as_str()) {
             return Err(invalid(
                 "vendor_id",
-                "is required; an unmatched historical bill may instead name its supplier_key",
+                "is required; a bill group that belongs to no vendor may instead name its supplier_key",
             ));
         }
-        if input.vendor_id.is_none() && !decided_request {
-            if let Some(vendor) = vendors::mapped(c, s.tenant(), company, &key).await? {
-                if key == vendors::key(vendor) {
-                    return Err(invalid(
-                        "vendor_id",
-                        "is required for a linked vendor's bills",
-                    ));
-                }
-            }
+        if input.vendor_id.is_none()
+            && !decided_request
+            && vendors::of_key(c, s.tenant(), company, &key)
+                .await?
+                .is_some()
+        {
+            return Err(invalid(
+                "vendor_id",
+                "is required for a linked vendor's bills",
+            ));
         }
         if input.supplier_key.as_ref().is_some_and(|k| k != &key) {
             return Err(invalid(
@@ -476,7 +477,7 @@ impl Payables {
                 if b.party.key != key {
                     return Err(invalid(
                         "document_id",
-                        "has another supplier key; pay each historical key separately",
+                        "has another supplier key; pay each supplier key separately",
                     ));
                 }
                 crate::opening::settlement_date(
@@ -799,7 +800,7 @@ pub(crate) async fn request(
     let decision=c.query_opt("SELECT event,reason,payment_id,actor_user_id,actor_impersonator_id,occurred_at::text FROM finance_payables_payment_request_events WHERE tenant_id=$1 AND company_id=$2 AND request_id=$3",&[&tenant,&company,&id]).await?.map(|e|PaymentDecision {event:e.get(0),reason:e.get(1),payment_id:e.get(2),actor_user_id:e.get(3),actor_impersonator_id:e.get(4),occurred_at:e.get(5)});
     Ok(PaymentRequest {
         id,
-        vendor_id: vendors::mapped(c, tenant, company, &r.get::<_, String>(2)).await?,
+        vendor_id: vendors::of_key(c, tenant, company, &r.get::<_, String>(2)).await?,
         request_number: r.get(0),
         payment_date: r.get::<_, String>(1).parse().map_err(|_| Error::Invalid)?,
         party_key: r.get(2),
@@ -828,7 +829,7 @@ pub(crate) async fn payment(
     let reversed=c.query_opt("SELECT id FROM finance_payables_payments WHERE tenant_id=$1 AND company_id=$2 AND reverses_payment_id=$3",&[&tenant,&company,&id]).await?.map(|r|r.get(0));
     Ok(Payment {
         id,
-        vendor_id: vendors::mapped(c, tenant, company, &r.get::<_, String>(2)).await?,
+        vendor_id: vendors::of_key(c, tenant, company, &r.get::<_, String>(2)).await?,
         payment_number: r.get(0),
         payment_date: r.get::<_, String>(1).parse().map_err(|_| Error::Invalid)?,
         party_key: r.get(2),

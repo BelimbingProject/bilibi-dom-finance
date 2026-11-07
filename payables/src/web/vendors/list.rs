@@ -1,6 +1,6 @@
 //! The Suppliers list (one row per supplier, its terms, accounts, tax and
-//! status editable in place) and the table of historical supplier keys under
-//! it, with the page's header, search, pagination and company drop zone.
+//! status editable in place), with the page's header, search, pagination and
+//! company drop zone.
 use super::Vendors;
 use crate::web::{company, render};
 use crate::Vendor;
@@ -79,12 +79,8 @@ impl Vendors {
             PageCounts::new(self.list.page, self.list.page_size, total),
             &[25, 50, 100],
         ))?);
-        body.push(&self.history_table()?);
         if let Some(create) = &self.create {
             body.push(&self.create_dialog(create)?);
-        }
-        if let Some((key, values, errors)) = &self.mapping {
-            body.push(&self.map_dialog(key, values, errors)?);
         }
         let html = render(bilibi_ui::Page {
             id: "payables-vendors",
@@ -391,63 +387,5 @@ impl Vendors {
         };
         row = row.slot("relationship", relation);
         Ok(row)
-    }
-
-    /// The table of supplier keys from old bills, with its heading and the Review match button.
-    fn history_table(&self) -> Result<Html> {
-        let mut body = render(SectionHeading{class:"mt-6",title:"Supplier keys on old bills",description:"Match each key to a supplier after checking its details and similar keys. A match cannot be undone. Bills, payment keys and aging groups stay as they are.",..SectionHeading::default()})?;
-        let mut rows = vec![];
-        for h in &self.history {
-            let snapshots = h
-                .snapshots
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|v| {
-                    format!(
-                        "{} | Tax ID: {} | Registration: {} | Address: {}",
-                        v["name"].as_str().unwrap_or("—"),
-                        v["tax_id"].as_str().unwrap_or("—"),
-                        v["registration_id"].as_str().unwrap_or("—"),
-                        v["address"].as_str().unwrap_or("—")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            let matched = match h.vendor_id {
-                Some(id) => Html::text(&self.all.iter().find(|v| v.id == id).map_or_else(
-                    || format!("Supplier {id}"),
-                    |v| format!("{} · {}", v.code, v.party.name),
-                )),
-                None if self.can_manage => Self::button(
-                    &format!("vendor-key-{}", h.supplier_key),
-                    "show_mapping",
-                    "Review match",
-                    "key",
-                    &h.supplier_key,
-                )?,
-                None => Html::text("Unmatched: review required"),
-            };
-            rows.push(
-                FlexRow::new(&h.supplier_key)
-                    .cell(
-                        "key",
-                        Cell::text(format!("{} · {} documents", h.supplier_key, h.documents)),
-                    )
-                    .cell("facts", Cell::text(snapshots))
-                    .cell("collisions", Cell::text(h.collision_keys.join(", ")))
-                    .slot("vendor", matched),
-            );
-        }
-        let mut history = FlexTable::new(
-            "payables-vendor-keys",
-            self.history_columns.flex_columns(),
-            rows,
-        );
-        history.caption = "Historical supplier keys";
-        history.event = "keys_grid";
-        history.zoom = self.history_columns.zoom;
-        body.push(&render(history)?);
-        Ok(body)
     }
 }

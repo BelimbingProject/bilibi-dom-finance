@@ -339,7 +339,6 @@ fn payment_input(v: &Value, units: MinorUnits) -> Result<NewPayment> {
 enum Write {
     VendorCreate,
     VendorUpdate,
-    MapKey,
     Settings,
     TaxCreate,
     TaxUpdate,
@@ -359,7 +358,6 @@ impl Write {
         match self {
             Self::VendorCreate
             | Self::VendorUpdate
-            | Self::MapKey
             | Self::Settings
             | Self::TaxCreate
             | Self::TaxUpdate => MANAGE_SETTINGS,
@@ -402,17 +400,6 @@ impl Write {
                     None => Value::Null,
                 };
                 json!({"before":before,"target":after["_target"],"after":after})
-            }
-            Self::MapKey => {
-                p.prepare_mapping(
-                    c,
-                    s,
-                    company,
-                    id(v, "vendor_id")?,
-                    text(v, "supplier_key")?,
-                    text(v, "reason")?,
-                )
-                .await?
             }
             Self::Settings => {
                 let input = settings_input(c, s, company, v).await?;
@@ -674,18 +661,6 @@ impl WriteHandler for Write {
                                 .await?
                         )
                     }
-                    Self::MapKey => {
-                        p.map_supplier_key_on(
-                            tx,
-                            s,
-                            company,
-                            id(v, "vendor_id")?,
-                            text(v, "supplier_key")?,
-                            text(v, "reason")?,
-                        )
-                        .await?;
-                        json!({"vendor_id":v["vendor_id"],"supplier_key":v["supplier_key"]})
-                    }
                     Self::Settings => json!(
                         p.put_settings_on(
                             tx,
@@ -829,7 +804,6 @@ enum Read {
     Aging,
     Vendor,
     Vendors,
-    SupplierHistory,
     Settings,
     Taxes,
     Document,
@@ -886,7 +860,6 @@ impl ReadHandler for Read {
                         let next=if more { records.last().map(|v|v.id) } else { None };
                         json!({"records":records,"next_after_id":next})
                     },
-                    Self::SupplierHistory=>json!({"records":owner()?.supplier_history_on(c,s,company).await?}),
                     Self::Settings=>json!({"settings":store::settings(c,tenant,company).await?.map(|(_,s)|s)}),
                     Self::DocumentPage=>json!(owner()?.page_documents_on(c,s,company,&DocumentPageQuery {
                         source:opt(v,"source"), document_type:opt(v,"document_type"), status:opt(v,"status"),
@@ -913,9 +886,9 @@ impl ReadHandler for Read {
                         // agent lists deliberately don't reuse page offsets.
                         let query=match self {
                             Self::Taxes=>"SELECT id FROM finance_payables_tax_codes WHERE tenant_id=$1 AND company_id=$2 AND id>$3 ORDER BY id LIMIT $4".to_owned(),
-                            Self::Documents=>"SELECT id FROM finance_payables_documents WHERE tenant_id=$1 AND company_id=$2 AND id>$3 AND ($5::text IS NULL OR status=$5) AND ($6::text IS NULL OR party_key=$6) AND ($7::text IS NULL OR document_type=$7) AND ($8::bigint IS NULL OR corrects_document_id=$8) AND ($9::bigint IS NULL OR party_key IN (SELECT supplier_key FROM finance_payables_vendor_keys WHERE tenant_id=$1 AND company_id=$2 AND vendor_id=$9)) AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM finance_payables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=finance_payables_documents.id)=($10='opening')) ORDER BY id LIMIT $4".to_owned(),
-                            Self::Requests=>format!("SELECT r.id FROM finance_payables_payment_requests r LEFT JOIN finance_payables_payment_request_events e ON e.tenant_id=r.tenant_id AND e.company_id=r.company_id AND e.request_id=r.id WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.id{cmp}$3 AND ($5::text IS NULL OR COALESCE(e.event,'submitted')=$5) AND ($6::text IS NULL OR r.party_key=$6) AND ($7::bigint IS NULL OR r.party_key IN (SELECT supplier_key FROM finance_payables_vendor_keys WHERE tenant_id=$1 AND company_id=$2 AND vendor_id=$7)) ORDER BY r.id {order} LIMIT $4"),
-                            _=>format!("SELECT id FROM finance_payables_payments WHERE tenant_id=$1 AND company_id=$2 AND id{cmp}$3 AND ($5::text IS NULL OR party_key=$5) AND ($6::bigint IS NULL OR party_key IN (SELECT supplier_key FROM finance_payables_vendor_keys WHERE tenant_id=$1 AND company_id=$2 AND vendor_id=$6)) ORDER BY id {order} LIMIT $4"),
+                            Self::Documents=>"SELECT id FROM finance_payables_documents WHERE tenant_id=$1 AND company_id=$2 AND id>$3 AND ($5::text IS NULL OR status=$5) AND ($6::text IS NULL OR party_key=$6) AND ($7::text IS NULL OR document_type=$7) AND ($8::bigint IS NULL OR corrects_document_id=$8) AND ($9::bigint IS NULL OR party_key='vendor:'||$9::bigint) AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM finance_payables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=finance_payables_documents.id)=($10='opening')) ORDER BY id LIMIT $4".to_owned(),
+                            Self::Requests=>format!("SELECT r.id FROM finance_payables_payment_requests r LEFT JOIN finance_payables_payment_request_events e ON e.tenant_id=r.tenant_id AND e.company_id=r.company_id AND e.request_id=r.id WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.id{cmp}$3 AND ($5::text IS NULL OR COALESCE(e.event,'submitted')=$5) AND ($6::text IS NULL OR r.party_key=$6) AND ($7::bigint IS NULL OR r.party_key='vendor:'||$7::bigint) ORDER BY r.id {order} LIMIT $4"),
+                            _=>format!("SELECT id FROM finance_payables_payments WHERE tenant_id=$1 AND company_id=$2 AND id{cmp}$3 AND ($5::text IS NULL OR party_key=$5) AND ($6::bigint IS NULL OR party_key='vendor:'||$6::bigint) ORDER BY id {order} LIMIT $4"),
                         };
                         let n=limit+1;
                         let mut params:Vec<&(dyn tokio_postgres::types::ToSql+Sync)>=vec![&tenant,&company,&after,&n];
@@ -1094,10 +1067,8 @@ inventory::submit! {Contribution::new(DEFINITIONS,"finance/payables.operations",
         Operation {key:"finance.payables.aging.get",title:"Read payables aging",summary:"Read supplier residuals at a date and posting pin. Bills age from their due dates; unapplied credits age from their source dates. Opening records are excluded before conversion.",keywords:&["conversion"],capability:VIEW,input:aging,output,handler:Handler::Read(&Read::Aging),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.vendor.get",title:"Read a vendor",summary:"Read Finance settings and the linked Core company.",keywords:&[],capability:VIEW,input:||schema(&["vendor_id"],json!({"vendor_id":identifier()})),output,handler:Handler::Read(&Read::Vendor),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.vendor.list",title:"List vendors",summary:"Read the current company's vendors by ID.",keywords:&[],capability:VIEW,input:||list_schema("vendor"),output,handler:Handler::Read(&Read::Vendors),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.payables.vendor.supplier_keys",title:"Review historical supplier keys",summary:"Read every distinct snapshot, possible collision and confirmed mapping without netting balances.",keywords:&[],capability:VIEW,input:||schema(&[],json!({})),output,handler:Handler::Read(&Read::SupplierHistory),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.vendor.create",title:"Add a vendor",summary:"Link a Core company through Base Records; retain Finance settings only.",keywords:&[],capability:MANAGE_SETTINGS,input:||vendor_schema(false),output,handler:Handler::SafeWrite(&Write::VendorCreate),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.vendor.update",title:"Change vendor settings",summary:"Change terms, availability and account or tax defaults; code and company are permanent.",keywords:&[],capability:MANAGE_SETTINGS,input:||vendor_schema(true),output,handler:Handler::SafeWrite(&Write::VendorUpdate),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.payables.vendor.map_supplier_key",title:"Confirm a historical supplier match",summary:"Permanently map one reviewed key with a reason. Original snapshots, allocations and aging groups stay unchanged.",keywords:&[],capability:MANAGE_SETTINGS,input:||schema(&["vendor_id","supplier_key","reason"],json!({"vendor_id":identifier(),"supplier_key":string(100),"reason":string(500)})),output,handler:Handler::SafeWrite(&Write::MapKey),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.settings.get",title:"Read payables settings",summary:"Read the control account and matching tolerances; null before configuration.",keywords:&[],capability:VIEW,input:||schema(&[],json!({})),output,handler:Handler::Read(&Read::Settings),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.tax_code.list",title:"List payables tax codes",summary:"Read configured tax codes by ID with a bounded cursor.",keywords:&[],capability:VIEW,input:||list_schema("tax"),output,handler:Handler::Read(&Read::Taxes),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.document.get",title:"Read a payable document",summary:"Read a bill or debit note with immutable snapshots and either current or pinned outstanding and activity.",keywords:&[],capability:VIEW,input:dated_document,output,handler:Handler::Read(&Read::Document),channels:Channels::Every,step_up:&[]},

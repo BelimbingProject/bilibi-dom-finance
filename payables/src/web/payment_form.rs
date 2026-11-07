@@ -364,7 +364,6 @@ impl PaymentForm {
             field("party", "party", "Supplier", &d.party)
                 .kind(InputKind::Select)
                 .prompt("Choose a supplier")
-                .hint("Bills under different supplier keys are paid separately, even when they match the same supplier.")
                 .options(
                     self.owed
                         .iter()

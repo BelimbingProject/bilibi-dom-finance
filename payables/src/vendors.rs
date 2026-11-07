@@ -1,10 +1,7 @@
-//! Vendor master and permanent historical supplier-key confirmations. Core
-//! owns identity; mappings never update a bill, payment, or aged balance.
+//! Vendor master. Core owns identity; a vendor's bills, payments and aged
+//! balances are grouped under its one settlement key, `vendor:{id}`.
 use crate::*;
-use crate::{
-    settings::{account, string},
-    store::Table,
-};
+use crate::{settings::account, store::Table};
 use bilibi_finance_ledger::{AccountType, PartyFacts, PartyLinks};
 use serde_json::{json, Value};
 
@@ -42,23 +39,29 @@ pub struct VendorInput {
     pub tax_code_id: Option<i64>,
     pub active: bool,
 }
-/// One unchanged key and every distinct snapshot it has carried. Collisions
-/// and changed facts are evidence for a human decision, never an auto-match.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SupplierHistory {
-    pub supplier_key: String,
-    pub vendor_id: Option<i64>,
-    pub snapshots: Value,
-    pub documents: i64,
-    pub collision_keys: Vec<String>,
-}
-pub(crate) async fn mapped(
+/// The vendor a settlement key belongs to, when it is the key of a vendor of
+/// this company.
+pub(crate) async fn of_key(
     c: &dyn OperationClient,
     tenant: i64,
     company: i64,
     key: &str,
 ) -> bilibi_database::Result<Option<i64>> {
-    Ok(c.query_opt("SELECT vendor_id FROM finance_payables_vendor_keys WHERE tenant_id=$1 AND company_id=$2 AND supplier_key=$3", &[&tenant,&company,&key]).await?.map(|r|r.get(0)))
+    let Some(id) = key
+        .strip_prefix("vendor:")
+        .and_then(|id| id.parse::<i64>().ok())
+    else {
+        return Ok(None);
+    };
+    if self::key(id) != key {
+        return Ok(None);
+    }
+    Ok(c.query_opt(
+        "SELECT id FROM finance_payables_vendors WHERE tenant_id=$1 AND company_id=$2 AND id=$3",
+        &[&tenant, &company, &id],
+    )
+    .await?
+    .map(|r| r.get(0)))
 }
 pub(crate) fn key(id: i64) -> String {
     format!("vendor:{id}")
@@ -270,8 +273,6 @@ impl Payables {
             None
         };
         let tenant = s.tenant();
-        let actor = s.user();
-        let imp = s.impersonator().map(|p| p.user());
         let id=tx.mutate(move |sql| Box::pin(async move {
             if let Some(id)=id {
                 let before=store::raw(sql,Table::Vendors,tenant,company,id).await?;
@@ -282,9 +283,7 @@ impl Payables {
                 let id=reserved.ok_or(Error::Invalid)?;
                 let row=sql.query_one("INSERT INTO finance_payables_vendors SELECT (jsonb_populate_record(NULL::finance_payables_vendors,$1::jsonb || jsonb_build_object('inserted_at',timezone('UTC',clock_timestamp()),'updated_at',timezone('UTC',clock_timestamp())))).* RETURNING to_jsonb(finance_payables_vendors)",&[&value]).await?;
                 let change=bilibi_database::Change{kind:"finance.payables.vendor".into(),id,old:Value::Null,new:row.get(0)};
-                let mapping=json!({"tenant_id":tenant,"company_id":company,"vendor_id":id,"supplier_key":key(id),"reason":"Vendor created","confirmed_by_user_id":actor,"confirmed_by_impersonator_id":imp});
-                let (_,mapped)=store::insert(sql,Table::VendorKeys,mapping).await?;
-                Ok((id,vec![change,mapped]))
+                Ok((id,vec![change]))
             }
         })).await?;
         self.vendor_on(tx.sql(), s, company, id).await
@@ -336,100 +335,5 @@ impl Payables {
                 "is linked to a company that is not available",
             )),
         }
-    }
-    pub async fn supplier_history(&self, s: &Scope, company: i64) -> Result<Vec<SupplierHistory>> {
-        let c = self.db.get().await.map_err(Error::from)?;
-        authorize(&**c, s, company, VIEW).await?;
-        self.supplier_history_on(&**c, s, company).await
-    }
-    pub(crate) async fn supplier_history_on(
-        &self,
-        c: &dyn OperationClient,
-        s: &Scope,
-        company: i64,
-    ) -> Result<Vec<SupplierHistory>> {
-        let rows=c.query("WITH facts AS (SELECT DISTINCT party_key,party_name,party_tax_id,party_registration_id,party_address FROM finance_payables_documents WHERE tenant_id=$1 AND company_id=$2) SELECT f.party_key,(SELECT vendor_id FROM finance_payables_vendor_keys k WHERE k.tenant_id=$1 AND k.company_id=$2 AND k.supplier_key=f.party_key),jsonb_agg(jsonb_build_object('name',party_name,'tax_id',party_tax_id,'registration_id',party_registration_id,'address',party_address) ORDER BY party_name,party_tax_id,party_registration_id,party_address),(SELECT count(*) FROM finance_payables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.party_key=f.party_key),ARRAY(SELECT DISTINCT g.party_key FROM facts g WHERE g.party_key<>f.party_key AND (lower(g.party_name) IN (SELECT lower(h.party_name) FROM facts h WHERE h.party_key=f.party_key) OR g.party_tax_id IN (SELECT h.party_tax_id FROM facts h WHERE h.party_key=f.party_key AND h.party_tax_id IS NOT NULL)) ORDER BY g.party_key) FROM facts f GROUP BY f.party_key ORDER BY f.party_key", &[&s.tenant(),&company]).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| SupplierHistory {
-                supplier_key: r.get(0),
-                vendor_id: r.get(1),
-                snapshots: r.get(2),
-                documents: r.get(3),
-                collision_keys: r.get(4),
-            })
-            .collect())
-    }
-    pub(crate) async fn prepare_mapping(
-        &self,
-        c: &dyn OperationClient,
-        s: &Scope,
-        company: i64,
-        vendor: i64,
-        key: &str,
-        reason: &str,
-    ) -> Result<Value> {
-        let v = self.vendor_on(c, s, company, vendor).await?;
-        let key = string(key, "supplier_key", 100, true)?.ok_or(PayablesError::InvalidOption)?;
-        let reason = string(reason, "reason", 500, true)?.ok_or(PayablesError::InvalidOption)?;
-        if mapped(c, s.tenant(), company, &key).await?.is_some() {
-            return Err(invalid(
-                "supplier_key",
-                "already has a confirmed vendor; it cannot be remapped",
-            ));
-        }
-        let history = self
-            .supplier_history_on(c, s, company)
-            .await?
-            .into_iter()
-            .find(|h| h.supplier_key == key)
-            .ok_or_else(|| invalid("supplier_key", "has no historical documents to review"))?;
-        Ok(json!({"vendor":v,"history":history,"reason":reason}))
-    }
-    pub async fn map_supplier_key(
-        &self,
-        s: &Scope,
-        company: i64,
-        vendor: i64,
-        key: &str,
-        reason: &str,
-    ) -> Result<()> {
-        let mut c = self.db.get().await.map_err(Error::from)?;
-        let mut tx = self
-            .write(
-                &mut c,
-                s,
-                company,
-                MANAGE_SETTINGS,
-                "finance.payables.vendor.map_key",
-            )
-            .await?;
-        self.map_supplier_key_on(&mut tx, s, company, vendor, key, reason)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-    pub(crate) async fn map_supplier_key_on(
-        &self,
-        tx: &mut MutationTransaction<'_>,
-        s: &Scope,
-        company: i64,
-        vendor: i64,
-        key: &str,
-        reason: &str,
-    ) -> Result<()> {
-        join(tx, s, company, MANAGE_SETTINGS).await?;
-        let review = self
-            .prepare_mapping(tx.sql(), s, company, vendor, key, reason)
-            .await?;
-        let value = json!({"tenant_id":s.tenant(),"company_id":company,"vendor_id":vendor,"supplier_key":key.trim(),"reason":review["reason"],"confirmed_by_user_id":s.user(),"confirmed_by_impersonator_id":s.impersonator().map(|p|p.user())});
-        tx.mutate(move |sql| {
-            Box::pin(async move {
-                let (_, change) = store::insert(sql, Table::VendorKeys, value).await?;
-                Ok(((), vec![change]))
-            })
-        })
-        .await?;
-        Ok(())
     }
 }

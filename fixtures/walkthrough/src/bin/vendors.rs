@@ -1,4 +1,4 @@
-//! Linked-vendor and historical-key proof on a disposable PostgreSQL database.
+//! Linked-vendor proof on a disposable PostgreSQL database.
 //! VENDORS_UI=1 keeps the composed app running for browser verification.
 use bilibi_database::{pool, Error};
 use bilibi_finance_ledger::{Ledger, Money};
@@ -8,7 +8,6 @@ use bilibi_finance_payables::{
 };
 use bilibi_finance_walkthrough_fixture::{install, sign_in, vendors::vendor};
 use jiff::civil::date;
-use serde_json::Value;
 
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -263,105 +262,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     p.approve_document(&reviewer, 1, bill.id).await?;
     let bill = p.post_document(&manager, 1, bill.id).await?;
     assert_eq!(bill.payable_account_id, Some(vendor_control.id));
-    let snapshots: Vec<(i64, Value)> = {
-        // Historical evidence, as a database installed before vendors would
-        // contain. New product writes must never synthesize this evidence.
-        let mut c = db.get().await?;
-        let tx = c.transaction().await?;
-        let mut rows = vec![];
-        for (key, name, tax, address, number) in [
-            ("old-a", "Former Vendor", "OLD-TAX", "Old address", "OLD-1"),
-            (
-                "old-a",
-                "Vendor renamed",
-                "CHANGED-TAX",
-                "Changed address",
-                "OLD-2",
-            ),
-            (
-                "old-b",
-                "Former Vendor",
-                "OLD-TAX",
-                "Other address",
-                "OLD-3",
-            ),
-        ] {
-            let row=tx.query_one("INSERT INTO finance_payables_documents(tenant_id,company_id,document_type,status,party_key,party_name,party_tax_id,party_address,party_document_number,document_date,due_date,currency_code,total_net,total_tax,total,created_by_user_id) VALUES(1,1,'bill','draft',$1,$2,$3,$4,$5,'2026-10-01','2026-10-31','MYR',100,0,100,1) RETURNING id",&[&key,&name,&tax,&address,&number]).await?;
-            let document: i64 = row.get(0);
-            tx.execute("INSERT INTO finance_payables_document_lines(tenant_id,company_id,document_id,line_number,description,account_id,amount) VALUES(1,1,$1,1,'Historical line',$2,100)",&[&document,&expense]).await?;
-            rows.push((document, Value::Null));
-        }
-        tx.commit().await?;
-        rows
-    };
-    for (id, _) in &snapshots {
-        p.approve_document(&reviewer, 1, *id).await?;
-        p.post_document(&manager, 1, *id).await?;
-    }
-    let before:Vec<Value>=db.get().await?.query("SELECT to_jsonb(d) FROM finance_payables_documents d WHERE tenant_id=1 AND company_id=1 ORDER BY id",&[]).await?.into_iter().map(|r|r.get(0)).collect();
-    let histories = p.supplier_history(&manager, 1).await?;
-    let old = histories
-        .iter()
-        .find(|h| h.supplier_key == "old-a")
-        .ok_or(Error::NotFound)?;
-    assert_eq!(old.snapshots.as_array().map(Vec::len), Some(2));
-    assert!(old.collision_keys.contains(&"old-b".into()));
-    assert!(old.vendor_id.is_none());
-    let requested = p
-        .submit_payment(
-            &manager,
-            1,
-            &NewPayment {
-                payment_date: date(2026, 10, 12),
-                vendor_id: None,
-                supplier_key: Some("old-a".into()),
-                paid_from_account_id: bank,
-                reference: None,
-                description: None,
-                allocations: vec![AllocationInput {
-                    document_id: snapshots[0].0,
-                    amount: money("10"),
-                }],
-            },
-        )
-        .await?;
-    let (left, right) = tokio::join!(
-        p.map_supplier_key(
-            &manager,
-            1,
-            id,
-            "old-a",
-            "Supplier verified against original invoices"
-        ),
-        p.map_supplier_key(
-            &manager,
-            1,
-            id,
-            "old-a",
-            "Same supplier verified independently"
-        )
-    );
-    assert_ne!(left.is_ok(), right.is_ok());
+    // The bill's key is the vendor's own, `vendor:{id}`; no other key is
+    // matched to a vendor, so every read of the vendor's records shares it.
+    assert_eq!(bill.party.key, format!("vendor:{id}"));
     refused(
-        p.map_supplier_key(&manager, 1, id, "old-a", "Repeat").await,
-        "supplier_key",
-        "confirmed",
-    );
-    assert!(p
-        .supplier_history(&manager, 1)
-        .await?
-        .iter()
-        .find(|h| h.supplier_key == "old-b")
-        .is_some_and(|h| h.vendor_id.is_none()));
-    let after:Vec<Value>=db.get().await?.query("SELECT to_jsonb(d) FROM finance_payables_documents d WHERE tenant_id=1 AND company_id=1 ORDER BY id",&[]).await?.into_iter().map(|r|r.get(0)).collect();
-    assert_eq!(before, after);
-    refused(
-        p.create_bill(&manager, 1, &draft("OLD-1")).await,
+        p.create_bill(&manager, 1, &draft("VENDOR-BILL")).await,
         "party_document_number",
         "already recorded",
     );
-    refused(
-        p.submit_payment(
+    let requested = p
+        .submit_payment(
             &manager,
             1,
             &NewPayment {
@@ -371,24 +281,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 paid_from_account_id: bank,
                 reference: None,
                 description: None,
-                allocations: vec![
-                    AllocationInput {
-                        document_id: bill.id,
-                        amount: money("1"),
-                    },
-                    AllocationInput {
-                        document_id: snapshots[0].0,
-                        amount: money("1"),
-                    },
-                ],
+                allocations: vec![AllocationInput {
+                    document_id: bill.id,
+                    amount: money("10"),
+                }],
+            },
+        )
+        .await?;
+    assert_eq!(requested.vendor_id, Some(id));
+    refused(
+        p.submit_payment(
+            &manager,
+            1,
+            &NewPayment {
+                payment_date: date(2026, 10, 12),
+                vendor_id: None,
+                supplier_key: None,
+                paid_from_account_id: bank,
+                reference: None,
+                description: None,
+                allocations: vec![AllocationInput {
+                    document_id: bill.id,
+                    amount: money("1"),
+                }],
             },
         )
         .await,
-        "document_id",
-        "supplier key",
+        "vendor_id",
+        "required",
     );
     let payment = p.approve_payment(&reviewer, 1, requested.id).await?;
-    assert_eq!(payment.party_key, "old-a");
+    assert_eq!(payment.party_key, format!("vendor:{id}"));
+    assert_eq!(payment.vendor_id, Some(id));
     db.get()
         .await?
         .execute(
@@ -411,15 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(aged
         .parties
         .iter()
-        .any(|p| p.party_key == "old-a" && p.vendor_id == Some(id)));
-    assert!(aged
-        .parties
-        .iter()
-        .any(|p| p.party_key == "old-b" && p.vendor_id.is_none()));
-    assert!(aged
-        .parties
-        .iter()
-        .any(|p| p.party_key == format!("vendor:{id}")));
+        .any(|p| p.party_key == format!("vendor:{id}") && p.vendor_id == Some(id)));
     let contracts = services.get::<bilibi_base::agent_api::page::PageContracts>(
         bilibi_base::agent_api::page::SERVICE,
     )?;
@@ -440,14 +356,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or(Error::Invalid)?;
         assert!(!records.is_empty());
         assert!(records.iter().all(|r| r["vendor_id"].as_i64() == Some(id)));
-        assert!(records
-            .iter()
-            .all(|r| r["party_key"].as_str() != Some("old-b")));
     }
     let c = db.get().await?;
-    assert!(c.execute("DELETE FROM finance_payables_vendor_keys WHERE tenant_id=1 AND company_id=1 AND supplier_key='old-a'",&[]).await.is_err());
     assert!(c.execute("UPDATE finance_payables_vendors SET record_id='1' WHERE tenant_id=1 AND company_id=1 AND id=$1",&[&id]).await.is_err());
-    for dataset in ["vendor", "vendor_key"] {
+    for dataset in ["vendor"] {
         assert!(!p
             .evidence_page(&manager, 1, dataset, Some(500), None)
             .await?
@@ -462,7 +374,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[&v.party.id],
         )
         .await?;
-    println!("Vendors: Core links and statuses; defaults; frozen facts; explicit historical collisions; unchanged snapshots and keys; duplicate protection; legacy payment approval, reversal and debit notes; separate aged groups; evidence and SQL guards proved.");
+    println!("Vendors: Core links and statuses; defaults; frozen facts; duplicate protection; payment approval, reversal and debit notes under the vendor's own key; evidence and SQL guards proved.");
     if std::env::var("VENDORS_UI").as_deref() == Ok("1") {
         println!("Vendor browser fixture at {origin}");
         axum::serve(
