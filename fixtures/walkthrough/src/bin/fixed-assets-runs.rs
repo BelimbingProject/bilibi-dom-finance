@@ -614,10 +614,8 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .get::<bilibi_company::CompanyService>(bilibi_company::SERVICE)?
         .archive_company(&admin, 3, Some("NX2 archival proof"))
         .await?;
-    // The Platform's reach check leaves out an archived company, so the desk
-    // there no longer authorizes before the lock reports it archived.
     refused(f.depreciate(&admin, 3, date(2026, 1, 1)).await, |e| {
-        matches!(e, F::CompanyArchived | F::Unauthorized)
+        matches!(e, F::CompanyArchived)
     });
     assert_eq!(f.evidence_datasets().len(), 11);
     for dataset in f.evidence_datasets() {

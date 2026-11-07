@@ -130,7 +130,9 @@ impl Owner for ArtifactOwner {
                 .lookup(client, scope, company)
                 .await?
                 .ok_or(Error::NotFound)?;
-            if target.archived {
+            // An archived company's books stay available for audit, so its
+            // packs still export and download; nothing else changes them.
+            if target.archived && !exporting {
                 return Err(Error::Forbidden);
             }
             if exporting {

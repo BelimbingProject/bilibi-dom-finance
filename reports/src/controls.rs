@@ -264,24 +264,10 @@ impl State {
             .resolve(&**client, scope, None)
             .await?
             .locale;
-        match self
-            .pages
+        self.pages
             .display
             .display(&**client, scope, scope.current_company(), locale)
             .await
-        {
-            // TODO(platform): Settings' company proof requires an unarchived
-            // company even for display reads (also see Reports::layout).
-            // Ledger history stays readable and a refused write must leave
-            // its page alive, so fall back to the user's tenant clock.
-            Err(Error::Forbidden) => {
-                self.pages
-                    .display
-                    .display(&**client, scope, None, locale)
-                    .await
-            }
-            result => result,
-        }
     }
     fn sync_period(&mut self, display: &DisplayContext) -> Clock {
         let clock = Clock::resolve(display, self.browser_zone.as_deref(), Timestamp::now());

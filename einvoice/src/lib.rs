@@ -657,15 +657,20 @@ impl Einvoice {
             .await?;
         bilibi_company::require_writable(tx.sql(), scope, company_id, true)
             .await
-            .map_err(|error| match error {
-                WriteError::NotFound => EinvoiceError::CompanyNotFound,
-                WriteError::Archived => EinvoiceError::CompanyArchived,
-                WriteError::Access(error) => refusal(error),
-                WriteError::InUse | WriteError::Stale | WriteError::Invalid(_) => {
-                    EinvoiceError::Failed(Error::Internal)
-                }
-            })?;
+            .map_err(company_write)?;
         Ok(tx)
+    }
+}
+
+/// Core Company's writable-company refusal in this module's terms.
+pub(crate) fn company_write(error: WriteError) -> EinvoiceError {
+    match error {
+        WriteError::NotFound => EinvoiceError::CompanyNotFound,
+        WriteError::Archived => EinvoiceError::CompanyArchived,
+        WriteError::Access(error) => refusal(error),
+        WriteError::InUse | WriteError::Stale | WriteError::Invalid(_) => {
+            EinvoiceError::Failed(Error::Internal)
+        }
     }
 }
 

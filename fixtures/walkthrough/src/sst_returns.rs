@@ -902,18 +902,10 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
     let readable = sst.get_return(&manager, COMPANY, id).await;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
-    // The Platform's reach check leaves out an archived company, so a person
-    // with a desk there is refused as unauthorized before the lock reports it.
     refused("an archived company", archived, |e| {
-        matches!(e, E::CompanyArchived | E::Unauthorized)
+        matches!(e, E::CompanyArchived)
     })?;
-    // TODO(platform): an archived company is meant to read, but the Platform's
-    // reach check now refuses a desk there for reads too.
-    match readable {
-        Ok(read) => assert_eq!(read.tax_return.version, Some(1)),
-        Err(E::Unauthorized) => {}
-        Err(other) => return Err(format!("archived company read: {other:?}").into()),
-    }
+    assert_eq!(readable?.tax_return.version, Some(1));
 
     // Every row is audited.
     for (table, kind) in [

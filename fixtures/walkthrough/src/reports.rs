@@ -651,7 +651,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .map(|r| r.net_income),
     );
     show(
-        "manager reads its pinned balance sheet (ungrouped while Base Settings refuses an archived company's layout)",
+        "manager reads its pinned balance sheet",
         reports
             .balance_sheet(&manager, COMPANY, &[date(2026, 12, 31)], Some(pinned))
             .await

@@ -1273,12 +1273,8 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let readable = ar.get_payment(&admin, 1, paid.id).await;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
-    // The Platform's reach check leaves out an archived company, so the desk
-    // there no longer authorizes before the lock reports it archived.
-    // TODO(platform): an archived company is meant to read; the reach check now
-    // refuses it for reads too.
-    assert!(matches!(refused, Err(R::CompanyArchived | R::Unauthorized)));
-    assert!(readable.is_ok() || matches!(readable, Err(R::Unauthorized)));
+    assert!(matches!(refused, Err(R::CompanyArchived)));
+    assert!(readable.is_ok());
     let waiting = ar
         .create_draft(&admin, 1, &invoice(Some("2026-10-08"), "1"))
         .await?;

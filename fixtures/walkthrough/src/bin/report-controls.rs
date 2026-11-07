@@ -414,12 +414,9 @@ async fn main() -> Outcome<()> {
         json!({"type":"turn_off","dialog[text]":"Archived"}),
     )
     .await?;
-    // The Platform's reach check leaves out an archived company, so the page
-    // refuses the change as unauthorized before the lock reports it archived.
-    assert!(
-        archived.contains("The company is archived; nothing can be changed.")
-            || archived.contains("You do not have permission for that action."),
-        "archived write was not refused"
+    contains(
+        &archived,
+        "The company is archived; nothing can be changed.",
     );
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;

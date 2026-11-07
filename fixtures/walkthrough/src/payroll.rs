@@ -61,9 +61,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     assert!(payroll.get_settings(&contractor, 1).await.is_err());
     assert!(matches!(
         payroll.put_settings(&admin, 3, &settings).await,
-        // The Platform's reach check leaves out an archived company, so the desk
-        // there no longer authorizes before the lock reports it archived.
-        Err(PayrollError::CompanyArchived | PayrollError::Unauthorized)
+        Err(PayrollError::CompanyArchived)
     ));
     assert!(matches!(
         payroll.put_settings(&staff, 1, &settings).await,

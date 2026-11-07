@@ -670,9 +670,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     assert!(matches!(
         ar.create_customer(&admin, 3, &json!({"record_kind":"company","record_id":10}))
             .await,
-        // The Platform's reach check leaves out an archived company, so the
-        // desk there no longer authorizes before the lock reports it archived.
-        Err(R::CompanyArchived | R::Unauthorized)
+        Err(R::CompanyArchived)
     ));
     field(
         ar.create_customer(&manager, 1, &json!({"record_kind":"company","record_id":3}))

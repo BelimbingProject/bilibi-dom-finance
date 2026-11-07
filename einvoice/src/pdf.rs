@@ -147,6 +147,11 @@ impl Einvoice {
     ) -> Result<PdfArtifact> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company_id, VIEW).await?;
+        // Recording the PDF on the document is a write, refused for an
+        // archived company before an artifact is stored.
+        bilibi_company::require_writable(&**client, scope, company_id, false)
+            .await
+            .map_err(crate::company_write)?;
         drop(client);
         let view = self.view(scope, company_id, document_id).await?;
         let as_of = view

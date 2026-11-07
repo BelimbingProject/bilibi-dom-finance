@@ -14,6 +14,13 @@ impl Payables {
         company: i64,
     ) -> Result<()> {
         crate::agent_operations::authorize_on(c, s, company, POST_DOCUMENTS).await?;
+        // An archived company stays readable, so the desk proof above admits
+        // it; staging writes, so it holds the company lock and refuses an
+        // archived one, as `prepare_opening` does.
+        let company_row=c.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT",&[&s.tenant(),&company]).await?.ok_or(PayablesError::CompanyNotFound)?;
+        if company_row.get::<_, String>(0) == "archived" {
+            return Err(PayablesError::CompanyArchived);
+        }
         Ok(())
     }
     pub(super) async fn prepare_opening_stage(
