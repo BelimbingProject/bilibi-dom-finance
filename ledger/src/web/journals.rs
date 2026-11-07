@@ -506,7 +506,6 @@ pub(super) struct Journals {
     loaded_keys: Option<Vec<String>>,
     flash: Flash,
     draft: Option<Draft>,
-    opening_dialog: Option<super::opening_dialog::OpeningDialog>,
     destination: Option<String>,
     /// A journal named in the address (`correct` or `copy`) whose dialog is
     /// still to open: it is read through the contract on the first update.
@@ -572,8 +571,6 @@ impl Journals {
             flash: Flash::default(),
             loaded_keys: None,
             draft: None,
-            opening_dialog: (query.get("opening").map(String::as_str) == Some("1"))
-                .then(|| super::opening_dialog::OpeningDialog::new(pages.clone(), None)),
             destination: None,
             opening: Opening::parse(query),
             framed,
@@ -610,8 +607,7 @@ impl Journals {
                         if can_submit {
                             actions.push(&render(Button {
                                 id: "ledger-opening-new",
-                                event: "new_opening",
-                                button_type: "button",
+                                href: super::opening::PATH,
                                 body: Html::text("Opening balances"),
                                 ..Button::default()
                             })?);
@@ -661,17 +657,7 @@ impl Journals {
                 ..Modal::default()
             })?);
         }
-        if let Some(dialog) = &mut self.opening_dialog {
-            page.push(&dialog.view(scope).await?);
-        }
         let mut query = self.list.to_params();
-        if let Some(dialog) = &self.opening_dialog {
-            if let Some(id) = dialog.replaces() {
-                query.insert("correct".into(), id.to_string());
-            } else {
-                query.insert("opening".into(), "1".into());
-            }
-        }
         query.extend(self.window.params());
         if let Some(draft) = &self.draft {
             match &draft.replaces {
@@ -1396,11 +1382,14 @@ impl Journals {
             });
             return Ok(());
         }
+        // An opening journal is corrected or started again on its own page,
+        // which keeps the opening's source record.
         if journal.opening {
-            self.opening_dialog = Some(super::opening_dialog::OpeningDialog::new(
-                self.pages.clone(),
-                opening.replaces.then_some(journal.id),
-            ));
+            self.destination = Some(if opening.replaces {
+                format!("{}?correct={}", super::opening::PATH, journal.id)
+            } else {
+                super::opening::PATH.to_owned()
+            });
             return Ok(());
         }
         if journal.lines.len() > MAX_LINES {
@@ -1563,30 +1552,9 @@ impl LiveState<Scope, Error> for Journals {
                                 self.list.apply_filters(&posted);
                             }
                             "grid" => {
-                                if let Some(dialog) = &mut self.opening_dialog {
-                                    dialog.event(r.scope, r.credential, value).await?;
-                                } else if let ColumnsOutcome::Sort(_) =
+                                if let ColumnsOutcome::Sort(_) =
                                     self.columns.handle(&params::string_values(value))
                                 {
-                                }
-                            }
-                            "new_opening" => {
-                                if self.pages.allowed(r.scope, SUBMIT_JOURNALS).await? {
-                                    self.opening_dialog =
-                                        Some(super::opening_dialog::OpeningDialog::new(
-                                            self.pages.clone(),
-                                            None,
-                                        ));
-                                }
-                            }
-                            "close_opening" => self.opening_dialog = None,
-                            "preview_opening" | "submit_opening" | "cancel_opening" => {
-                                if let Some(dialog) = &mut self.opening_dialog {
-                                    dialog.event(r.scope, r.credential, value).await?;
-                                    self.destination = dialog.take_destination();
-                                    if self.destination.is_some() {
-                                        self.opening_dialog = None;
-                                    }
                                 }
                             }
                             "new" => self.open_new(r.scope).await?,

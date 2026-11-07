@@ -14,7 +14,8 @@
 //! Book page offers every current one with none used yet; `book-proof` then
 //! opens it through the Book page's own `LiveState` and stops with the `bare`
 //! state.
-//! Pass `opening` for the chart and open periods with no posted entries.
+//! Pass `opening` for the chart and open periods with no posted entries, or
+//! `opening-proof` to drive the opening balances page through it as well.
 //! After seeding it drives the Journals page's period control through
 //! its real `LiveState` and prints one proof line.
 use bilibi_database::{pool, Error};
@@ -113,7 +114,13 @@ async fn main() -> Outcome<()> {
             .await?;
     } else if unopened && !std::env::args().any(|arg| arg == "empty") {
         let (account, pin) = seed(&ledger, &manager, &reviewer).await?;
-        if !std::env::args().any(|arg| arg == "opening") {
+        if std::env::args().any(|arg| arg == "opening-proof") {
+            let first = date(jiff::Zoned::now().year() - 1, 1, 1);
+            bilibi_finance_walkthrough_fixture::opening_page::proof(
+                services, &manager, &reviewer, COMPANY, first,
+            )
+            .await?;
+        } else if !std::env::args().any(|arg| arg == "opening") {
             period_proof(services, &manager, account, pin).await?;
         }
     }
@@ -216,7 +223,7 @@ async fn seed(
         .open_fiscal_year(manager, COMPANY, &NewFiscalYear::default())
         .await?;
 
-    if std::env::args().any(|arg| arg == "opening") {
+    if std::env::args().any(|arg| arg.starts_with("opening")) {
         return Ok((ids["1000"], 0));
     }
 

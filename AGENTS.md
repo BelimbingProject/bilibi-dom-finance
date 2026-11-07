@@ -107,7 +107,7 @@ they govern this code and are not copied here.
   was refused and renders no form (the three `*/src/web/opening.rs`): the
   shared `Modal` draws no X. Say that refusal in the dialog's own `Alert`, not
   its `FlashGroup`, which floats past the dialog's edge on a phone, and link
-  the place that clears it (Go to opening journal).
+  the place that clears it (Go to opening balances).
   Let that round trip also drop what a changed field no longer allows (a group
   of another type once the type changes, `Draft::reconcile` in
   `ledger/src/web/accounts.rs`) and offer only eligible choices, instead of a
@@ -170,6 +170,7 @@ they govern this code and are not copied here.
 - Show a money amount with the book's minor units through `Money::display` (`ledger/src/money.rs`), never `Money`/`Decimal` `to_string`: it groups thousands and keeps the book's decimal places. Keep `Money::shown` for editable, ungrouped values; a bare `Decimal` (a unit price, a report total) goes through `Money::display_decimal`, never a formatter of a page's own.
 - Agent writes join the shared plan's audited transaction through the ledger's private `*_on` methods, never the pool-owning public wrappers: nested commits would escape plan rollback. Preview on the handed `OperationClient`; retain the transaction-local review fence because the pinned engine previews every step before executing any.
 
+- Take a table a person pastes or exports (a trial balance, a statement) through `bilibi_finance_ledger::columns` (`Sheet::read`, `by_words`, `number`, `decimal_mark`), then show its first rows and the guessed columns and let the person correct them before anything is kept, as the opening balances grid does (`ledger/src/web/opening/paste.rs`); never a fixed CSV header the person must type or a figure parser of the page's own: the helper reads tabs, quoted cells, grouped thousands and decimal commas the same way on every page. Enter opening balances only on `/finance/ledger/opening-balances` (`ledger/src/web/opening.rs`), which submits the grid through `finance.ledger.opening_balances.submit`; a later opening step links there and its own import opens from `?opening=1`.
 - Correct a submitted manual journal with `Ledger::replace_journal` (or `withdraw_journal` to only take it back), never `reject_journal` then `submit_journal` or an edit: only its submitter can, and it withdraws the journal and submits the correction in one transaction, so a refusal leaves it waiting and an approval racing it can never post the old content. The link is in `finance_ledger_journal_replacements`, not a column, because the journal and event evidence field lists are frozen. A page prefills its dialog from the journal's contract read (`?correct={id}`, `ledger/src/web/journals.rs`).
 - A chart row is an account (takes postings, no children) or an account group
   (`is_group`: no postings, the total of what is under it). Offer or accept an

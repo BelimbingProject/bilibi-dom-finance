@@ -574,5 +574,8 @@ pub mod chart_templates;
 
 pub mod vendors;
 
+// The opening balances page: paste, guessed columns, live totals, submit and later steps.
+pub mod opening_page;
+
 // #111: real OAuth provisioning for the prospective asset continuation proof.
 pub mod assets_lifecycle;

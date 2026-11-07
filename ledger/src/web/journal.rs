@@ -469,7 +469,11 @@ impl Journal {
         if can_correct {
             actions.push(&render(Button {
                 id: "ledger-journal-correct",
-                href: &format!("{INDEX}?correct={}", journal.id),
+                href: &if journal.opening {
+                    format!("{}?correct={}", super::opening::PATH, journal.id)
+                } else {
+                    format!("{INDEX}?correct={}", journal.id)
+                },
                 body: Html::text("Correct"),
                 ..Button::default()
             })?);
@@ -485,7 +489,7 @@ impl Journal {
             actions.push(&render(Button {
                 id: "ledger-journal-restart",
                 href: &if journal.opening {
-                    format!("{INDEX}?opening=1")
+                    super::opening::PATH.to_owned()
                 } else {
                     format!("{INDEX}?copy={}", journal.id)
                 },

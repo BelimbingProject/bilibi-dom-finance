@@ -66,6 +66,7 @@ mod accounts;
 mod agent_operations;
 mod bookkeeping;
 mod books;
+pub mod columns;
 mod configuration;
 mod contributions;
 mod conversion;
@@ -96,7 +97,7 @@ pub use contributions::{
 pub use conversion::OpeningContext;
 pub use evidence::EvidencePage;
 pub use money::{MinorUnits, Money, MoneyError};
-pub use opening::{OpeningBalances, OpeningProgress};
+pub use opening::{OpeningBalances, OpeningImport, OpeningProgress};
 pub use saved_templates::NewChartTemplate;
 
 use bilibi_company::WriteError;

@@ -22,6 +22,18 @@ pub struct OpeningProgress {
     pub status: crate::JournalStatus,
     pub entry_id: Option<i64>,
     pub reversed_by_entry_id: Option<i64>,
+    /// The modules that imported an opening register against the posted
+    /// entry (customers, suppliers, assets, bank items), with how many of its
+    /// accounts each recognised; empty until one does.
+    pub imported: Vec<OpeningImport>,
+}
+
+/// One module's opening register recognised against the posted opening entry.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct OpeningImport {
+    /// The importing module's descriptor id (`finance/receivables`).
+    pub owner_module: String,
+    pub accounts: i64,
 }
 
 pub(crate) async fn progress(
@@ -48,6 +60,21 @@ pub(crate) async fn progress(
         }
         None => None,
     };
+    let imported = match entry_id {
+        Some(entry) => client
+            .query(
+                "SELECT owner_module,count(DISTINCT account_id) FROM finance_ledger_opening_recognitions WHERE tenant_id=$1 AND company_id=$2 AND entry_id=$3 GROUP BY owner_module ORDER BY owner_module",
+                &[&scope.tenant(), &company, &entry],
+            )
+            .await?
+            .iter()
+            .map(|row| OpeningImport {
+                owner_module: row.get(0),
+                accounts: row.get(1),
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     Ok(Some(OpeningProgress {
         journal_id: journal.id,
         journal_number: journal.journal_number,
@@ -55,6 +82,7 @@ pub(crate) async fn progress(
         status: journal.status,
         entry_id,
         reversed_by_entry_id,
+        imported,
     }))
 }
 
