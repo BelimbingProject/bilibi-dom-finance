@@ -26,7 +26,7 @@ pub type Result<T> = std::result::Result<T, PayrollError>;
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/authz", "base/database", "base/datetime", "base/events", "base/locale", "base/menu", "base/settings", "base/tenancy", "base/ui", "core/company", "finance/ledger"],
+        dependencies: &["base/authz", "base/database", "base/datetime", "base/events", "base/locale", "base/menu", "base/principal_directory", "base/settings", "base/tenancy", "base/ui", "core/company", "finance/ledger"],
         migrations: &[("finance-payroll-001-payroll", include_str!("../migrations/001-payroll.sql")), ("finance-payroll-002-people-source", include_str!("../migrations/002-people-source.sql"))],
         services: &[Service { id: SERVICE, factory: |services| Ok(Arc::new(Payroll {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -38,6 +38,7 @@ inventory::submit! {
                 payroll: services.get(SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                directory: services.get(bilibi_finance_ledger::PEOPLE)?,
             }))))
         } }],
     }
