@@ -7,10 +7,11 @@
 {% if let Some(d) = document %}
   {% call workspace::announce(kind="finance/einvoice", record_id=d.document.id.to_string()) %}{% endcall %}
   {% call ui::header(subtitle_html=header_subtitle, title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
+  <div class="space-y-4">
   {% if !attention.is_empty() %}
   {% call ui::card(id="einvoice-document-attention", inner_class="p-5 sm:p-6", role="alert") %}
     {% call ui::section_heading(id="einvoice-document-attention-heading", title="Needs attention") %}{% endcall %}
-    <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">{% for (flag, message) in attention %}<li id="einvoice-attention-{{ flag }}">{{ message }}</li>{% endfor %}</ul>
+    <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">{% for (flag, message) in attention %}<li id="einvoice-attention-{{ flag }}">{{ message|safe }}</li>{% endfor %}</ul>
   {% endcall %}
   {% endif %}
   {% if let Some(holder) = d.consolidated_by %}
@@ -47,9 +48,10 @@
     {% call ui::section_heading(id="einvoice-document-events-heading", title="History", class="p-5 pb-0") %}{% endcall %}
     {{ events }}
   {% endcall %}
+  </div>
 {% else %}
+  {% call ui::back_link(href="/finance/einvoice/documents", id="einvoice-document-back", title="Back to e-invoices") %}{% endcall %}
   {% call lists::empty_state(e=EmptyState::missing("Document not found", "There is no such document for this company, or it cannot be read with your current access.").id("einvoice-document-missing")) %}{% endcall %}
-  {% call ui::button(href="/finance/einvoice/documents") %}All documents{% endcall %}
 {% endif %}
 {{ dialog }}
 {% endcall %}

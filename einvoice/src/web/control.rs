@@ -19,7 +19,7 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Badge, BadgeKind, BuiltinColumn, Button, Card, EmptyState, Fact, Facts, FlashMap,
-    FlexRow, FlexTable, Header, Html, ListColumns, ListSpec, ListState, PageVariant,
+    FlexRow, FlexTable, Header, Html, IconButton, ListColumns, ListSpec, ListState, PageVariant,
     SectionHeading, StatusKind, TableEmpty, NO_FLASH,
 };
 use jiff::{civil::Date, Timestamp};
@@ -321,6 +321,9 @@ impl State {
         };
         let page_id = format!("einvoice-{}", self.operation);
         let setup = self.operation == "setup";
+        // Setup's values are edited in System settings: the link opens this
+        // company's e-invoice settings there, not the whole list.
+        let settings = settings_href(scope);
         let mut parts = vec![render(Header {
             title: Html::text(title),
             title_actions: bilibi_ui::Html::EMPTY,
@@ -334,14 +337,14 @@ impl State {
                     "einvoice-reconciliation-documents"
                 },
                 href: if setup {
-                    "/system/settings"
+                    &settings
                 } else {
                     "/finance/einvoice/documents"
                 },
                 body: Html::text(if setup {
-                    "Edit settings"
+                    "Edit e-invoice settings"
                 } else {
-                    "All documents"
+                    "E-invoices"
                 }),
                 ..Button::default()
             })?,
@@ -349,7 +352,7 @@ impl State {
         match self.operation {
             "consolidation" => parts.extend(self.consolidation(scope, &display).await?),
             "reconciliation" => parts.extend(self.reconciliation(scope).await?),
-            _ => parts.extend(self.setup(&display)?),
+            _ => parts.extend(self.setup(&display, &settings)?),
         }
         let mut flash = NO_FLASH;
         if let Some((kind, text)) = &self.flash {
@@ -524,6 +527,8 @@ impl State {
         };
         let can_retry =
             self.allowed(scope, SUBMIT).await? && self.allowed(scope, POST_ENTRIES).await?;
+        let can_settle =
+            !reconciliation.unposted.is_empty() && self.allowed(scope, crate::SETTINGS).await?;
         let mut parts = Vec::new();
         for (index, rows, kind, title, empty, label, event) in [
             (
@@ -560,40 +565,60 @@ impl State {
                             )
                             .slot(
                                 "entry",
-                                Html::text(
-                                    &r.ledger_entry_id.map_or("—".into(), |id| format!("#{id}")),
-                                ),
+                                match r.ledger_entry_id {
+                                    Some(id) => render(EntryById { id })?,
+                                    None => Html::text("—"),
+                                },
                             )
                             .slot(
                                 "reason",
                                 Html::text(r.reason.as_deref().unwrap_or("not attempted")),
                             );
+                    // Retrying acts on this row: an icon button with its name.
                     if can_retry {
-                        row.actions = render(Button {
+                        let tooltip = format!("{label} {}", r.document.code_number);
+                        row.actions = render(IconButton {
                             id: &format!("einvoice-{}-{id}", event.replace('_', "-")),
                             event,
                             name: "id",
                             value: &id.to_string(),
                             button_type: "button",
-                            body: Html::text(label),
-                            ..Button::default()
+                            title: &tooltip,
+                            ..IconButton::new("arrow-path", &tooltip)
                         })?;
                     }
                     Ok(row)
                 })
                 .collect::<Result<Vec<_>>>()?;
+            // A posting refused for its accounts is fixed in the e-invoice
+            // settings, which this section links to.
+            let mut content = Html::EMPTY;
+            if index == 0 && can_settle {
+                content.push(&render(SettingsNote {
+                    href: &settings_href(scope),
+                })?);
+            }
+            content.push(&self.table(index, rows, title, empty, can_retry)?);
             parts.push(section(
                 &format!("einvoice-{kind}"),
                 title,
                 "",
                 true,
-                self.table(index, rows, title, empty, can_retry)?,
+                content,
             )?);
         }
         Ok(parts)
     }
 
-    fn setup(&self, display: &DisplayContext) -> Result<Vec<Html>> {
+    fn setup(&self, display: &DisplayContext, settings: &str) -> Result<Vec<Html>> {
+        let edit = |id: &str| {
+            render(Button {
+                id,
+                href: settings,
+                body: Html::text("Edit e-invoice settings"),
+                ..Button::default()
+            })
+        };
         let Some(s) = &self.setup else {
             return Ok(vec![unavailable(
                 "setup",
@@ -637,7 +662,7 @@ impl State {
         let mut parts = vec![section(
             "einvoice-connection",
             "Connection",
-            "Change these in System settings, in the e-invoice group, for this company.",
+            "Changed in this company's e-invoice settings.",
             false,
             connection,
         )?];
@@ -647,14 +672,16 @@ impl State {
                     "No certificate",
                     "Add the company's certificate and private key in the e-invoice settings.",
                 )
-                .id("einvoice-certificate-missing"),
+                .id("einvoice-certificate-missing")
+                .action(edit("einvoice-certificate-add")?),
             )?,
             CertificateSetup::Unreadable => render(
                 EmptyState::missing(
                     "Certificate unreadable",
                     "The stored certificate cannot be read as an X.509 certificate. Add it again.",
                 )
-                .id("einvoice-certificate-invalid"),
+                .id("einvoice-certificate-invalid")
+                .action(edit("einvoice-certificate-replace")?),
             )?,
             CertificateSetup::Facts(c) => facts(
                 "einvoice-certificate-facts",
@@ -744,7 +771,8 @@ impl State {
                     "Supplier profile incomplete",
                     format!("Set {missing} in the e-invoice settings before issuing documents."),
                 )
-                .id("einvoice-supplier-incomplete"),
+                .id("einvoice-supplier-incomplete")
+                .action(edit("einvoice-supplier-complete")?),
             )?
         };
         parts.push(section(
@@ -1002,6 +1030,37 @@ fn instant(id: &str, at: Timestamp, display: &DisplayContext) -> Result<Html> {
 
 fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
+}
+
+/// This company's e-invoice settings in System settings.
+fn settings_href(scope: &Scope) -> String {
+    match scope.current_company() {
+        Some(id) => format!(
+            "/system/settings?company={}&module=finance/einvoice",
+            id.get()
+        ),
+        None => "/system/settings?module=finance/einvoice".into(),
+    }
+}
+
+/// A ledger entry, linked to its journal.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="text-link hover:underline">Open journal</a>"#,
+    ext = "html"
+)]
+struct EntryById {
+    id: i64,
+}
+
+/// Where the posting accounts are chosen, above the documents they hold back.
+#[derive(Template)]
+#[template(
+    source = r#"<p id="einvoice-unposted-settings" class="px-5 pb-3 text-sm text-ink-muted">A posting refused for its accounts posts once they are chosen in the <a href="{{ href }}" class="text-link hover:underline">e-invoice settings</a>; then retry it here.</p>"#,
+    ext = "html"
+)]
+struct SettingsNote<'a> {
+    href: &'a str,
 }
 
 #[derive(Template)]

@@ -149,6 +149,10 @@ they govern this code and are not copied here.
 - Write from a page with `Pages::write` (the contract the agent doors call, event listed in `PageWrites`), never `Payables::approve_document` and the other facade writes: the facade skips the contract's validation and review, so a person and an agent stop getting the same answer. Show `Written::Fields` (keyed by input path) on the fields, not as one flash.
 - Record a bill or debit note, or correct a draft, in the Bills list's dialog (`payables/src/web/bill_form.rs`, opened by "+ Bill", `?correct=<draft>` and `?debit_note=<bill>`), as New invoice is the Invoices list's; never a page of its own (one thing, one door).
 - A recorded document is immutable, so "edit a draft" is a corrected draft that replaces it, through `finance.payables.bill.replace_draft` (`Payables::replace_draft_on` voids the old draft and records the new one in one transaction, so a refusal leaves the draft as it was); never void then create in two calls, and do not add an update path. List a page of payment requests with `page_payment_requests` (newest first, the total from SQL), never by loading batches of `list_payment_requests` and cutting them, which drops the newest. A form with many fields reads its own `name[...]` keys: `params::form_values` keeps only 64.
+- Leave builder detail (a fingerprint, an environment every row shares, a
+  stored unit code) out of a list's default columns: mount the list without
+  it and offer it through `ListColumns::with_record_fields`
+  (`einvoice/src/web/index.rs`), so it waits in the column picker.
 - Narrow a list by a date range with the shared period filter
   (`bilibi_datetime::PeriodFilter`, `apps/base/datetime/README.md`; the
   pattern is `ledger/src/web/journals.rs`), never bare from/to date inputs or
