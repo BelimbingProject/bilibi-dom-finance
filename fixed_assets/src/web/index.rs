@@ -199,9 +199,16 @@ impl Index {
             )?,
         })
     }
-    /// A dialog the address asks for: `?new=1` opens the page's "+ X", and
-    /// `?reverse=<run>` the reversal of that run.
+    /// A dialog the address asks for: `?new=1` opens the page's "+ X",
+    /// `?reverse=<run>` the reversal of that run, and `?opening=1` the opening
+    /// register (the opening balances page's step).
     async fn open_from_query(&mut self, s: &Scope) -> Result<()> {
+        if self.query.remove("opening").as_deref() == Some("1")
+            && self.kind == Kind::Register
+            && self.pages.allowed(s, VIEW).await?
+        {
+            self.opening = Some(super::opening::Opening::new(self.pages.clone())?);
+        }
         if self.query.get("new").map(String::as_str) == Some("1") {
             self.query.remove("new");
             self.open_new(s).await?;

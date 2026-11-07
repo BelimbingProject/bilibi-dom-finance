@@ -54,6 +54,9 @@ pub(super) struct Bills {
     /// What an address asked the dialog to open on (`?record=bill`,
     /// `?correct=<draft>`, `?debit_note=<bill>`), opened once the list loads.
     requested: Option<(bool, HashMap<String, String>)>,
+    /// The address asked for the opening bills dialog (`?opening=1`, the
+    /// opening balances page's step), opened once the page knows it may.
+    open_opening: bool,
     can_open: bool,
     success: bool,
     total: u64,
@@ -97,6 +100,7 @@ impl Bills {
             opening: None,
             record: None,
             requested: requested(query),
+            open_opening: query.get("opening").map(String::as_str) == Some("1"),
             can_open: false,
             success: false,
             total: 0,
@@ -114,6 +118,9 @@ impl Bills {
         self.can_approve = self.pages.allowed(scope, APPROVE_DOCUMENTS).await?;
         self.can_match = self.pages.allowed(scope, crate::APPROVE_MATCH).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
+        if std::mem::take(&mut self.open_opening) && self.can_open {
+            self.opening = Some(Opening::new(self.pages.clone())?);
+        }
         self.documents.clear();
         self.total = 0;
         self.unavailable = true;

@@ -13,7 +13,7 @@ mod groups;
 mod journal;
 mod journal_period;
 mod journals;
-mod opening_dialog;
+mod opening;
 mod trial;
 mod view;
 mod years;
@@ -131,6 +131,11 @@ route!(
     "/finance/ledger/fiscal-years",
     "years",
     bilibi_module_registry::contributions::CompanyScope::Tenant
+);
+route!(
+    "finance/ledger.opening-balances",
+    "/finance/ledger/opening-balances",
+    "opening"
 );
 route!(
     "finance/ledger.trial-balance",
@@ -1138,6 +1143,7 @@ impl Page<Scope, Error> for Pages {
             "journal" => "Journal",
             "years" => "Fiscal years",
             "trial" => "Trial balance",
+            "opening" => "Opening balances",
             _ => return None,
         })
     }
@@ -1198,6 +1204,7 @@ impl Pages {
             }
             "years" => Box::new(years::Years::new(pages, r.query)?),
             "trial" => Box::new(trial::Trial::new(pages, r.query)),
+            "opening" => Box::new(opening::Opening::new(pages, r.query)?),
             _ => return Err(Error::NotFound),
         })
     }

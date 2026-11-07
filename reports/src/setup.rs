@@ -369,7 +369,7 @@ impl Reports {
             "opening-balances",
             "Opening balances",
             true,
-            "/finance/ledger/journals?opening=1",
+            "/finance/ledger/opening-balances",
             state,
             summary,
         ));

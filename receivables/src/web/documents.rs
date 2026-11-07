@@ -108,6 +108,9 @@ pub(super) struct Documents {
     create: Option<Draft>,
     opening: Option<Opening>,
     can_open: bool,
+    /// The address asked for the opening invoices dialog (`?opening=1`, the
+    /// opening balances page's step), opened once the page knows it may.
+    open_opening: bool,
     credit_invoices: Vec<Document>,
     /// The invoice an address asked to credit (`?credit=`), as an invoice's
     /// own "New credit note" sends it here.
@@ -161,6 +164,7 @@ impl Documents {
             create: None,
             opening: None,
             can_open: false,
+            open_opening: query.get("opening").map(String::as_str) == Some("1"),
             credit_invoices: vec![],
             credit: params::positive_id(query.get("credit").map(String::as_str)),
             flash: Flash::default(),
@@ -374,6 +378,10 @@ impl Documents {
         self.can_receive = self.pages.allowed(scope, POST_PAYMENTS).await?;
         self.can_write_off = self.pages.allowed(scope, crate::SUBMIT_WRITE_OFFS).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
+        if std::mem::take(&mut self.open_opening) && self.can_open {
+            self.create = None;
+            self.opening = Some(Opening::new(self.pages.clone())?);
+        }
         Ok(())
     }
 

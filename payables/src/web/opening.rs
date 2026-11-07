@@ -590,9 +590,9 @@ impl Opening {
             if opening_journal {
                 buttons.push(&render(Button {
                     id: "conversion-opening-journal",
-                    href: "/finance/ledger/journals?source=opening",
+                    href: "/finance/ledger/opening-balances",
                     variant: ButtonVariant::Primary,
-                    body: Html::text("Go to opening journal"),
+                    body: Html::text("Go to opening balances"),
                     ..Button::default()
                 })?);
             }
