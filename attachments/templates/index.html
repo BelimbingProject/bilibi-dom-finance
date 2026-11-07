@@ -5,6 +5,7 @@
 {%- import "components.html" as ui -%}
 {%- import "forms.html" as form -%}
 {%- import "feedback.html" as feedback -%}
+{%- import "dialog.html" as dialog -%}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% if flash.error.contains("/system/settings") %}{% call ui::button(id="attachments-storage-settings", href="/system/settings") %}File storage settings{% endcall %}{% endif %}
 {% call ui::page(id="finance-attachments") %}
@@ -16,19 +17,24 @@
 <p id="attachments-retention-years" class="mt-3 text-sm"><span class="font-medium">{{ retention.years }} years</span>
 {% if let Some(since) = retention.since %}<span class="text-ink-muted"> since {{ since|safe }}: {{ retention.reason }}</span>{% else %}<span class="text-ink-muted"> (the default; the company has not set its own)</span>{% endif %}</p>
 {% endif %}
-{% if let Some(retention_form) = retention_form %}
-<form id="attachments-retention-form" data-event="retention_change" data-change data-submit-event="set_retention" class="mt-4 grid gap-3 sm:grid-cols-3">
-{% call form::input(field=retention_form.years) %}{% endcall %}
-{% call form::input(field=retention_form.reason) %}{% endcall %}
-<div class="flex items-end">{% call ui::button(id="attachments-retention-submit", variant=bilibi_ui::ButtonVariant::Primary, button_type="submit", working="Saving…") %}Lengthen retention{% endcall %}</div>
-</form>
-{% endif %}
+{% if !lengthen.is_empty() %}<div class="mt-4">{{ lengthen|safe }}</div>{% endif %}
 {% if !changes.is_empty() %}<div id="attachments-retention-changes-table" class="mt-4">{{ changes|safe }}</div>{% endif %}
 {% endcall %}
 
 {% call ui::card(id="attachments", inner_class="p-0", role="region", labelledby="attachments-heading") %}
-{% call ui::section_heading(title="Attachments", id="attachments-heading", count=count, class="p-5 pb-0", actions=filter) %}{% endcall %}
+{% call ui::section_heading(title="Attachments", id="attachments-heading", count=count, class="p-5 pb-0") %}{% endcall %}
+{{ filter|safe }}
 {{ table|safe }}
 {% if more %}<div class="p-4">{% call ui::button(id="attachments-more", button_type="button", event="more") %}Show more{% endcall %}</div>{% endif %}
 {% endcall %}
+{% if let Some(f) = retention_form %}
+{% call dialog::modal(id="attachments-retention-modal", title="Lengthen retention", cancel_event="close_retention", description="Source documents are kept this many years after the end of their record's financial year. Retention can only be lengthened.") %}
+{% if let Some(alert) = f.alert %}{{ alert|safe }}{% endif %}
+<form id="attachments-retention-form" data-event="retention_change" data-change data-submit-event="set_retention" class="mt-4 space-y-3">
+{% call form::input(field=f.years) %}{% endcall %}
+{% call form::input(field=f.reason) %}{% endcall %}
+{{ f.actions|safe }}
+</form>
+{% endcall %}
+{% endif %}
 {% endcall %}

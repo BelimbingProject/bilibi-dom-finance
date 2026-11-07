@@ -239,6 +239,8 @@ they govern this code and are not copied here.
   with a `Source` contributed to `finance/attachments.sources` under
   `<your module id>/<kind>` that reads it on the connection it is handed; do
   not hand the attachments module a facade of yours, which would make a cycle.
+  Give it an `href` when the record has a page, so the Source documents list
+  links the record instead of naming it in plain text.
   Call `refresh_retention` in the transaction that finalises a record whose
   date can change while it is a draft; never extend retention yourself.
 - Show a record's source documents by mounting the embed `finance.attachments-panel` (`PANEL_EMBED`) as a `PanelSpec` (path `panel`, `source`, `document`; `attachments/README.md`), not an upload form, a download route or `Attachments` calls of your own: the panel owns the live upload, asks the facade on every action and reads whether the record is final from your `Source`, so a page passing its own flag cannot offer replace on a final record. Link a file as `/finance/attachments/{id}/download`; that route reauthorizes on every click.

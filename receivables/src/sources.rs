@@ -85,6 +85,9 @@ impl Source for DocumentSource {
                 .await)
         })
     }
+    fn href(&self, id: i64) -> Option<String> {
+        Some(format!("/finance/receivables/invoices/{id}"))
+    }
 }
 
 impl Source for PaymentSource {
@@ -105,5 +108,8 @@ impl Source for PaymentSource {
             on_source_client!(client, |c| read(c, scope, company_id, document_id, true)
                 .await)
         })
+    }
+    fn href(&self, id: i64) -> Option<String> {
+        Some(format!("/finance/receivables/receipts/{id}"))
     }
 }
