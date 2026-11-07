@@ -23,8 +23,8 @@ use bilibi_module_registry::{
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{MountFuture, Page, PageBody, PageFuture, PageRequest},
-    BuiltinColumn, FlashMap, FlexRow, FlexTable, Html, ListColumns, StatusKind, TableEmpty,
-    NO_FLASH,
+    BuiltinColumn, Button, ButtonVariant, EmptyState, FlashMap, FlexRow, FlexTable, Html,
+    ListColumns, StatusKind, TableEmpty, NO_FLASH,
 };
 use std::sync::Arc;
 
@@ -44,6 +44,7 @@ pub(crate) struct Pages {
     pub ledger: Arc<Ledger>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 // Bilimbi `Contributions.menu`: id, label, icon, parent, route, capability, order.
@@ -112,6 +113,16 @@ impl Pages {
         Ok(bilibi_authz::decide(&**c, scope, capability).await?.allowed)
     }
 
+    /// The names of the people a page mentions ("Ana Lim", never "user 5").
+    async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<bilibi_finance_ledger::People> {
+        let c = self.db.get().await?;
+        Ok(bilibi_finance_ledger::People::read(&self.directory, &**c, scope, ids).await)
+    }
+
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let c = self.db.get().await?;
         let locale = self.locales.resolve(&**c, scope, None).await?.locale;
@@ -139,9 +150,10 @@ impl Page<Scope, Error> for Pages {
                     (state.body()?, None)
                 }
                 "setup" => {
-                    let mut state = setup::Setup::new(self.clone())?;
+                    let mut state = setup::Setup::new(self.clone())?.requested(r.query);
                     state.reload(scope).await?;
                     state.reset_registration_form();
+                    state.open_requested();
                     (state.body(scope).await?, None)
                 }
                 "return" => {
@@ -163,7 +175,7 @@ impl Page<Scope, Error> for Pages {
         Box::pin(async move {
             let state: Box<dyn bilibi_ui::page::LiveState<Scope, Error>> = match r.operation {
                 "returns" => Box::new(returns::Returns::new(self.clone())?.framed(r.framed)),
-                "setup" => Box::new(setup::Setup::new(self.clone())?),
+                "setup" => Box::new(setup::Setup::new(self.clone())?.requested(r.query)),
                 "return" => {
                     let mut state = detail::Return::new(self.clone(), r.path)?;
                     state.subscribe(r.scope.ok_or(Error::Unauthorized)?).await;
@@ -237,6 +249,25 @@ fn table(
     empty: Option<(&str, &str)>,
     actions: bool,
 ) -> Result<Html> {
+    table_with(
+        columns,
+        event,
+        caption,
+        rows,
+        empty.map(|(title, reason)| EmptyState::missing(title, reason)),
+        actions,
+    )
+}
+
+/// [`table`] with its own empty state, such as one offering the next step.
+fn table_with(
+    columns: &ListColumns,
+    event: &str,
+    caption: &str,
+    rows: Vec<FlexRow>,
+    empty: Option<EmptyState>,
+    actions: bool,
+) -> Result<Html> {
     let mut table = FlexTable::new(&columns.id, columns.flex_columns(), rows);
     table.event = event;
     table.caption = caption;
@@ -245,9 +276,53 @@ fn table(
     table.suggestions = columns.flex_suggestions();
     table.add_query = &columns.add_query;
     table.actions = actions;
-    table.empty = empty
-        .map(|(title, reason)| TableEmpty::State(bilibi_ui::EmptyState::missing(title, reason)));
+    table.empty = empty.map(TableEmpty::State);
     render(table)
+}
+
+/// A dialog's actions: Cancel, then the one primary verb at the end of the
+/// row (the shared form starts its action line at the left).
+fn dialog_actions(
+    form: &str,
+    cancel_event: &str,
+    verb: &str,
+    working: &'static str,
+) -> Result<Html> {
+    let mut buttons = render(Button {
+        id: &format!("{form}-cancel"),
+        button_type: "button",
+        event: cancel_event,
+        body: Html::text("Cancel"),
+        ..Button::default()
+    })?;
+    buttons.push(&render(Button {
+        id: &format!("{form}-submit"),
+        button_type: "submit",
+        variant: ButtonVariant::Primary,
+        working,
+        body: Html::text(verb),
+        ..Button::default()
+    })?);
+    render(DialogActions { buttons })
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex w-full flex-wrap justify-end gap-2">{{ buttons|safe }}</div>"#,
+    ext = "html"
+)]
+struct DialogActions {
+    buttons: Html,
+}
+
+/// A header's navigation to a sibling page, as the standard button.
+fn nav_button(id: &str, href: &str, text: &str) -> Result<Html> {
+    render(Button {
+        id,
+        href,
+        body: Html::text(text),
+        ..Button::default()
+    })
 }
 
 /// Bilimbi `<.datetime precision={:second}>` of an SST stamp

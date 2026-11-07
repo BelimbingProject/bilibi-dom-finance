@@ -2,6 +2,7 @@
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 {% import "forms.html" as form %}
+{% import "dialog.html" as dialog %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="sst-returns") %}
 {% call ui::header(subtitle="Prepare and review the company's SST-02 returns.", title_actions=title_actions, actions=actions) %}SST returns{% endcall %}
@@ -12,19 +13,22 @@
 {% call ui::section_heading(id="sst-periods-heading", title="Taxable periods", class="p-5 pb-0", description=periods.description) %}{% endcall %}
 {{ periods.table|safe }}
 {% if let Some(forbidden) = periods.forbidden %}{{ forbidden|safe }}{% endif %}
-{% if periods.can_prepare %}
-<form id="sst-prepare-form" data-event="prepare_change" data-change data-submit-event="prepare" class="grid gap-x-6 gap-y-2 p-5 md:grid-cols-3">
-{% call form::input(field=periods.tax_field) %}{% endcall %}
-{% call form::input(field=periods.period_field) %}{% endcall %}
-<div class="flex items-end pb-4">{% call ui::button(id="prepare-submit", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Preparing…") %}Prepare return{% endcall %}</div>
-</form>
-{% endif %}
 {% endcall %}
 {% endif %}
 {% if let Some(list) = list %}
 {% call ui::card(id="sst-returns-list", inner_class="p-0", role="region", labelledby="sst-returns-list-heading") %}
 {% call ui::section_heading(id="sst-returns-list-heading", title="Returns on record", count=count, class="p-5 pb-0") %}{% endcall %}
 {{ list|safe }}
+{% endcall %}
+{% endif %}
+{% if let Some(m) = modal %}
+{% call dialog::modal(id="sst-prepare-modal", title="Prepare a return", cancel_event="close_return", description="For a taxable period the list above does not show.") %}
+{% if let Some(alert) = m.alert %}{{ alert|safe }}{% endif %}
+<form id="sst-prepare-form" data-event="prepare_change" data-change data-submit-event="prepare" class="mt-4 space-y-3">
+{% call form::input(field=m.tax_field) %}{% endcall %}
+{% call form::input(field=m.period_field) %}{% endcall %}
+{{ m.actions|safe }}
+</form>
 {% endcall %}
 {% endif %}
 {% endcall %}
