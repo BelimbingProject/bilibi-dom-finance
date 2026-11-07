@@ -103,6 +103,8 @@ pub(crate) struct TemplateSummary {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct Owner {
     pub module: String,
+    /// `document:12`: which of the owner's records posted the entry.
+    pub record: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -1,9 +1,0 @@
-{% import "components.html" as ui %}
-<a id="payables-bill-back" href="/finance/payables/bills">All bills</a>
-{% if let Some(href) = correct %}{% call ui::action_link(id="payables-bill-correct", icon="", title="Correct this draft", href=href) %}Correct draft{% endcall %}{% endif %}
-{% if let Some(href) = note %}{% call ui::action_link(id="payables-bill-note", icon="", title="Record a debit note against this bill", href=href) %}Record debit note{% endcall %}{% endif %}
-{% if let Some(href) = pay %}{% call ui::action_link(id="payables-bill-pay", icon="", title="Request a payment for this bill", href=href) %}Request payment{% endcall %}{% endif %}
-{% if approve %}{% call ui::button(id="payables-bill-approve", event="approve", button_type="button", variant=bilibi_ui::ButtonVariant::Primary) %}Approve{% endcall %}{% endif %}
-{% if post %}{% call ui::button(id="payables-bill-post", event="post", button_type="button", variant=bilibi_ui::ButtonVariant::Primary) %}Post{% endcall %}{% endif %}
-{% if approve_exception %}{% call ui::button(id="payables-bill-open-approve-exception", event="open_dialog", name="dialog", value="approve_exception", button_type="button") %}Approve exceptions{% endcall %}{% endif %}
-{% if void %}{% call ui::button(id="payables-bill-open-void", event="open_dialog", name="dialog", value="void", button_type="button", variant=bilibi_ui::ButtonVariant::Danger) %}Void{% endcall %}{% endif %}

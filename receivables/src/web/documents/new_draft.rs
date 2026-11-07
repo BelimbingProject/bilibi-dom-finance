@@ -48,13 +48,32 @@ impl Documents {
 
     /// The live page opens on the same customer the first render did.
     pub(in crate::web) async fn mounted(&mut self, scope: &Scope) -> Result<()> {
-        if self.dropped.is_some() {
+        if self.dropped.is_some() || self.credit.is_some() {
             self.load(scope).await?;
         }
         self.open_dropped(scope).await
     }
 
+    /// Opens what the address carried: a dropped customer's New invoice, or
+    /// New credit note on the invoice named by `?credit=`.
     pub(super) async fn open_dropped(&mut self, scope: &Scope) -> Result<()> {
+        if let Some(invoice) = self.credit.take() {
+            if self.start_draft(scope, "credit_note").await? {
+                let customer = self
+                    .credit_invoices
+                    .iter()
+                    .find(|d| d.id == invoice)
+                    .map(|d| d.customer_id);
+                if let (Some(draft), Some(customer)) = (self.create.as_mut(), customer) {
+                    draft
+                        .values
+                        .insert("credited_document_id".into(), invoice.to_string());
+                    draft
+                        .values
+                        .insert("customer_id".into(), customer.to_string());
+                }
+            }
+        }
         match self.dropped.take() {
             Some(text) => self.receive_drop(scope, &text).await,
             None => Ok(()),

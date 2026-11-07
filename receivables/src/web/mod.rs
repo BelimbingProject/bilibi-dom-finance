@@ -101,6 +101,7 @@ pub(crate) struct Pages {
     pub locales: Arc<Locales>,
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
     pub records: Arc<bilibi_records::Records>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 bilibi_menu::contribute!(
@@ -235,6 +236,16 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, Provenance { module: 
 }) }
 
 impl Pages {
+    /// The names of the people a page mentions.
+    pub(super) async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<bilibi_finance_ledger::People> {
+        let client = self.db.get().await?;
+        Ok(bilibi_finance_ledger::People::read(&self.directory, &**client, scope, ids).await)
+    }
+
     pub(super) fn party_picker(&self) -> bilibi_finance_ledger::PartyPickerContext {
         bilibi_finance_ledger::PartyPickerContext {
             records: self.records.clone(),
@@ -650,7 +661,7 @@ impl Pages {
             "receipts" => {
                 State::Receipts(Box::new(payments::Payments::new(pages, r.query, r.framed)?))
             }
-            "receipt" => State::Receipt(Box::new(payment::Payment::new(pages, r.path)?)),
+            "receipt" => State::Receipt(Box::new(payment::Payment::new(pages, r.path, r.query)?)),
             "aging" => State::Aging(Box::new(aging::Aging::new(pages, r.query)?)),
             "settings" => State::Settings(Box::new(settings::Settings::new(pages)?)),
             _ => return Err(Error::NotFound),
@@ -679,6 +690,9 @@ impl State {
         match self {
             State::Customers(s) => s.mounted(scope).await,
             State::Invoices(s) => s.mounted(scope).await,
+            State::Invoice(s) => s.mounted(scope).await,
+            State::Receipt(s) => s.mounted(scope).await,
+            State::Receipts(s) => s.mounted(scope).await,
             _ => Ok(()),
         }
     }

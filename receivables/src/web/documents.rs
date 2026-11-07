@@ -13,10 +13,10 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, CreateButton,
-    EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind,
-    ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination, RecordLink,
-    SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params, Attrs, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox,
+    CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
+    InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
+    RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{
@@ -104,6 +104,9 @@ pub(super) struct Documents {
     opening: Option<Opening>,
     can_open: bool,
     credit_invoices: Vec<Document>,
+    /// The invoice an address asked to credit (`?credit=`), as an invoice's
+    /// own "New credit note" sends it here.
+    credit: Option<i64>,
     flash: Flash,
     framed: bool,
 }
@@ -152,6 +155,7 @@ impl Documents {
             opening: None,
             can_open: false,
             credit_invoices: vec![],
+            credit: params::positive_id(query.get("credit").map(String::as_str)),
             flash: Flash::default(),
             framed,
         })
@@ -364,19 +368,17 @@ impl Documents {
         Ok(())
     }
 
+    /// The customer's name alone, as a choice's muted detail.
     fn customer_name(&self, d: &Document) -> String {
-        let customer = self.customers.iter().find(|c| c.id == d.customer_id);
-        let name = d
-            .party_name
-            .as_deref()
-            .or(customer.map(|c| c.name.as_str()))
-            .unwrap_or("Customer unavailable");
-        let code = d
-            .party_code
-            .as_deref()
-            .or(customer.map(|c| c.code.as_str()))
-            .unwrap_or("");
-        format!("{code} · {name}")
+        d.party_name
+            .clone()
+            .or_else(|| {
+                self.customers
+                    .iter()
+                    .find(|c| c.id == d.customer_id)
+                    .map(|c| c.name.clone())
+            })
+            .unwrap_or_default()
     }
 
     fn page_customer_name(&self, d: &DocumentPageRow) -> String {
@@ -642,10 +644,10 @@ impl Documents {
             .customers
             .iter()
             .filter(|c| c.active || credit)
-            .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.id.to_string()))
+            .map(|c| Choice::new(&c.name, c.id.to_string()).detail(&c.code))
             .collect();
         let mut who = Html::EMPTY;
-        let mut series_field = Field::in_form("draft", "series_id")
+        let series_field = Field::in_form("draft", "series_id")
             .id("receivables-draft-series_id")
             .label("Series")
             .kind(InputKind::Select)
@@ -658,14 +660,11 @@ impl Documents {
             .value(value("series_id"))
             .required()
             .errors(draft.errors.under("series_id", "Series"));
-        if credit {
-            series_field = series_field.hint("Issued ref no.");
-        }
         let mut series_html = Html::raw("<div>");
         series_html.push(&render(series_field)?);
-        if !credit {
-            // The Field hint is plain text, so the invoice's hint is drawn
-            // here to carry the shared settings link icon.
+        {
+            // The Field hint is plain text, so the hint is drawn here to
+            // carry the shared settings link icon.
             series_html.push(&Html::raw(
                 "<p id=\"receivables-draft-series_id-hint\" class=\"mt-1.5 flex items-center gap-1 text-xs text-ink-subtle\">Issued ref no, settings ",
             ));
@@ -681,15 +680,17 @@ impl Documents {
         series_html.push(&Html::raw("</div>"));
         who.push(&series_html);
         who.push(&render(
-            Field::in_form("draft", "customer_id")
-                .id("receivables-draft-customer_id")
-                .label("Customer")
-                .kind(InputKind::Select)
-                .prompt("Choose a customer")
+            Combobox::new("receivables-draft-customer_id", "draft[customer_id]")
+                .label("Customer *")
+                .aria_label("Customer")
+                .placeholder("Choose a customer")
                 .options(customers)
                 .value(value("customer_id"))
-                .required()
-                .errors(draft.errors.under("customer_id", "Customer")),
+                .errors(draft.errors.under("customer_id", "Customer"))
+                .attrs(Attrs {
+                    required: true,
+                    ..Attrs::default()
+                }),
         )?);
         body.push(&f::two(who)?);
         if credit {
@@ -697,28 +698,28 @@ impl Documents {
                 .credit_invoices
                 .iter()
                 .filter(|d| d.kind == "invoice" && d.status == "issued")
-                .map(|d| {
-                    Choice::new(
-                        format!("{} · {}", reference(d), self.customer_name(d)),
-                        d.id.to_string(),
-                    )
-                })
+                .map(|d| Choice::new(reference(d), d.id.to_string()).detail(self.customer_name(d)))
                 .collect();
             body.push(&render(
-                Field::in_form("draft", "credited_document_id")
-                    .id("receivables-draft-credited_document_id")
-                    .label("Credited invoice")
-                    .kind(InputKind::Select)
-                    .prompt("Choose the invoice this credits")
-                    .options(invoices)
-                    .value(value("credited_document_id"))
-                    .required()
-                    .hint("It must be an issued invoice to the same customer.")
-                    .errors(
-                        draft
-                            .errors
-                            .under("credited_document_id", "Credited invoice"),
-                    ),
+                Combobox::new(
+                    "receivables-draft-credited_document_id",
+                    "draft[credited_document_id]",
+                )
+                .label("Credited invoice *")
+                .aria_label("Credited invoice")
+                .placeholder("Choose the invoice this credits")
+                .options(invoices)
+                .value(value("credited_document_id"))
+                .hint("An issued invoice to the same customer.")
+                .errors(
+                    draft
+                        .errors
+                        .under("credited_document_id", "Credited invoice"),
+                )
+                .attrs(Attrs {
+                    required: true,
+                    ..Attrs::default()
+                }),
             )?);
         }
         let mut dates = Html::EMPTY;
@@ -780,7 +781,7 @@ impl Documents {
         f::modal(
             "receivables-draft-modal",
             if credit {
-                "New credit note"
+                "New credit note - draft"
             } else {
                 "New invoice - draft"
             },

@@ -32,13 +32,6 @@ pub(super) fn decimal(n: Option<Decimal>) -> String {
 pub(super) fn optional(text: &Option<String>) -> &str {
     text.as_deref().unwrap_or("—")
 }
-pub(super) fn actor(user: Option<i64>, impersonator: Option<i64>) -> String {
-    match (user, impersonator) {
-        (Some(u), Some(i)) => format!("User #{u} (impersonated by #{i})"),
-        (Some(u), None) => format!("User #{u}"),
-        (None, _) => "—".into(),
-    }
-}
 pub(super) fn status(status: &str) -> Result<Html> {
     badge(
         status,
@@ -200,16 +193,17 @@ pub(super) fn fact(title: &'static str, value: &str) -> bilibi_ui::Fact<'static>
     }
 }
 
-/// Who did it and, when known, when: `User #2 · 2026-10-20 09:30:00`.
+/// Who did it and, when known, when: `Ana Lim · 20 Oct 2026, 09:30`.
 pub(super) fn actor_at(
     display: &DisplayContext,
+    people: &bilibi_finance_ledger::People,
     actor: Option<i64>,
     impersonator: Option<i64>,
     at: Option<&str>,
     element: &str,
     separator: &str,
 ) -> Result<Html> {
-    let mut value = Html::text(&self::actor(actor, impersonator));
+    let mut value = Html::text(&people.who(actor, impersonator));
     if let Some(at) = at {
         value.push(&Html::text(separator));
         value.push(&time(display, element, at)?);

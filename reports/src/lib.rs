@@ -90,7 +90,7 @@ inventory::submit! {
         id: MODULE, layer: Layer::Domains,
         dependencies: &[
             "base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu",
-            "base/party_ids", "base/settings", "base/tenancy", "base/ui",
+            "base/party_ids", "base/principal_directory", "base/settings", "base/tenancy", "base/ui",
             "core/company", "base/artifacts", "finance/ledger",
             "finance/attachments", "finance/receivables", "finance/payables",
             "finance/reconciliation", "finance/einvoice", "finance/payroll",
@@ -139,6 +139,7 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                directory: services.get(bilibi_finance_ledger::PEOPLE)?,
             }))))
         } }, Service { id: source_period_web::PAGES, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(source_period_web::Pages {

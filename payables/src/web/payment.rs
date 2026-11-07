@@ -2,16 +2,18 @@
 //! its reversal. The decisions are the contracts the agent doors call:
 //! someone other than the submitter approves (or rejects with a reason), and
 //! a posted payment is reversed by date.
-use super::{company, format as f, render, Pages, Written};
+use super::{company, format as f, render, Pages, Written, PAYMENTS};
 use crate::{Document, Payment, PaymentRequest, PAYMENT_SOURCE, POST_PAYMENTS};
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{Account, MinorUnits};
+use bilibi_finance_ledger::{
+    Account, DocumentLayout, EntryLink, MinorUnits, RecordAction, RecordActions,
+};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field, FlashMap, FlexRow,
-    FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
+    params, BackLink, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field, FlashMap,
+    FlexRow, FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -37,11 +39,17 @@ pub(super) struct Request {
     date: String,
     description: String,
     flash: Option<(StatusKind, String)>,
+    /// The dialog an address asked for (`?do=reject`, `?do=reverse`).
+    requested: Option<String>,
     allocations: ListColumns,
 }
 
 impl Request {
-    pub(super) fn new(pages: Pages, path: &HashMap<String, String>) -> Result<Self> {
+    pub(super) fn new(
+        pages: Pages,
+        path: &HashMap<String, String>,
+        query: &HashMap<String, String>,
+    ) -> Result<Self> {
         Ok(Self {
             pages,
             id: params::positive_id(path.get("id").map(String::as_str)).unwrap_or(0),
@@ -57,6 +65,7 @@ impl Request {
             date: String::new(),
             description: String::new(),
             flash: None,
+            requested: bilibi_finance_ledger::RecordActions::requested(query),
             allocations: ListColumns::mount(
                 "payables-payment-allocations-table",
                 [
@@ -142,6 +151,17 @@ impl Request {
         Ok(())
     }
 
+    /// Opens the dialog an address asked for, as its menu item's link does.
+    pub(super) async fn open_requested(&mut self, scope: &Scope) -> Result<()> {
+        if let Some(action) = self.requested.take() {
+            if matches!(action.as_str(), "reject" | "reverse") && self.request.is_some() {
+                self.event(scope, "", &json!({"type": "open_dialog", "dialog": action}))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn title(&self) -> Option<String> {
         self.request
             .as_ref()
@@ -164,7 +184,12 @@ impl Request {
                 "There is no such payment for this company, or it cannot be read with your current access.",
             );
             missing.id = "payables-payment-missing".into();
-            missing.action = render(AllPayments)?;
+            missing.action = render(BackLink {
+                href: PAYMENTS,
+                id: "payables-payment-back",
+                title: "Back to payments",
+                ..BackLink::default()
+            })?;
             return Missing {
                 flash,
                 missing: render(missing)?,
@@ -173,90 +198,111 @@ impl Request {
             .map_err(|_| Error::Internal);
         };
         let display = self.pages.display(scope).await?;
+        let mut mentioned = vec![Some(r.submitted_by_user_id), r.submitted_by_impersonator_id];
+        if let Some(d) = &r.decision {
+            mentioned.extend([Some(d.actor_user_id), d.actor_impersonator_id]);
+        }
+        if let Some(re) = &self.reversal {
+            mentioned.extend([Some(re.posted_by_user_id), re.posted_by_impersonator_id]);
+        }
+        let people = self.pages.people(scope, mentioned).await?;
         let account = self
             .accounts
             .iter()
             .find(|a| a.id == r.paid_from_account_id)
             .map_or_else(
                 || "Account unavailable".into(),
-                |a| format!("{} {}", a.code, a.name),
+                |a| format!("{} · {}", a.name, a.code),
             );
         let amount = format!("{} {}", r.amount.display(self.units), r.currency_code);
-        let mut items = vec![
-            f::fact("Supplier", &format!("{} · {}", r.party_code, r.party_name)),
-            f::fact("Payment date", &r.payment_date.to_string()),
-            f::fact("Paid from", &account),
-            f::fact("Amount", &amount),
-            f::fact("Reference", f::optional(&r.reference)),
-            f::fact("Description", f::optional(&r.description)),
-        ];
-        items.push(bilibi_ui::Fact {
-            title: "Requested",
-            value: f::actor_at(
-                &display,
-                Some(r.submitted_by_user_id),
+        let facts = render(Facts {
+            id: "payables-payment-facts",
+            items: vec![
+                f::fact("Supplier", &r.party_name),
+                f::fact("Payment date", &r.payment_date.to_string()),
+                bilibi_ui::Fact {
+                    title: "Paid from",
+                    value: bilibi_finance_ledger::AccountName::label(&account)?,
+                    ..bilibi_ui::Fact::default()
+                },
+                f::fact("Amount", &amount),
+                f::fact("Reference", f::optional(&r.reference)),
+                f::fact("Description", f::optional(&r.description)),
+            ],
+        })?;
+        let stamp = |title: &'static str,
+                     user: i64,
+                     impersonator: Option<i64>,
+                     at: &str,
+                     element: &str|
+         -> Result<bilibi_ui::Fact<'static>> {
+            Ok(bilibi_ui::Fact {
+                title,
+                value: f::actor_at(
+                    &display,
+                    &people,
+                    Some(user),
+                    impersonator,
+                    Some(at),
+                    element,
+                    " · ",
+                )?,
+                ..bilibi_ui::Fact::default()
+            })
+        };
+        let mut summary = vec![
+            bilibi_ui::Fact {
+                title: "Status",
+                value: f::request_status(&r.status)?,
+                ..bilibi_ui::Fact::default()
+            },
+            stamp(
+                "Requested",
+                r.submitted_by_user_id,
                 r.submitted_by_impersonator_id,
-                Some(&r.submitted_at),
+                &r.submitted_at,
                 "payables-payment-submitted-at",
-                " · ",
             )?,
-            ..bilibi_ui::Fact::default()
-        });
+        ];
         if let Some(d) = &r.decision {
-            let mut value = f::actor_at(
-                &display,
-                Some(d.actor_user_id),
-                d.actor_impersonator_id,
-                Some(&d.occurred_at),
-                "payables-payment-decided-at",
-                " · ",
-            )?;
-            if let Some(reason) = &d.reason {
-                value.push(&Html::text(&format!(" · {reason}")));
-            }
-            items.push(bilibi_ui::Fact {
-                title: if d.event == "rejected" {
+            summary.push(stamp(
+                if d.event == "rejected" {
                     "Rejected"
                 } else {
                     "Approved"
                 },
-                value,
+                d.actor_user_id,
+                d.actor_impersonator_id,
+                &d.occurred_at,
+                "payables-payment-decided-at",
+            )?);
+            if let Some(reason) = &d.reason {
+                summary.push(f::fact("Reason", reason));
+            }
+        }
+        if let Some(p) = &self.payment {
+            summary.push(f::fact("Payment", &format!("#{}", p.payment_number)));
+            summary.push(bilibi_ui::Fact {
+                title: "Journal",
+                value: EntryLink::html(Some(p.entry_id), Some(p.entry_number))?,
                 ..bilibi_ui::Fact::default()
             });
-        }
-        let facts = render(Facts {
-            id: "payables-payment-facts",
-            items,
-        })?;
-        let payment = match &self.payment {
-            Some(p) => {
-                let mut items = vec![
-                    f::fact("Payment", &format!("#{}", p.payment_number)),
-                    f::fact("Ledger entry", &format!("#{}", p.entry_number)),
-                ];
-                if let Some(re) = &self.reversal {
-                    items.push(bilibi_ui::Fact {
-                        title: "Reversed",
-                        value: f::actor_at(
-                            &display,
-                            Some(re.posted_by_user_id),
-                            re.posted_by_impersonator_id,
-                            Some(&re.posted_at),
-                            "payables-payment-reversed-at",
-                            " · ",
-                        )?,
-                        ..bilibi_ui::Fact::default()
-                    });
-                    items.push(f::fact("Reversal date", &re.payment_date.to_string()));
-                    items.push(f::fact("Reversal entry", &format!("#{}", re.entry_number)));
-                }
-                Some(render(Facts {
-                    id: "payables-payment-posted-facts",
-                    items,
-                })?)
+            if let Some(re) = &self.reversal {
+                summary.push(stamp(
+                    "Reversed",
+                    re.posted_by_user_id,
+                    re.posted_by_impersonator_id,
+                    &re.posted_at,
+                    "payables-payment-reversed-at",
+                )?);
+                summary.push(f::fact("Reversal date", &re.payment_date.to_string()));
+                summary.push(bilibi_ui::Fact {
+                    title: "Reversal journal",
+                    value: EntryLink::html(Some(re.entry_id), Some(re.entry_number))?,
+                    ..bilibi_ui::Fact::default()
+                });
             }
-            None => None,
-        };
+        }
         let mut rows = Vec::new();
         for a in &r.allocations {
             let bill = self.bills.get(&a.document_id);
@@ -299,29 +345,77 @@ impl Request {
             Some(kind) => Some(render(self.dialog_view(kind, r))?),
             None => None,
         };
+        let title = format!("Payment #{}", r.request_number);
+        let mut parts = Html::EMPTY;
+        if flash.error.contains("separation of duties") {
+            parts.push(&render(bilibi_ui::Button {
+                id: "payables-approval-settings",
+                href: "/finance/reports/approval-exceptions",
+                body: Html::text("Approval exceptions"),
+                ..bilibi_ui::Button::default()
+            })?);
+        }
+        View {
+            flash,
+            title_actions: f::request_status(&r.status)?,
+            subtitle: format!("Payment to {}", r.party_name),
+            actions: self.header_actions(r, &title)?,
+            layout: DocumentLayout::render(
+                "payables-payment-layout",
+                render(Sections { facts, allocations })?,
+                render(Summary {
+                    facts: render(Facts {
+                        id: "payables-payment-summary",
+                        items: summary,
+                    })?,
+                    extra: parts,
+                })?,
+            )?,
+            title,
+            dialog,
+        }
+        .render()
+        .map_err(|_| Error::Internal)
+    }
+
+    /// Back, the "Actions…" menu (Reject, Reverse), then Approve and pay
+    /// while the request waits.
+    fn header_actions(&self, r: &PaymentRequest, subject: &str) -> Result<Html> {
+        let here = format!("{PAYMENTS}/{}", r.id);
         let waiting = r.status == "submitted";
         let can_reverse = self
             .payment
             .as_ref()
             .is_some_and(|p| p.reversed_by_payment_id.is_none() && p.reverses_payment_id.is_none());
-        let title = format!("Payment #{}", r.request_number);
-        View {
-            flash,
-            title_actions: bilibi_ui::Html::EMPTY,
-            title,
-            status: f::request_status(&r.status)?,
-            actions: render(Actions {
-                approve: self.can_decide && waiting,
-                reject: self.can_decide && waiting,
-                reverse: self.can_decide && can_reverse,
-            })?,
-            facts,
-            payment,
-            allocations,
-            dialog,
+        let mut items = Vec::new();
+        let mut primary = None;
+        if self.can_decide && waiting {
+            primary = Some(render(bilibi_ui::Button {
+                id: "payables-payment-approve",
+                button_type: "button",
+                event: "approve_payment",
+                variant: ButtonVariant::Primary,
+                working: "Approving…",
+                body: Html::text("Approve and pay"),
+                ..bilibi_ui::Button::default()
+            })?);
+            items.push(RecordAction::here("Reject", &here, "reject"));
         }
-        .render()
-        .map_err(|_| Error::Internal)
+        if self.can_decide && can_reverse {
+            items.push(RecordAction::here("Reverse payment", &here, "reverse"));
+        }
+        RecordActions::render(
+            render(BackLink {
+                href: PAYMENTS,
+                id: "payables-payment-back",
+                title: "Back to payments",
+                ..BackLink::default()
+            })?,
+            "payables-payment-actions",
+            subject,
+            items,
+            primary,
+        )
     }
 
     fn dialog_view(&self, kind: Dialog, r: &PaymentRequest) -> DialogView {
@@ -530,6 +624,7 @@ impl LiveState<Scope, Error> for Request {
             if reload {
                 self.reload(r.scope).await?;
             }
+            self.open_requested(r.scope).await?;
             Ok(LiveBody {
                 html: self.body(r.scope).await?,
                 ..LiveBody::default()
@@ -560,12 +655,30 @@ struct View<'a> {
     flash: FlashMap<'a>,
     title_actions: Html,
     title: String,
-    status: Html,
+    subtitle: String,
     actions: Html,
-    facts: Html,
-    payment: Option<Html>,
-    allocations: Html,
+    layout: Html,
     dialog: Option<Html>,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::card(id="payables-payment-request", role="region", labelledby="payables-payment-request-heading") %}{% call ui::section_heading(id="payables-payment-request-heading", title="Request") %}{% endcall %}{{ facts|safe }}{% endcall %}{% call ui::card(id="payables-payment-bills", inner_class="p-0", role="region", labelledby="payables-payment-bills-heading") %}{% call ui::section_heading(id="payables-payment-bills-heading", title="Bills", class="p-5 pb-0") %}{% endcall %}{{ allocations|safe }}{% endcall %}"#,
+    ext = "html"
+)]
+struct Sections {
+    facts: Html,
+    allocations: Html,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::card(id="payables-payment-summary-card", role="region", labelledby="payables-payment-summary-heading") %}{% call ui::section_heading(id="payables-payment-summary-heading", title="Summary") %}{% endcall %}{{ facts|safe }}{{ extra|safe }}{% endcall %}<div id="payables-payment-attachments-slot" data-live-ignore><div id="payables-payment-attachments"></div></div>"#,
+    ext = "html"
+)]
+struct Summary {
+    facts: Html,
+    extra: Html,
 }
 
 #[derive(Template)]
@@ -586,21 +699,6 @@ struct Missing<'a> {
 struct BillLink {
     id: i64,
     text: String,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"<a href="/finance/payables/payments">All payments</a>"#,
-    ext = "html"
-)]
-struct AllPayments;
-
-#[derive(Template)]
-#[template(path = "payment_actions.html")]
-struct Actions {
-    approve: bool,
-    reject: bool,
-    reverse: bool,
 }
 
 #[derive(Template)]

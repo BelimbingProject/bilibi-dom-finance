@@ -57,6 +57,19 @@ pub(crate) struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
+}
+
+impl Pages {
+    /// The names of the people a page mentions (`crate::People`).
+    pub(crate) async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<crate::People> {
+        let client = self.db.get().await?;
+        Ok(crate::People::read(&self.directory, &**client, scope, ids).await)
+    }
 }
 
 macro_rules! route {
@@ -1004,6 +1017,33 @@ pub(crate) struct AccountLink<'a> {
     pub label: &'a str,
 }
 
+/// A plain link to the page of the record that owns an entry.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="{{ href }}" class="text-link hover:underline">{{ label }}</a>"#,
+    ext = "html"
+)]
+pub(crate) struct RecordLink<'a> {
+    pub href: &'a str,
+    pub label: &'a str,
+}
+
+/// The page and name of the record that owns an entry ("invoice", "bill",
+/// "receipt"), when its module has one; a link only, never a read of the
+/// sibling's records.
+pub(crate) fn owner_page(module: &str, record: &str) -> Option<(String, &'static str)> {
+    let (kind, id) = record.split_once(':')?;
+    let id: i64 = id.parse().ok().filter(|id| *id > 0)?;
+    let (path, noun) = match (module, kind) {
+        ("finance/receivables", "document") => ("/finance/receivables/invoices", "invoice"),
+        ("finance/receivables", "payment") => ("/finance/receivables/receipts", "receipt"),
+        ("finance/payables", "document") => ("/finance/payables/bills", "bill"),
+        ("finance/payables", "payment") => ("/finance/payables/payments", "payment"),
+        _ => return None,
+    };
+    Some((format!("{path}/{id}"), noun))
+}
+
 /// A plain link to a manual journal's page.
 #[derive(Template)]
 #[template(
@@ -1033,14 +1073,6 @@ pub(crate) fn source_label(module: &str) -> String {
         "finance/einvoice" => "E-invoicing".into(),
         "finance/sst" => "Tax return".into(),
         other => other.rsplit('/').next().unwrap_or(other).replace('_', " "),
-    }
-}
-
-/// Who did it, as the other Finance pages say it.
-pub(crate) fn who(user: i64, impersonator: Option<i64>) -> String {
-    match impersonator {
-        None => format!("User #{user}"),
-        Some(by) => format!("User #{user} (impersonated by #{by})"),
     }
 }
 

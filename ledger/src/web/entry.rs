@@ -2,7 +2,7 @@
 //! ledger posts a mirror entry and keeps the original.
 use super::{
     dialog_actions, error_text, event_type, figure, instant, journals::INDEX, no_company, render,
-    shell, source_label, unavailable, view, who, Announce, Failure, Flash, Pages, Read, Refusal,
+    shell, source_label, unavailable, view, Announce, Failure, Flash, Pages, Read, Refusal,
 };
 use crate::POST_ENTRIES;
 use bilibi_database::{Error, Result};
@@ -104,6 +104,22 @@ impl Entry {
         let chart = self.pages.chart(scope).await?.unwrap_or_default();
         let display = self.pages.display(scope).await?;
         let can_post = self.pages.allowed(scope, POST_ENTRIES).await?;
+        let review = entry
+            .late_recording
+            .as_ref()
+            .and_then(|r| r.review.as_ref());
+        let people = self
+            .pages
+            .people(
+                scope,
+                [
+                    Some(entry.posted_by_user_id),
+                    entry.posted_by_impersonator_id,
+                    review.map(|r| r.reviewed_by_user_id),
+                    review.and_then(|r| r.reviewed_by_impersonator_id),
+                ],
+            )
+            .await?;
 
         let mut notices = Html::EMPTY;
         let mut note = |id: &str, text: String, link: Option<(i64, &str)>| -> Result<()> {
@@ -135,14 +151,30 @@ impl Entry {
             )?;
         }
         if let Some(owner) = &entry.owner {
-            note(
-                "ledger-entry-owned",
-                format!(
-                    "Posted by {}. Correct it there, not here.",
-                    source_label(&owner.module)
-                ),
-                None,
-            )?;
+            match super::owner_page(&owner.module, &owner.record) {
+                Some((href, noun)) => {
+                    let mut body = Html::text(&format!("Posted from a {noun}. Correct it on the "));
+                    body.push(&render(super::RecordLink {
+                        href: &href,
+                        label: noun,
+                    })?);
+                    body.push(&Html::text("."));
+                    notices.push(&render(Alert {
+                        id: "ledger-entry-owned",
+                        kind: StatusKind::Info,
+                        class: "mb-3",
+                        body,
+                    })?);
+                }
+                None => note(
+                    "ledger-entry-owned",
+                    format!(
+                        "Posted by {}. Correct it there, not here.",
+                        source_label(&owner.module)
+                    ),
+                    None,
+                )?,
+            }
         }
 
         let debit_total: Decimal = entry.lines.iter().map(|l| view::decimal(&l.debit)).sum();
@@ -197,8 +229,8 @@ impl Entry {
             Fact {
                 title: "Posted by",
                 id: "ledger-entry-by",
-                value: Html::text(&who(
-                    entry.posted_by_user_id,
+                value: Html::text(&people.who(
+                    Some(entry.posted_by_user_id),
                     entry.posted_by_impersonator_id,
                 )),
             },
@@ -335,8 +367,8 @@ impl Entry {
                         Fact {
                             title: "Reviewed by",
                             id: "ledger-entry-review-by",
-                            value: Html::text(&who(
-                                review.reviewed_by_user_id,
+                            value: Html::text(&people.who(
+                                Some(review.reviewed_by_user_id),
                                 review.reviewed_by_impersonator_id,
                             )),
                         },

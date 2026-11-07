@@ -1,24 +1,10 @@
-{# One payment request and the payment it became. Lists use the shared FlexTable. #}
+{# One payment request and the payment it became, laid out as its twin the
+   receipt: the request and its bills beside a summary. #}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% if flash.error.contains("separation of duties") %}{% call ui::button(id="payables-approval-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
 {% call ui::page(id="payables-payment", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::header(subtitle_html=status, title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
-{% call ui::card(id="payables-payment-request", inner_class="p-5 sm:p-6", role="region", labelledby="payables-payment-request-heading") %}
-{% call ui::section_heading(id="payables-payment-request-heading", title="Request") %}{% endcall %}
-{{ facts|safe }}
-{% endcall %}
-{% if let Some(payment) = payment %}
-{% call ui::card(id="payables-payment-posted", inner_class="p-5 sm:p-6", role="region", labelledby="payables-payment-posted-heading") %}
-{% call ui::section_heading(id="payables-payment-posted-heading", title="Payment") %}{% endcall %}
-{{ payment|safe }}
-{% endcall %}
-{% endif %}
-{% call ui::card(id="payables-payment-bills", inner_class="p-0", role="region", labelledby="payables-payment-bills-heading") %}
-{% call ui::section_heading(id="payables-payment-bills-heading", title="Bills", class="p-5 pb-0") %}{% endcall %}
-{{ allocations|safe }}
-{% endcall %}
-<div id="payables-payment-attachments-slot" data-live-ignore><div id="payables-payment-attachments"></div></div>
+{% call ui::header(subtitle=subtitle, title_actions=title_actions, actions=actions) %}{{ title }}{% endcall %}
+{{ layout|safe }}
 {% if let Some(dialog) = dialog %}{{ dialog|safe }}{% endif %}
 {% endcall %}

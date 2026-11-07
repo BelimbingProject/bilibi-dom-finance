@@ -140,15 +140,10 @@ fn event_detail(e: &StatusEvent) -> String {
     .collect::<Vec<_>>()
     .join(" · ")
 }
-fn actor(e: &StatusEvent) -> String {
-    match (
-        e.actor_type.as_str(),
-        e.actor_user_id,
-        e.actor_impersonator_id,
-    ) {
-        ("user", Some(id), None) => format!("User #{id}"),
-        ("user", Some(id), Some(by)) => format!("User #{id} (impersonated by #{by})"),
-        ("system", _, _) => format!("System · {}", text(&e.system_principal)),
+fn actor(e: &StatusEvent, people: &bilibi_finance_ledger::People) -> String {
+    match (e.actor_type.as_str(), e.actor_user_id) {
+        ("user", Some(id)) => people.who(Some(id), e.actor_impersonator_id),
+        ("system", _) => format!("System · {}", text(&e.system_principal)),
         _ => "—".into(),
     }
 }
@@ -622,6 +617,15 @@ impl Detail {
                 &self.sources,
                 rows,
             )?;
+            let people = self
+                .pages
+                .people(
+                    scope,
+                    d.events
+                        .iter()
+                        .flat_map(|e| [e.actor_user_id, e.actor_impersonator_id]),
+                )
+                .await?;
             let mut rows = Vec::new();
             for e in &d.events {
                 let mut row = FlexRow::new(e.sequence.to_string());
@@ -642,7 +646,7 @@ impl Detail {
                             })?,
                         )
                         .cell("detail", Cell::text(event_detail(e)))
-                        .cell("by", Cell::text(actor(e))),
+                        .cell("by", Cell::text(actor(e, &people))),
                 );
             }
             view.events = table(

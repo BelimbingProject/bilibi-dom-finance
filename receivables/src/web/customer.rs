@@ -10,15 +10,19 @@ use super::{
     format::{self as f},
     render, Flash, Pages, Written, CUSTOMERS, INVOICES, RECEIPTS,
 };
-use crate::{Customer as Record, Document, PartyFacts, Payment, MANAGE_CUSTOMERS};
+use crate::{
+    Customer as Record, Document, PartyFacts, Payment, MANAGE_CUSTOMERS, MANAGE_DOCUMENTS,
+    POST_PAYMENTS,
+};
 use bilibi_database::{Error, Result};
+use bilibi_finance_ledger::{RecordAction, RecordActions};
 use bilibi_records::{Reference, Resolved};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BackLink, Button, Card, Cell, CommitStates, CommitStatus, EmptyState, Facts, Field,
-    FlexRow, Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns, PageVariant,
-    Restricted, SectionHeading, StatusKind,
+    params, BackLink, Button, ButtonVariant, Card, Cell, CommitStates, CommitStatus, EmptyState,
+    Facts, Field, FlexRow, Header, Html, InlineChoice, InlineEdit, InputKind, ListColumns,
+    PageVariant, Restricted, SectionHeading, StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -46,6 +50,8 @@ pub(super) struct Customer {
     documents: Vec<Document>,
     payments: Vec<Payment>,
     can_edit: bool,
+    can_invoice: bool,
+    can_receive: bool,
     statuses: CommitStates,
     flash: Flash,
     figures: f::Figures,
@@ -65,6 +71,8 @@ impl Customer {
             documents: vec![],
             payments: vec![],
             can_edit: false,
+            can_invoice: false,
+            can_receive: false,
             statuses: CommitStates::default(),
             flash: Flash::default(),
             figures: f::Figures::default(),
@@ -119,6 +127,8 @@ impl Customer {
             Err(error) => return Err(error),
         };
         self.can_edit = self.pages.allowed(scope, MANAGE_CUSTOMERS).await?;
+        self.can_invoice = self.pages.allowed(scope, MANAGE_DOCUMENTS).await?;
+        self.can_receive = self.pages.allowed(scope, POST_PAYMENTS).await?;
         self.figures = self.pages.figures(scope).await;
         self.company_name = self.pages.company_name(scope).await;
         self.company = PartyView::default();
@@ -510,12 +520,42 @@ impl Customer {
             },
             ..Card::default()
         })?);
+        // The next step for a customer is to invoice it; a receipt from it
+        // is the other thing a person comes here to do.
+        let mut items = Vec::new();
+        if self.can_receive {
+            items.push(RecordAction::link(
+                "Record receipt",
+                format!("{RECEIPTS}?customer={}", c.id),
+            ));
+        }
+        let primary = if c.active && self.can_invoice {
+            Some(render(Button {
+                id: "receivables-customer-new-invoice",
+                href: &format!(
+                    "{INVOICES}?{}={}",
+                    bilibi_records::DROP_PARAM,
+                    c.party.reference()
+                ),
+                variant: ButtonVariant::Primary,
+                body: Html::text("New invoice"),
+                ..Button::default()
+            })?)
+        } else {
+            None
+        };
         let mut body = f::announce(c.id)?;
         body.push(&render(Header {
             title: Html::text(&c.name),
             title_actions: bilibi_ui::Html::EMPTY,
             subtitle: "Customer",
-            actions: back,
+            actions: RecordActions::render(
+                back,
+                "receivables-customer-actions",
+                &c.name,
+                items,
+                primary,
+            )?,
         })?);
         for part in parts {
             body.push(&part);

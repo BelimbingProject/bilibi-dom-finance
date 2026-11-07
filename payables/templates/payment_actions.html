@@ -1,5 +1,0 @@
-{% import "components.html" as ui %}
-<a id="payables-payment-back" href="/finance/payables/payments">All payments</a>
-{% if approve %}{% call ui::button(id="payables-payment-approve", event="approve_payment", button_type="button", variant=bilibi_ui::ButtonVariant::Primary, working="Approving…") %}Approve and pay{% endcall %}{% endif %}
-{% if reject %}{% call ui::button(id="payables-payment-open-reject", event="open_dialog", name="dialog", value="reject", button_type="button", variant=bilibi_ui::ButtonVariant::Danger) %}Reject{% endcall %}{% endif %}
-{% if reverse %}{% call ui::button(id="payables-payment-open-reverse", event="open_dialog", name="dialog", value="reverse", button_type="button", variant=bilibi_ui::ButtonVariant::Danger) %}Reverse payment{% endcall %}{% endif %}

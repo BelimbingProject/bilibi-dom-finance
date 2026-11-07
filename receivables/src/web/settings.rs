@@ -489,7 +489,16 @@ impl Settings {
                 )?,
             ],
         })?);
-        defaults.push(&self.history(&display)?);
+        let people = self
+            .pages
+            .people(
+                scope,
+                self.changes
+                    .iter()
+                    .flat_map(|c| [Some(c.changed_by_user_id), c.changed_by_impersonator_id]),
+            )
+            .await?;
+        defaults.push(&self.history(&display, &people)?);
         body.push(&render(Card {
             id: "receivables-defaults-card",
             role: "region",
@@ -728,7 +737,11 @@ impl Settings {
 
     /// The changes to the default accounts, folded under one line until the
     /// reader asks (`DESIGN.md`: History is a quiet disclosure, not a button).
-    fn history(&self, display: &bilibi_datetime::DisplayContext) -> Result<Html> {
+    fn history(
+        &self,
+        display: &bilibi_datetime::DisplayContext,
+        people: &bilibi_finance_ledger::People,
+    ) -> Result<Html> {
         let mut rows = Vec::new();
         for c in self.changes.iter().rev() {
             let mut row = FlexRow::new(c.id.to_string());
@@ -760,10 +773,9 @@ impl Settings {
                 .slot("to", super::account_html(&self.accounts, c.new_value)?)
                 .cell(
                     "by",
-                    Cell::text(f::actor(
-                        Some(c.changed_by_user_id),
-                        c.changed_by_impersonator_id,
-                    )),
+                    Cell::text(
+                        people.who(Some(c.changed_by_user_id), c.changed_by_impersonator_id),
+                    ),
                 ),
             );
         }

@@ -10,6 +10,7 @@ use super::{
 use crate::{Customer, Document, Payment as Record, POST_PAYMENTS};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
+use bilibi_finance_ledger::{DocumentLayout, EntryLink, People, RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
@@ -30,11 +31,17 @@ pub(super) struct Payment {
     can_post: bool,
     flash: Flash,
     reversing: Option<(HashMap<String, String>, Errors)>,
+    /// The dialog an address asked for (`?do=reverse`).
+    requested: Option<String>,
     allocations: ListColumns,
 }
 
 impl Payment {
-    pub(super) fn new(pages: Pages, path: &HashMap<String, String>) -> Result<Self> {
+    pub(super) fn new(
+        pages: Pages,
+        path: &HashMap<String, String>,
+        query: &HashMap<String, String>,
+    ) -> Result<Self> {
         Ok(Self {
             pages,
             id: params::positive_id(path.get("id").map(String::as_str)).unwrap_or(0),
@@ -46,6 +53,7 @@ impl Payment {
             can_post: false,
             flash: Flash::default(),
             reversing: None,
+            requested: RecordActions::requested(query),
             allocations: f::columns(
                 "receivables-receipt-allocations-table",
                 &[
@@ -65,8 +73,32 @@ impl Payment {
     }
 
     pub(super) async fn first(&mut self, scope: &Scope) -> Result<String> {
-        self.load(scope).await?;
+        self.mounted(scope).await?;
         self.body(scope).await
+    }
+
+    /// Load, then open the dialog the address asked for (`?do=reverse`).
+    pub(super) async fn mounted(&mut self, scope: &Scope) -> Result<()> {
+        self.load(scope).await?;
+        if self.requested.take().as_deref() == Some("reverse") {
+            self.ask_reverse(scope).await;
+        }
+        Ok(())
+    }
+
+    async fn ask_reverse(&mut self, scope: &Scope) {
+        if self.can_post && self.record.as_ref().is_some_and(|p| p.reversal.is_none()) {
+            let today = self.pages.today(scope).await;
+            self.reversing = Some((
+                HashMap::from([("reversal_date".to_owned(), today)]),
+                Errors::default(),
+            ));
+        } else {
+            self.flash.set(
+                StatusKind::Error,
+                "You do not have permission to reverse receipts.",
+            );
+        }
     }
 
     async fn load(&mut self, scope: &Scope) -> Result<()> {
@@ -134,17 +166,35 @@ impl Payment {
             );
         };
         let display = self.pages.display(scope).await?;
-        let mut actions = back;
+        let people = self
+            .pages
+            .people(
+                scope,
+                [
+                    Some(p.recorded_by_user_id),
+                    p.recorded_by_impersonator_id,
+                    p.reversal.as_ref().map(|r| r.reversed_by_user_id),
+                    p.reversal
+                        .as_ref()
+                        .and_then(|r| r.reversed_by_impersonator_id),
+                ],
+            )
+            .await?;
+        let mut items = Vec::new();
         if self.can_post && p.reversal.is_none() {
-            actions.push(&render(Button {
-                id: "receivables-receipt-reverse",
-                button_type: "button",
-                event: "ask_reverse",
-                variant: ButtonVariant::Danger,
-                body: Html::text("Reverse receipt"),
-                ..Button::default()
-            })?);
+            items.push(RecordAction::here(
+                "Reverse receipt",
+                &format!("{RECEIPTS}/{}", p.id),
+                "reverse",
+            ));
         }
+        let pin_name = if p.payment_reference.trim().is_empty() {
+            format!("Receipt {}", p.id)
+        } else {
+            p.payment_reference.clone()
+        };
+        let actions =
+            RecordActions::render(back, "receivables-receipt-actions", &pin_name, items, None)?;
         let customer_name = self.customer.as_ref().map_or_else(
             || format!("Customer #{}", p.customer_id),
             |c| c.name.clone(),
@@ -156,29 +206,17 @@ impl Payment {
                     "Customer",
                     f::link(&format!("{CUSTOMERS}/{}", p.customer_id), &customer_name)?,
                 ),
-                f::fact_html("Status", super::payments::status_badge(&p)?),
                 f::fact("Date received", &p.payment_date),
                 f::fact(
                     "Amount",
                     &self.figures.with_currency(p.amount, &p.currency_code),
                 ),
-                f::fact(
+                f::fact_html(
                     "Deposited to",
-                    &super::account_label(&self.accounts, p.deposit_account_id),
+                    super::account_html(&self.accounts, p.deposit_account_id)?,
                 ),
                 f::fact("Reference", f::optional(&p.reference)),
                 f::fact("Description", f::optional(&p.description)),
-                f::fact("Ledger entry", &f::number(Some(p.ledger_entry_number))),
-                f::fact_html(
-                    "Recorded",
-                    stamp(
-                        &display,
-                        p.recorded_by_user_id,
-                        p.recorded_by_impersonator_id,
-                        &p.recorded_at,
-                        "receivables-receipt-recorded-at",
-                    )?,
-                ),
             ],
         })?;
         self.allocations
@@ -204,22 +242,19 @@ impl Payment {
             );
         }
         let mut body = f::announce(p.id)?;
-        let pin_name = if p.payment_reference.trim().is_empty() {
-            format!("Receipt {}", p.id)
-        } else {
-            p.payment_reference.clone()
-        };
         body.push(&render(Header {
             title: Html::text(&pin_name),
-            title_actions: bilibi_ui::Html::EMPTY,
+            title_actions: super::payments::status_badge(&p)?,
             subtitle: &format!("Receipt from {customer_name}"),
             actions,
         })?);
-        body.push(&render(Card {
+        let mut document = render(Card {
             id: "receivables-receipt-details",
             role: "region",
+            labelledby: "receivables-receipt-details-heading",
             body: {
                 let mut b = render(SectionHeading {
+                    id: "receivables-receipt-details-heading",
                     title: "Receipt",
                     ..SectionHeading::default()
                 })?;
@@ -227,42 +262,15 @@ impl Payment {
                 b
             },
             ..Card::default()
-        })?);
-        if let Some(r) = &p.reversal {
-            body.push(&render(Card {
-                id: "receivables-receipt-reversal",
-                role: "region",
-                class: "mt-4",
-                body: {
-                    let mut b = render(SectionHeading {
-                        title: "Reversal",
-                        description: "The receipt stays on record as it was. A dated entry undid its effect on the ledger and on what each invoice owes.",
-                        ..SectionHeading::default()
-                    })?;
-                    b.push(&render(Facts {
-                        id: "receivables-receipt-reversal-facts",
-                        items: vec![
-                            f::fact("Reversal date", &r.reversal_date),
-                            f::fact("Reason", &r.reason),
-                            f::fact("Ledger entry", &f::number(Some(r.ledger_entry_number))),
-                            f::fact_html(
-                                "Reversed",
-                                stamp(&display, r.reversed_by_user_id, r.reversed_by_impersonator_id, &r.reversed_at, "receivables-receipt-reversed-at")?,
-                            ),
-                        ],
-                    })?);
-                    b
-                },
-                ..Card::default()
-            })?);
-        }
-        body.push(&render(Card {
+        })?;
+        document.push(&render(Card {
             id: "receivables-receipt-allocations",
             role: "region",
-            class: "mt-4",
+            labelledby: "receivables-receipt-allocations-heading",
             inner_class: "p-0",
             body: {
                 let mut b = render(SectionHeading {
+                    id: "receivables-receipt-allocations-heading",
                     title: "Applied to",
                     class: "p-5 pb-0",
                     ..SectionHeading::default()
@@ -278,7 +286,69 @@ impl Payment {
             },
             ..Card::default()
         })?);
-        body.push(&render(SlotHtml)?);
+        let mut summary_items = vec![
+            f::fact_html("Status", super::payments::status_badge(&p)?),
+            f::fact_html(
+                "Journal",
+                EntryLink::html(Some(p.ledger_entry_id), Some(p.ledger_entry_number))?,
+            ),
+            f::fact_html(
+                "Recorded",
+                stamp(
+                    &display,
+                    &people,
+                    p.recorded_by_user_id,
+                    p.recorded_by_impersonator_id,
+                    &p.recorded_at,
+                    "receivables-receipt-recorded-at",
+                )?,
+            ),
+        ];
+        if let Some(r) = &p.reversal {
+            summary_items.extend([
+                f::fact("Reversal date", &r.reversal_date),
+                f::fact("Reversal reason", &r.reason),
+                f::fact_html(
+                    "Reversal journal",
+                    EntryLink::html(Some(r.ledger_entry_id), Some(r.ledger_entry_number))?,
+                ),
+                f::fact_html(
+                    "Reversed",
+                    stamp(
+                        &display,
+                        &people,
+                        r.reversed_by_user_id,
+                        r.reversed_by_impersonator_id,
+                        &r.reversed_at,
+                        "receivables-receipt-reversed-at",
+                    )?,
+                ),
+            ]);
+        }
+        let mut summary = render(Card {
+            id: "receivables-receipt-summary-card",
+            role: "region",
+            labelledby: "receivables-receipt-summary-heading",
+            body: {
+                let mut b = render(SectionHeading {
+                    id: "receivables-receipt-summary-heading",
+                    title: "Summary",
+                    ..SectionHeading::default()
+                })?;
+                b.push(&render(Facts {
+                    id: "receivables-receipt-summary",
+                    items: summary_items,
+                })?);
+                b
+            },
+            ..Card::default()
+        })?;
+        summary.push(&render(SlotHtml)?);
+        body.push(&DocumentLayout::render(
+            "receivables-receipt-layout",
+            document,
+            summary,
+        )?);
         let modal = match &self.reversing {
             Some((values, errors)) => Some(self.dialog(&p, values, errors)?),
             None => None,
@@ -371,12 +441,13 @@ impl Payment {
 
 fn stamp(
     display: &DisplayContext,
+    people: &People,
     user: i64,
     impersonator: Option<i64>,
     at: &str,
     element: &str,
 ) -> Result<Html> {
-    let mut value = Html::text(&f::actor(Some(user), impersonator));
+    let mut value = Html::text(&people.who(Some(user), impersonator));
     value.push(&Html::text(" · "));
     value.push(&f::time(display, element, at)?);
     Ok(value)
@@ -384,7 +455,7 @@ fn stamp(
 
 #[derive(askama::Template)]
 #[template(
-    source = r#"<div id="receivables-receipt-attachments-slot" class="mt-4" data-live-ignore><div id="receivables-receipt-attachments"></div></div>"#,
+    source = r#"<div id="receivables-receipt-attachments-slot" data-live-ignore><div id="receivables-receipt-attachments"></div></div>"#,
     ext = "html"
 )]
 struct SlotHtml;
@@ -398,22 +469,7 @@ impl LiveState<Scope, Error> for Payment {
                     "allocations_grid" => {
                         self.allocations.handle(&params::string_values(v));
                     }
-                    "ask_reverse" => {
-                        if self.can_post
-                            && self.record.as_ref().is_some_and(|p| p.reversal.is_none())
-                        {
-                            let today = self.pages.today(r.scope).await;
-                            self.reversing = Some((
-                                HashMap::from([("reversal_date".to_owned(), today)]),
-                                Errors::default(),
-                            ));
-                        } else {
-                            self.flash.set(
-                                StatusKind::Error,
-                                "You do not have permission to reverse receipts.",
-                            );
-                        }
-                    }
+                    "ask_reverse" => self.ask_reverse(r.scope).await,
                     "cancel_reverse" => self.reversing = None,
                     "reverse" => {
                         let form = params::form_values(v, "reverse");
