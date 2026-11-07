@@ -265,7 +265,11 @@ impl Opening {
                         "{} ({} {})",
                         view::account_label(account),
                         money.abs().display(units),
-                        if money.is_positive() { "debit" } else { "credit" }
+                        if money.is_positive() {
+                            "debit"
+                        } else {
+                            "credit"
+                        }
                     )
                 })
                 .collect();

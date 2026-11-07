@@ -127,7 +127,10 @@ impl Paste {
             !cells.is_empty()
                 && cells.iter().all(|cell| {
                     cell.chars().all(|c| c.is_ascii_digit())
-                        && self.codes.iter().any(|code| code.eq_ignore_ascii_case(cell))
+                        && self
+                            .codes
+                            .iter()
+                            .any(|code| code.eq_ignore_ascii_case(cell))
                 })
         };
         self.account = found
