@@ -72,19 +72,9 @@ WALKTHROUGHS=(
 
 # Walkthroughs that fail today for a reason that needs a product decision, not
 # a fixture edit. They still run and are reported (a GitHub warning), but do not
-# fail the run; one that passes is reported so its line can be removed.
-KNOWN_BROKEN=(
-  # Issuing an invoice without Companies view returns a raw Forbidden from
-  # Core's relationship role read (receivables/src/companies.rs `customer_role`),
-  # which the live transport treats as fatal; the field refusal "needs
-  # Companies view permission to check the customer relationship" was dropped
-  # by #136. Stops the combined walkthrough at Receivables NR2.
-  fixture
-  # Mapping a historical supplier key now ends in a bare Invalid
-  # (finance_payables_vendor_keys); this section builds old-system key
-  # evidence, which the no-backfill rule says the product no longer supports.
-  vendors
-)
+# fail the run; one that passes is reported so its line can be removed. None
+# fails today.
+KNOWN_BROKEN=()
 
 step() { printf '\n== %s\n' "$*"; }
 

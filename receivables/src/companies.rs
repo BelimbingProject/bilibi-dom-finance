@@ -129,7 +129,7 @@ impl Receivables {
                 },
             ));
         }
-        let role = self.customer_role(client, scope).await?;
+        let role = self.customer_role(client, scope, "customer_id").await?;
         if self
             .current_customer_relationship(
                 client,
@@ -149,13 +149,23 @@ impl Receivables {
         }
         Ok(())
     }
+    /// Without Companies view the role read is refused as a raw `Forbidden`,
+    /// which the live transport treats as fatal; name it on `field` instead.
     async fn customer_role(
         &self,
         client: &dyn OperationClient,
         scope: &Scope,
+        field: &'static str,
     ) -> Result<RelationshipRole> {
         bilibi_company::relationship_role_by_code(client, scope, "customer")
-            .await?
+            .await
+            .map_err(|e| match e {
+                Error::Forbidden => invalid(
+                    field,
+                    "needs Companies view permission to check the customer relationship",
+                ),
+                other => other.into(),
+            })?
             .ok_or_else(|| {
                 invalid(
                     "base",
@@ -194,7 +204,7 @@ impl Receivables {
         if let Some(id) = target.id {
             if client.query_opt("SELECT id FROM finance_receivables_customers WHERE tenant_id=$1 AND company_id=$2 AND record_kind=$3 AND record_id=$4",&[&scope.tenant(),&source,&target.kind,&id.to_string()]).await?.is_some(){return Err(invalid("record_id","is already a customer of the current company"));}
         }
-        let role = self.customer_role(client, scope).await?;
+        let role = self.customer_role(client, scope, "base").await?;
         let current = match target.id {
             Some(id) => {
                 self.current_customer_relationship(client, scope, source, &target.kind, id, &role)
@@ -228,7 +238,7 @@ impl Receivables {
         let party = PartyLinks::new(&self.parties)
             .compose_target(&self.records, tx, scope, source, attrs)
             .await?;
-        let role = self.customer_role(tx.sql(), scope).await?;
+        let role = self.customer_role(tx.sql(), scope, "base").await?;
         if self
             .current_customer_relationship(tx.sql(), scope, source, &party.kind, party.id, &role)
             .await?

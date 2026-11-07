@@ -10,7 +10,7 @@ use bilibi_finance_ledger::{record_party_relationship, PartyErrors, PartySubmiss
 use bilibi_tenancy::Scope;
 use bilibi_ui::{page::LiveBody, params, CommitStatus, StatusKind};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 impl Vendors {
     pub(super) async fn event(
@@ -25,9 +25,7 @@ impl Vendors {
             event,
             "create_vendor"
                 | "save_vendor"
-                | "confirm_vendor_mapping"
                 | "record_vendor_relationship"
-                | "show_mapping"
                 | bilibi_records::DROP_EVENT
         ) && !self.pages.allowed(s, MANAGE_SETTINGS).await?
         {
@@ -47,9 +45,6 @@ impl Vendors {
             "grid" => {
                 self.columns.handle(&params::string_values(v));
             }
-            "keys_grid" => {
-                self.history_columns.handle(&params::string_values(v));
-            }
             "show_vendor" => {
                 if self.pages.allowed(s, MANAGE_SETTINGS).await? {
                     self.open_create(s).await?;
@@ -61,7 +56,6 @@ impl Vendors {
             }
             "cancel_vendor" => {
                 self.create = None;
-                self.mapping = None;
             }
             "vendor_change" => self.take(s, v).await?,
             "search_companies" => {
@@ -100,16 +94,6 @@ impl Vendors {
                         .use_candidate(&context, s, v["company"].as_str().ok_or(Error::Invalid)?)
                         .await?;
                     c.errors = PartyErrors::default();
-                }
-            }
-            "show_mapping" => {
-                let key = v["key"].as_str().ok_or(Error::Invalid)?;
-                if self
-                    .history
-                    .iter()
-                    .any(|h| h.supplier_key == key && h.vendor_id.is_none())
-                {
-                    self.mapping = Some((key.into(), HashMap::new(), PartyErrors::default()));
                 }
             }
             "create_vendor" => {
@@ -218,38 +202,6 @@ impl Vendors {
                         }
                         if c.chooser.count() == 0 {
                             self.create = None;
-                        }
-                    }
-                }
-            }
-            "confirm_vendor_mapping" => {
-                self.take(s, v).await?;
-                if let Some((key, values, errors)) = &mut self.mapping {
-                    let input = json!({"company_id":company(s),"vendor_id":values.get("vendor_id").and_then(|v|v.parse::<i64>().ok()),"supplier_key":key,"reason":values.get("reason").cloned().unwrap_or_default()});
-                    match self
-                        .pages
-                        .write(
-                            s,
-                            credential,
-                            event,
-                            "finance.payables.vendor.map_supplier_key",
-                            input,
-                        )
-                        .await?
-                    {
-                        Written::Done(_) => {
-                            self.mapping = None;
-                            self.notice=Some((StatusKind::Success,"Supplier match confirmed. Historical records and balances are unchanged.".into()));
-                        }
-                        Written::Fields(e) => *errors = PartyErrors(e),
-                        _ => {
-                            *errors = PartyErrors(BTreeMap::from([(
-                                "base".into(),
-                                vec![
-                                    "Match was not confirmed. Check your permission and try again."
-                                        .into(),
-                                ],
-                            )]))
                         }
                     }
                 }

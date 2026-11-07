@@ -415,7 +415,6 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
         ("import_opening", "finance.payables.opening.stage"),
         ("create_vendor", "finance.payables.vendor.create"),
         ("save_vendor", "finance.payables.vendor.update"),
-        ("confirm_vendor_mapping", "finance.payables.vendor.map_supplier_key"),
         ("record_vendor_relationship", "core.company.relationship.assign"),
         ("approve", "finance.payables.document.approve"),
         ("post", "finance.payables.document.post"),

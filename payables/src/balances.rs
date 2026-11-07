@@ -325,7 +325,7 @@ impl Payables {
         }
         let mut parties: Vec<_> = parties.into_values().collect();
         for p in &mut parties {
-            p.vendor_id = vendors::mapped(c, s.tenant(), company, &p.party_key).await?;
+            p.vendor_id = vendors::of_key(c, s.tenant(), company, &p.party_key).await?;
         }
         parties.sort_by(|a, b| (&a.party_code, &a.party_key).cmp(&(&b.party_code, &b.party_key)));
         let mut buckets = empty;

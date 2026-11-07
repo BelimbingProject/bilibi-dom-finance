@@ -1,5 +1,4 @@
-//! Reusable linked vendor setup for disposable Finance walkthroughs. Product
-//! code never creates a company from historical supplier evidence.
+//! Reusable linked vendor setup for disposable Finance walkthroughs.
 use bilibi_database::Db;
 use bilibi_module_registry::Services;
 use bilibi_tenancy::Scope;

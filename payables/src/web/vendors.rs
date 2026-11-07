@@ -1,15 +1,14 @@
-//! Vendor settings and explicit historical matches, through the same
-//! contracts as agents. Company creation and relationships belong to Core.
-//! The page's state and its reads are here; the list and the historical keys
-//! are drawn in `vendors/list.rs`, the Add supplier and match dialogs (and the
-//! "Add to…" drop that opens the first) in `vendors/form.rs`, and every live
-//! event in `vendors/events.rs`.
+//! Vendor settings, through the same contracts as agents. Company creation and
+//! relationships belong to Core. The page's state and its reads are here; the
+//! list is drawn in `vendors/list.rs`, the Add supplier dialog (and the "Add
+//! to…" drop that opens it) in `vendors/form.rs`, and every live event in
+//! `vendors/events.rs`.
 mod events;
 mod form;
 mod list;
 
 use super::{company, render, Pages, PAGES};
-use crate::{SupplierHistory, Vendor, MANAGE_SETTINGS};
+use crate::{Vendor, MANAGE_SETTINGS};
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{MultiPartyChooser, PartyErrors, PartyPickerContext};
 use bilibi_tenancy::Scope;
@@ -36,13 +35,10 @@ pub(super) struct Vendors {
     /// Records an "Add to…" link carried (`?drop=`), opened once on first use.
     dropped: Option<String>,
     all: Vec<Vendor>,
-    history: Vec<SupplierHistory>,
     list: ListState,
     columns: ListColumns,
-    history_columns: ListColumns,
     can_manage: bool,
     create: Option<Create>,
-    mapping: Option<(String, HashMap<String, String>, PartyErrors)>,
     notice: Option<(StatusKind, String)>,
     company_name: String,
     states: CommitStates,
@@ -53,7 +49,6 @@ impl Vendors {
             pages,
             dropped: query.get(bilibi_records::DROP_PARAM).cloned(),
             all: vec![],
-            history: vec![],
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Invalid)?,
             columns: ListColumns::mount(
                 "payables-vendors-table",
@@ -72,22 +67,8 @@ impl Vendors {
                 .collect(),
             )
             .map_err(|_| Error::Internal)?,
-            history_columns: ListColumns::mount(
-                "payables-vendor-keys",
-                [
-                    ("key", "Supplier key"),
-                    ("facts", "Details on bills"),
-                    ("collisions", "Similar keys"),
-                    ("vendor", "Matched supplier"),
-                ]
-                .into_iter()
-                .map(|(k, l)| BuiltinColumn::new(k, l))
-                .collect(),
-            )
-            .map_err(|_| Error::Internal)?,
             can_manage: false,
             create: None,
-            mapping: None,
             notice: None,
             company_name: String::new(),
             states: CommitStates::default(),
@@ -105,7 +86,6 @@ impl Vendors {
         self.can_manage = self.pages.allowed(s, MANAGE_SETTINGS).await?;
         let Some(company) = company(s) else {
             self.all.clear();
-            self.history.clear();
             return Ok(());
         };
         self.company_name = self.pages.company_name(s).await;
@@ -124,18 +104,7 @@ impl Vendors {
             }
             input["after_id"] = result["next_after_id"].clone();
         }
-        let history = self
-            .read(
-                s,
-                "finance.payables.vendor.supplier_keys",
-                json!({"company_id":company}),
-            )
-            .await?;
-        self.history =
-            serde_json::from_value(history["records"].clone()).map_err(|_| Error::Internal)?;
         self.columns.load(&self.all, |v| v.id.to_string());
-        self.history_columns
-            .load(&self.history, |h| h.supplier_key.clone());
         Ok(())
     }
     async fn read(&self, s: &Scope, key: &str, input: Value) -> Result<Value> {

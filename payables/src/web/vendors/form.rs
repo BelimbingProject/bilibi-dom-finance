@@ -1,6 +1,6 @@
 //! The Add supplier dialog (opened by its button, or by records dropped on the
-//! page or carried by "Add to…") and the Confirm supplier match dialog, both
-//! built on one modal and one draft held by the server.
+//! page or carried by "Add to…"), built on one modal and one draft held by the
+//! server.
 use super::{Create, Vendors, FORM};
 use crate::web::render;
 use crate::MANAGE_SETTINGS;
@@ -169,68 +169,11 @@ impl Vendors {
             },
         )
     }
-    pub(super) fn map_dialog(
-        &self,
-        key: &str,
-        values: &HashMap<String, String>,
-        errors: &PartyErrors,
-    ) -> Result<Html> {
-        let mut body = render(errors.summary(
-            "vendor-map-errors",
-            &[
-                (
-                    "vendor_id".into(),
-                    "vendor-map-choice".into(),
-                    "Supplier".into(),
-                ),
-                ("reason".into(), "vendor-map-reason".into(), "Reason".into()),
-            ],
-        ))?;
-        body.push(&Html::text(&format!(
-            "Supplier key: {key}. Review all recorded facts in the row before confirming."
-        )));
-        body.push(&render(
-            Combobox::new("vendor-map-choice", format!("{FORM}[vendor_id]"))
-                .label("Supplier *")
-                .aria_label("Supplier")
-                .attrs(bilibi_ui::Attrs {
-                    required: true,
-                    aria_label: Some("Supplier".into()),
-                    ..bilibi_ui::Attrs::default()
-                })
-                .value(values.get("vendor_id").cloned().unwrap_or_default())
-                .options(
-                    self.all
-                        .iter()
-                        .map(|v| Choice::new(&v.party.name, v.id.to_string()).detail(&v.code))
-                        .collect(),
-                )
-                .errors(errors.under("vendor_id", "Supplier")),
-        )?);
-        body.push(&render(
-            Field::in_form(FORM, "reason")
-                .id("vendor-map-reason")
-                .label("Reason for this match")
-                .required()
-                .value(values.get("reason").cloned().unwrap_or_default())
-                .errors(errors.under("reason", "Reason")),
-        )?);
-        self.modal(
-            "vendor-map-modal",
-            "Confirm supplier match",
-            body,
-            "confirm_vendor_mapping",
-            "Confirm match",
-        )
-    }
     pub(super) async fn take(&mut self, _s: &Scope, v: &Value) -> Result<()> {
         let form = params::form_values(v, FORM);
         if let Some(c) = &mut self.create {
             c.values.extend(form.clone());
             c.chooser.read(&form);
-        }
-        if let Some((_, values, _)) = &mut self.mapping {
-            values.extend(form);
         }
         Ok(())
     }
