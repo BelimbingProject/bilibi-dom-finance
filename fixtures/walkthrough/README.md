@@ -67,7 +67,11 @@ source accumulation differing from lifetime projection, prospective depreciation
 settlement reversals, report reproduction across entryless imports, independent
 approval, unauthorized-write refusal and permanent source evidence. It also
 retains comparative, monthly movement, SST and payroll source schedules without
-creating postings, returns, payments or tax lines. Around the staged 10,000-row
+creating postings, returns, payments or tax lines. On Company 005
+(`src/source_bridge.rs`) it reads the year-to-date bridge with no months
+retained, with January to June agreeing to the opening journal and a balance
+sheet row left out, and with June retained twice. `serve` and `prepare-launcher` retain
+January to May for Company 001, so its Monthly movements tab shows the bridge. Around the staged 10,000-row
 and replacement lifecycle (`src/conversion_lifecycle.rs`), it runs the immutable
 conversion-report and sign-off proof described in [Conversion
 reports](../../reports/README.md#conversion-reports). Use `-- report-browser` to

@@ -1279,6 +1279,14 @@ async fn prove(db: &Db, services: &Services) -> Outcome<()> {
     println!("Opening list contract proof: SQL filtering, sorting, count, clamping and lightweight rows passed.");
     Ok(())
 }
+/// The year-to-date bridge on its own company, so the conversion report's
+/// four retained schedules on Company 003 stay as they are.
+async fn prove_source_bridge(db: &Db, services: &Services) -> Outcome<()> {
+    let company = 5;
+    setup(db, services, company).await?;
+    let s = in_company(db, services, 4, company).await?;
+    bilibi_finance_walkthrough_fixture::source_bridge::prove(db, services, &s, company).await
+}
 async fn prove_historical_controls(db: &Db, services: &Services) -> Outcome<()> {
     let company = 4;
     let config = setup(db, services, company).await?;
@@ -1539,6 +1547,13 @@ async fn main() -> Outcome<()> {
         for company in [1, 2, 4] {
             sources.push(setup(&db, &app.services, company).await?);
         }
+        bilibi_finance_walkthrough_fixture::source_bridge::seed(
+            &db,
+            &app.services,
+            &in_company(&db, &app.services, 4, 1).await?,
+            1,
+        )
+        .await?;
         std::fs::write(
             std::env::var("BILIBI_OPENING_PROOF_CONFIG")?,
             serde_json::to_vec_pretty(&sources)?,
@@ -1553,6 +1568,14 @@ async fn main() -> Outcome<()> {
                 setup(&db, &app.services, company).await?
             );
         }
+        // Monthly movements for the bridge on Company 001's Monthly movements tab.
+        bilibi_finance_walkthrough_fixture::source_bridge::seed(
+            &db,
+            &app.services,
+            &in_company(&db, &app.services, 4, 1).await?,
+            1,
+        )
+        .await?;
         if std::env::args().any(|s| s == "assets-lifecycle") {
             bilibi_finance_walkthrough_fixture::assets_lifecycle::credentials(&db, &app.services)
                 .await?;
@@ -1569,6 +1592,7 @@ async fn main() -> Outcome<()> {
         prove(&db, &app.services).await?;
         if !std::env::args().any(|arg| arg == "assets-evidence") {
             prove_historical_controls(&db, &app.services).await?;
+            prove_source_bridge(&db, &app.services).await?;
             conversion_credits::prove(&db, &app.services).await?;
         }
     }
