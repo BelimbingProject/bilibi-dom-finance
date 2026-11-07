@@ -150,12 +150,16 @@ pub fn named(header: &str, words: &[&str]) -> bool {
     })
 }
 
+/// A cell that is not a figure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotANumber;
+
 /// A spreadsheet figure as a decimal: grouping separators, a currency
 /// symbol and spaces are dropped; a minus sign before or after it, or
 /// parentheses around it, make it negative. `mark` is the decimal mark
 /// ('.' or ','). A blank cell or a lone dash is `Ok(None)`; text with letters
 /// or more than one decimal mark is `Err`.
-pub fn number(cell: &str, mark: char) -> Result<Option<Decimal>, ()> {
+pub fn number(cell: &str, mark: char) -> Result<Option<Decimal>, NotANumber> {
     let text: String = cell
         .chars()
         .filter(|c| !c.is_whitespace() && !is_currency_symbol(*c))
@@ -184,9 +188,9 @@ pub fn number(cell: &str, mark: char) -> Result<Option<Decimal>, ()> {
         || plain.matches(mark).count() > 1
         || !plain.chars().any(|c| c.is_ascii_digit())
     {
-        return Err(());
+        return Err(NotANumber);
     }
-    let value = Decimal::from_str_exact(&plain.replace(mark, ".")).map_err(|_| ())?;
+    let value = Decimal::from_str_exact(&plain.replace(mark, ".")).map_err(|_| NotANumber)?;
     Ok(Some(if negative { -value } else { value }))
 }
 

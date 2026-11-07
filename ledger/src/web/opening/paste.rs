@@ -245,7 +245,7 @@ impl Paste {
                 let balance = match self.layout {
                     Layout::Sides => match (figure(self.debit), figure(self.credit)) {
                         (Ok(d), Ok(c)) => Ok(d.unwrap_or_default() - c.unwrap_or_default()),
-                        _ => Err(()),
+                        _ => Err(columns::NotANumber),
                     },
                     Layout::Balance => figure(self.balance).map(|b| {
                         let b = b.unwrap_or_default();
@@ -260,7 +260,7 @@ impl Paste {
                 let balance = match balance {
                     Ok(b) if b.is_zero() => return Row::Skipped,
                     Ok(b) => b,
-                    Err(()) => return Row::Left(name, "its amount is not a number".into()),
+                    Err(_) => return Row::Left(name, "its amount is not a number".into()),
                 };
                 let balance = match Money::new(balance, units) {
                     Ok(m) => m,

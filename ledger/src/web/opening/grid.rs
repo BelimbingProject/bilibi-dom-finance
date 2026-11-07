@@ -129,7 +129,7 @@ impl Draft {
             let text = self.cell(side, account);
             match columns::number(text, '.') {
                 Ok(None) => Ok(None),
-                Err(()) => Err("is not a number".into()),
+                Err(_) => Err("is not a number".into()),
                 Ok(Some(value)) => Money::new(value, units)
                     .map(|m| (!m.is_zero()).then_some(m))
                     .map_err(|e| e.to_string()),
