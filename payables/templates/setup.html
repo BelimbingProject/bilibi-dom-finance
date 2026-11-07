@@ -1,34 +1,8 @@
-{# Payables setup: the payable account, tolerances and tax codes. Lists use the shared FlexTable. #}
+{# Payables setup, edited in place as Receivables settings are (`src/web/setup.rs`). #}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
-{% import "forms.html" as form %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="payables-setup", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::header(title_actions=title_actions) %}Payables setup{% endcall %}
-{% call ui::card(id="payables-settings", inner_class="p-5 sm:p-6", role="region", labelledby="payables-settings-heading") %}
-{% call ui::section_heading(id="payables-settings-heading", title="Payable account and matching") %}{% endcall %}
-{% if !configured %}<p id="payables-settings-unset" class="text-sm text-ink-muted">Not set up yet. Choose the account bills are owed on before posting a bill.</p>{% else if !can_manage %}{{ saved|safe }}{% endif %}
-{% if can_manage %}
-{% if let Some(summary) = settings_summary %}{{ summary|safe }}{% endif %}
-{% if let Some(notice) = settings_notice %}{{ notice|safe }}{% endif %}
-<form id="payables-settings-form" data-event="settings_edit" data-change data-submit-event="save_settings" class="mt-4 grid gap-x-6 gap-y-2 md:grid-cols-2">
-<div class="md:col-span-2">{% call form::combobox(combo=payable) %}{% endcall %}</div>
-{% for field in settings_fields %}{% call form::input(field=field) %}{% endcall %}{% endfor %}
-<div class="md:col-span-2">{{ save_settings|safe }}</div>
-</form>
-{% endif %}
-{% endcall %}
-{% call ui::card(id="payables-tax-codes", inner_class="p-0", role="region", labelledby="payables-tax-codes-heading") %}
-{% call ui::section_heading(id="payables-tax-codes-heading", title="Tax codes", class="p-5 pb-0", description="A bill line picks a tax code. Existing bills keep the rate they were recorded with.") %}{% endcall %}
-{{ taxes|safe }}
-{% if can_manage %}
-{% if let Some(summary) = tax_summary %}<div class="px-5">{{ summary|safe }}</div>{% endif %}
-{% if let Some(notice) = tax_notice %}<div class="px-5">{{ notice|safe }}</div>{% endif %}
-<form id="payables-tax-form" data-event="tax_edit" data-change data-submit-event="save_tax_code" class="grid gap-x-6 gap-y-2 p-5 md:grid-cols-2">
-{% for field in tax_fields %}{% call form::input(field=field) %}{% endcall %}{% endfor %}
-{% call form::combobox(combo=tax_account) %}{% endcall %}
-<div class="md:col-span-2">{{ add_tax|safe }}</div>
-</form>
-{% endif %}
-{% endcall %}
+{{ body|safe }}
+{% if let Some(dialog) = dialog %}{{ dialog|safe }}{% endif %}
 {% endcall %}

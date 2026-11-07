@@ -374,7 +374,7 @@ async fn main() -> Outcome<()> {
         ("payments", "payables-payments-table"),
         ("payment_new", "id=\"payables-pay-form\""),
         ("aged", "payables-aged-parties"),
-        ("setup", "id=\"payables-settings-form\""),
+        ("setup", "id=\"payables-tax-add\""),
     ] {
         assert!(
             page_html(&pages, operation, &manager, &path, &query)
@@ -385,7 +385,7 @@ async fn main() -> Outcome<()> {
     }
     for (operation, marker) in [
         ("bills", "id=\"payables-bills-new\""),
-        ("setup", "id=\"payables-settings-form\""),
+        ("setup", "id=\"payables-tax-add\""),
         ("payments", "id=\"payables-payments-new\""),
     ] {
         assert!(

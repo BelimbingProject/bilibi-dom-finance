@@ -23,7 +23,7 @@ use bilibi_ui::{
     params, Alert, Attrs, Badge, BadgeKind, Button, ButtonVariant, Card, Cell, Choice, Combobox,
     CommitStates, CommitStatus, ConfirmDialog, Facts, Field, FlexRow, Fold, Form, Header, Html,
     InlineChoice, InlineEdit, InlineField, InlineLongText, InputKind, ListColumns, ModalWidth,
-    PageVariant, SectionHeading, StatusKind,
+    PageVariant, SectionHeading, StatusKind, Toggle,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -110,7 +110,7 @@ impl Settings {
                     ("prefix", "Prefix"),
                     ("width", "Digits"),
                     ("example", "Numbers like"),
-                    ("status", "Status"),
+                    ("status", "Active"),
                 ],
                 &["width"],
             )?,
@@ -121,7 +121,7 @@ impl Settings {
                     ("name", "Name"),
                     ("rate", "Rate"),
                     ("account", "Tax account"),
-                    ("status", "Status"),
+                    ("status", "Active"),
                 ],
                 &["rate"],
             )?,
@@ -427,27 +427,22 @@ impl Settings {
         })
     }
 
-    /// A row's choice edited in place: Active or Inactive.
-    fn row_choice(&self, row: &Row, display: Html, options: Vec<Choice>) -> Result<Html> {
-        let editor = Field::named(row.field)
-            .id(format!("receivables-{}-editor", row.key()))
-            .label_class("sr-only")
-            .label(row.label)
-            .kind(InputKind::Select)
-            .value(row.value.clone())
-            .options(options);
-        render(InlineChoice {
-            field: self.row_field(row),
-            display,
-            editor: render(editor)?,
+    /// A row's Active, switched on or off in place (`DESIGN.md`: on/off is
+    /// a `Toggle`).
+    fn row_toggle(&self, kind: &str, id: i64, name: &str, on: bool) -> Result<Html> {
+        render(Toggle {
+            on,
+            label: &format!("{name} active"),
+            id: &format!("receivables-{kind}-{id}-active"),
+            event: if kind == "series" {
+                "toggle_series"
+            } else {
+                "toggle_tax"
+            },
+            name: "record",
+            value: &format!("{id}:{}", !on),
+            disabled: !self.can_manage,
         })
-    }
-
-    fn status_choices() -> Vec<Choice> {
-        vec![
-            Choice::new("Active", "true"),
-            Choice::new("Inactive", "false"),
-        ]
     }
 
     async fn body(&mut self, scope: &Scope) -> Result<String> {
@@ -510,6 +505,7 @@ impl Settings {
         body.push(&render(SectionHeading {
             title: "Invoice layout",
             id: "receivables-layout-heading",
+            class: "mt-6",
             description: "Used for printed invoices and credit notes for this company.",
             ..SectionHeading::default()
         })?);
@@ -594,11 +590,7 @@ impl Settings {
                 )
                 .slot(
                     "status",
-                    self.row_choice(
-                        &field("active", "Status", &s.active.to_string()),
-                        bilibi_ui::active_badge(s.active),
-                        Self::status_choices(),
-                    )?,
+                    self.row_toggle("series", s.id, &s.name, s.active)?,
                 );
             rows.push(row);
         }
@@ -681,14 +673,7 @@ impl Settings {
                         self.account_choices("liability"),
                     )?,
                 )
-                .slot(
-                    "status",
-                    self.row_choice(
-                        &field("active", "Status", &t.active.to_string()),
-                        bilibi_ui::active_badge(t.active),
-                        Self::status_choices(),
-                    )?,
-                );
+                .slot("status", self.row_toggle("tax", t.id, &t.code, t.active)?);
             rows.push(row);
         }
         body.push(&render(SectionHeading {
@@ -923,13 +908,6 @@ impl Settings {
                     .hint("Records tax payable to the tax authority. Tax timing depends on the tax type and applicable basis. Choosing an account does not determine your tax treatment."),
             )?);
         }
-        body.push(&render(
-            Field::in_form(kind, "active")
-                .id(format!("receivables-{kind}-active"))
-                .label("Active")
-                .kind(InputKind::Checkbox)
-                .checked(values.get("active").is_none_or(|v| v == "true")),
-        )?);
         let labels: Vec<_> = specs
             .borrow()
             .iter()
@@ -1120,6 +1098,7 @@ impl Settings {
         credential: &str,
         series: bool,
         v: &Value,
+        raised: &str,
     ) -> Result<()> {
         let id = v["id"]
             .as_str()
@@ -1141,19 +1120,12 @@ impl Settings {
             self.statuses.put(key, CommitStatus::Error(DENIED.into()));
             return Ok(());
         }
-        let (event, contract, id_field) = if series {
-            (
-                "save_series",
-                "finance.receivables.series.update",
-                "series_id",
-            )
+        let (contract, id_field) = if series {
+            ("finance.receivables.series.update", "series_id")
         } else {
-            (
-                "save_tax",
-                "finance.receivables.tax_code.update",
-                "tax_code_id",
-            )
+            ("finance.receivables.tax_code.update", "tax_code_id")
         };
+        let event = raised;
         let mut input = json!({id_field: id});
         let shown = match field {
             "active" => {
@@ -1238,7 +1210,7 @@ impl Settings {
             };
             f::put(&mut input, key, text);
         }
-        input["active"] = json!(form.get("active").is_some_and(|a| a == "true"));
+        input["active"] = json!(true);
         if series {
             match f::posted(&form, "number_width") {
                 "" => {}
@@ -1387,9 +1359,31 @@ impl Settings {
             "save_series" | "save_tax" => {
                 let series = v["type"] == "save_series";
                 if v["field"].is_string() {
-                    self.save_row(scope, credential, series, v).await?
+                    let event = if series { "save_series" } else { "save_tax" };
+                    self.save_row(scope, credential, series, v, event).await?
                 } else {
                     self.save_new(scope, credential, series, v).await?
+                }
+            }
+            event @ ("toggle_series" | "toggle_tax") => {
+                let (id, to) = v["record"]
+                    .as_str()
+                    .and_then(|r| r.split_once(':'))
+                    .ok_or(Error::Invalid)?;
+                let row = json!({"id": id, "field": "active", "value": to});
+                self.save_row(scope, credential, event == "toggle_series", &row, event)
+                    .await?;
+                let key = format!(
+                    "{}-{id}-active",
+                    if event == "toggle_series" {
+                        "series"
+                    } else {
+                        "tax"
+                    }
+                );
+                if let CommitStatus::Error(message) = self.statuses.get(&key) {
+                    self.flash.set(StatusKind::Error, message);
+                    self.statuses.put(key, CommitStatus::None);
                 }
             }
             _ => return Err(Error::Invalid),

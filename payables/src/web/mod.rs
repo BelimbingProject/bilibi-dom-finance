@@ -372,7 +372,7 @@ impl Page<Scope, Error> for Pages {
                 "setup" => {
                     let mut state = setup::Setup::new(self.clone())?;
                     state.reload(scope).await?;
-                    (state.body()?, None)
+                    (state.body(scope).await?, None)
                 }
                 _ => return Err(Error::NotFound),
             };
@@ -454,7 +454,8 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
         ("reject_payment", "finance.payables.payment.reject"),
         ("reverse_payment", "finance.payables.payment.reverse"),
         ("save_settings", "finance.payables.settings.put"),
-        ("save_tax_code", "finance.payables.tax_code.create"),
+        ("save_tax_code", "finance.payables.tax_code.update"),
+        ("save_tax_code_new", "finance.payables.tax_code.create"),
         ("toggle_tax_code", "finance.payables.tax_code.update"),
     ],
     pending: bilibi_module_registry::contributions::Pending::Events {

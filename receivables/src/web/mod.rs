@@ -231,6 +231,8 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, Provenance { module: 
         ("save_series", "finance.receivables.series.update"),
         ("save_tax", "finance.receivables.tax_code.create"),
         ("save_tax", "finance.receivables.tax_code.update"),
+        ("toggle_series", "finance.receivables.series.update"),
+        ("toggle_tax", "finance.receivables.tax_code.update"),
     ],
     pending: Pending::None,
 }) }
