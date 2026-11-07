@@ -4,7 +4,7 @@
 //! is issued or discarded after a confirmation. Reads `document.get`; writes
 //! call `draft.update`, `draft.discard` and `document.issue`. The page is
 //! drawn in `document/view.rs`; an address with `?do=discard` or
-//! `?do=write_off` (the "Actions…" menu) opens that dialog.
+//! `?do=write_off` (its local icon buttons) opens that dialog.
 mod view;
 
 use super::{
@@ -173,7 +173,7 @@ impl Document {
         Ok(())
     }
 
-    /// An action of the "Actions…" menu, reached through its link.
+    /// A local action, reached through its icon button's link.
     async fn open(&mut self, scope: &Scope, action: &str) -> Result<()> {
         match action {
             "discard" => {

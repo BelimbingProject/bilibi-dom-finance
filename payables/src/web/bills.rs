@@ -1,10 +1,10 @@
 //! Bilimbi Payables.Web.BillsLive: filters, paging and built-in ListColumns.
 use super::opening::Opening;
-use super::{company, format, render, Pages, INDEX, NEW_BILL};
-use crate::{DocumentPageRow, CREATE_DOCUMENTS, VIEW};
+use super::{company, format, render, Pages, INDEX, NEW_BILL, NEW_NOTE};
+use crate::{DocumentPageRow, APPROVE_DOCUMENTS, CREATE_DOCUMENTS, VIEW};
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{MinorUnits, Money};
+use bilibi_finance_ledger::{MinorUnits, Money, RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -54,6 +54,8 @@ pub(super) struct Bills {
     total: u64,
     units: Option<MinorUnits>,
     can_create: bool,
+    can_approve: bool,
+    can_match: bool,
     unavailable: bool,
     framed: bool,
 }
@@ -93,6 +95,8 @@ impl Bills {
             total: 0,
             units: None,
             can_create: false,
+            can_approve: false,
+            can_match: false,
             unavailable: false,
             framed,
         })
@@ -100,6 +104,8 @@ impl Bills {
 
     pub(super) async fn reload(&mut self, scope: &Scope) -> Result<()> {
         self.can_create = self.pages.allowed(scope, CREATE_DOCUMENTS).await?;
+        self.can_approve = self.pages.allowed(scope, APPROVE_DOCUMENTS).await?;
+        self.can_match = self.pages.allowed(scope, crate::APPROVE_MATCH).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
         self.documents.clear();
         self.total = 0;
@@ -131,19 +137,9 @@ impl Bills {
     }
 
     pub(super) async fn body(&mut self, scope: &Scope) -> Result<String> {
-        let mut held = self.list.clone();
-        held.apply_filters(&HashMap::from([("status".into(), "held".into())]));
-        let mut actions = render(HeldLink {
-            href: params::address(INDEX, &held.to_params()),
-        })?;
-        if self.can_create {
-            actions.push(&render(CreateButton {
-                noun: "Bill",
-                href: NEW_BILL,
-                id: "payables-bills-new",
-                ..CreateButton::default()
-            })?);
-        }
+        // Header actions: the rarer one first, the one primary verb last.
+        // Held bills are the Status filter's "Held", not a link of their own.
+        let mut actions = Html::EMPTY;
         if self.can_open {
             actions.push(&render(Button {
                 id: "payables-opening",
@@ -151,6 +147,14 @@ impl Bills {
                 button_type: "button",
                 body: Html::text("Opening bills"),
                 ..Button::default()
+            })?);
+        }
+        if self.can_create {
+            actions.push(&render(CreateButton {
+                noun: "Bill",
+                href: NEW_BILL,
+                id: "payables-bills-new",
+                ..CreateButton::default()
             })?);
         }
         let mut content = Html::EMPTY;
@@ -240,18 +244,18 @@ impl Bills {
                             kind: crate::MODULE,
                             record_id: &d.id.to_string(),
                             href: &format!("{INDEX}/{}", d.id),
-                            class: "font-medium text-ink-strong hover:underline",
-                            body: Html::text(&format::number(d.document_number)),
+                            class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
+                            body: Html::text(
+                                &d.document_number
+                                    .map_or_else(|| "Not posted".to_owned(), |n| format!("#{n}")),
+                            ),
                         })?,
                     )
                     .slot(
                         "document_type",
                         format::badge(format::kind(&d.document_type), BadgeKind::Neutral, false)?,
                     )
-                    .cell(
-                        "party",
-                        Cell::text(format!("{} · {}", d.party_code, d.party_name)),
-                    )
+                    .cell("party", Cell::text(&d.party_name))
                     .cell(
                         "party_document_number",
                         Cell::text(format::optional(&d.party_document_number)),
@@ -279,10 +283,12 @@ impl Bills {
                             None => Html::text("—"),
                         },
                     );
+                row.actions = self.row_actions(d)?;
                 rows.push(row);
             }
             let mut table =
                 FlexTable::new("payables-bills-table", self.columns.flex_columns(), rows);
+            table.actions = self.can_create || self.can_approve || self.can_match;
             table.event = "bills_grid";
             table.caption = "Bills";
             table.framed = false;
@@ -324,15 +330,41 @@ struct View {
     content: Html,
 }
 
-// Base UI's Button link has no patch attribute. This is Bilimbi's plain
-// patch link; the platform transport owns in-place Params navigation.
-#[derive(Template)]
-#[template(
-    source = r#"<a id="payables-bills-held" href="{{ href }}" data-patch>Held bills</a>"#,
-    ext = "html"
-)]
-struct HeldLink {
-    href: String,
+impl Bills {
+    /// A row's local icons and non-local menu: what its bill page offers for its state.
+    fn row_actions(&self, d: &DocumentPageRow) -> Result<Html> {
+        let here = format!("{INDEX}/{}", d.id);
+        let mut items = Vec::new();
+        if d.document_type == "bill" && d.status == "posted" && self.can_create {
+            items.push(RecordAction::link(
+                "Record debit note",
+                format!("{NEW_NOTE}?bill={}", d.id),
+            ));
+        }
+        if self.can_match
+            && matches!(d.status.as_str(), "approved" | "held")
+            && d.match_status.as_deref() == Some("held")
+        {
+            items.push(RecordAction::here(
+                "check-badge",
+                "Approve exceptions",
+                &here,
+                "approve_exception",
+            ));
+        }
+        if self.can_approve && matches!(d.status.as_str(), "draft" | "approved" | "held") {
+            items.push(RecordAction::here("no-symbol", "Void", &here, "void"));
+        }
+        RecordActions::row(
+            &format!("payables-bill-{}-actions", d.id),
+            &format!(
+                "{} {}",
+                format::kind(&d.document_type),
+                format::number(d.document_number)
+            ),
+            items,
+        )
+    }
 }
 
 impl LiveState<Scope, Error> for Bills {

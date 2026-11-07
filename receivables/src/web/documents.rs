@@ -6,10 +6,13 @@ mod new_draft;
 use super::opening::Opening;
 use super::{
     format::{self as f, Errors},
-    render, Flash, Pages, Written, INVOICES, SETTINGS,
+    render, Flash, Pages, Written, INVOICES, RECEIPTS, SETTINGS,
 };
-use crate::{records::DocumentPageRow, Customer, Document, Series, MANAGE_DOCUMENTS, VIEW};
+use crate::{
+    records::DocumentPageRow, Customer, Document, Series, MANAGE_DOCUMENTS, POST_PAYMENTS, VIEW,
+};
 use bilibi_database::{Error, Result};
+use bilibi_finance_ledger::{RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -100,6 +103,8 @@ pub(super) struct Documents {
     figures: f::Figures,
     total: u64,
     can_add: bool,
+    can_receive: bool,
+    can_write_off: bool,
     create: Option<Draft>,
     opening: Option<Opening>,
     can_open: bool,
@@ -151,6 +156,8 @@ impl Documents {
             figures: f::Figures::default(),
             total: 0,
             can_add: false,
+            can_receive: false,
+            can_write_off: false,
             create: None,
             opening: None,
             can_open: false,
@@ -364,6 +371,8 @@ impl Documents {
             .0;
         self.figures = self.pages.figures(scope).await;
         self.can_add = self.pages.allowed(scope, MANAGE_DOCUMENTS).await?;
+        self.can_receive = self.pages.allowed(scope, POST_PAYMENTS).await?;
+        self.can_write_off = self.pages.allowed(scope, crate::SUBMIT_WRITE_OFFS).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
         Ok(())
     }
@@ -388,12 +397,56 @@ impl Documents {
             .as_deref()
             .or(customer.map(|c| c.name.as_str()))
             .unwrap_or("Customer unavailable");
-        let code = d
-            .party_code
-            .as_deref()
-            .or(customer.map(|c| c.code.as_str()))
-            .unwrap_or("");
-        format!("{code} · {name}")
+        name.to_owned()
+    }
+
+    /// A row's local icons and non-local menu: what its record page offers for its state.
+    fn row_actions(&self, d: &DocumentPageRow) -> Result<Html> {
+        let here = format!("{INVOICES}/{}", d.id);
+        let mut items = Vec::new();
+        let issued = d.status == "issued";
+        if issued && d.kind == "invoice" {
+            if self.can_receive && d.outstanding.is_some_and(|m| m.is_positive()) {
+                items.push(RecordAction::link(
+                    "Record receipt",
+                    format!("{RECEIPTS}?receive={}", d.id),
+                ));
+            }
+            if self.can_add {
+                items.push(RecordAction::link(
+                    "New credit note",
+                    format!("{INVOICES}?credit={}", d.id),
+                ));
+            }
+            if self.can_write_off && d.outstanding.is_some_and(|m| m.is_positive()) {
+                items.push(RecordAction::here(
+                    "document-minus",
+                    "Write off",
+                    &here,
+                    "write_off",
+                ));
+            }
+        }
+        if issued && !d.opening && matches!(d.kind.as_str(), "invoice" | "credit_note") {
+            items.push(RecordAction::local(
+                "printer",
+                "Print / download PDF",
+                format!("{here}/pdf"),
+            ));
+        }
+        if d.status == "draft" && self.can_add {
+            items.push(RecordAction::here(
+                "trash",
+                "Discard draft",
+                &here,
+                "discard",
+            ));
+        }
+        RecordActions::row(
+            &format!("receivables-invoice-{}-actions", d.id),
+            &Self::page_reference(d),
+            items,
+        )
     }
 
     fn page_reference(d: &DocumentPageRow) -> String {
@@ -405,24 +458,8 @@ impl Documents {
     async fn body(&mut self, scope: &Scope) -> Result<String> {
         let framed = self.framed;
         self.columns.load(&self.documents, |d| d.id.to_string());
-        let mut actions = if self.can_add {
-            let mut a = render(CreateButton {
-                noun: "Invoice",
-                id: "receivables-invoices-add",
-                event: "show_create_invoice",
-                ..CreateButton::default()
-            })?;
-            a.push(&render(Button {
-                id: "receivables-credit-notes-add",
-                button_type: "button",
-                event: "show_create_credit_note",
-                body: Html::text("New credit note"),
-                ..Button::default()
-            })?);
-            a
-        } else {
-            Html::EMPTY
-        };
+        // Header actions: the rarer ones first, the one primary verb last.
+        let mut actions = Html::EMPTY;
         if self.can_open {
             actions.push(&render(Button {
                 id: "receivables-opening",
@@ -432,11 +469,26 @@ impl Documents {
                 ..Button::default()
             })?);
         }
+        if self.can_add {
+            actions.push(&render(Button {
+                id: "receivables-credit-notes-add",
+                button_type: "button",
+                event: "show_create_credit_note",
+                body: Html::text("New credit note"),
+                ..Button::default()
+            })?);
+            actions.push(&render(CreateButton {
+                noun: "Invoice",
+                id: "receivables-invoices-add",
+                event: "show_create_invoice",
+                ..CreateButton::default()
+            })?);
+        }
         let mut customer_choices = vec![Choice::new("All customers", "")];
         customer_choices.extend(
             self.customers
                 .iter()
-                .map(|c| Choice::new(format!("{} {}", c.code, c.name), c.id.to_string())),
+                .map(|c| Choice::new(&c.name, c.id.to_string())),
         );
         let mut content = render(FilterToolbar {
             event: "filter",
@@ -507,15 +559,15 @@ impl Documents {
         for d in &self.documents {
             let mut row = FlexRow::new(d.id.to_string());
             row.dom_id = Some(format!("receivables-invoice-{}", d.id));
-            rows.push(
-                row.slot(
+            row = row
+                .slot(
                     "number",
                     render(RecordLink {
                         workspace: framed,
                         kind: crate::MODULE,
                         record_id: &d.id.to_string(),
                         href: &format!("{INVOICES}/{}", d.id),
-                        class: "font-medium text-ink-strong hover:underline",
+                        class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
                         body: Html::text(&Self::page_reference(d)),
                     })?,
                 )
@@ -556,8 +608,9 @@ impl Documents {
                             }),
                     ),
                 )
-                .slot("status", f::status_badge(&d.status)?),
-            );
+                .slot("status", f::status_badge(&d.status)?);
+            row.actions = self.row_actions(d)?;
+            rows.push(row);
         }
         let mut table = FlexTable::new(
             "receivables-invoices-table",
@@ -566,21 +619,30 @@ impl Documents {
         )
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Invoices and credit notes";
+        table.actions = self.can_add || self.can_receive || self.can_write_off;
         table.framed = false;
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
-        table.empty = Some(TableEmpty::Content(render(EmptyState::missing(
-            "No invoices",
-            if self.total == 0
-                && self.list.search.is_empty()
-                && self.list.filters.values().all(String::is_empty)
-            {
-                "Start an invoice for a customer. It stays a draft until you issue it."
-            } else {
-                "No invoice or credit note matches the current filters."
-            },
-        ))?));
+        let unfiltered =
+            self.list.search.is_empty() && self.list.filters.values().all(String::is_empty);
+        let mut empty = if unfiltered {
+            EmptyState::missing("No invoices yet", "It stays a draft until you issue it.")
+        } else {
+            EmptyState::missing(
+                "No invoices match",
+                "Change the filters to see more invoices and credit notes.",
+            )
+        };
+        if unfiltered && self.can_add {
+            empty.action = render(CreateButton {
+                noun: "Invoice",
+                id: "receivables-invoices-empty-add",
+                event: "show_create_invoice",
+                ..CreateButton::default()
+            })?;
+        }
+        table.empty = Some(TableEmpty::Content(render(empty)?));
         content.push(&render(table)?);
         content.push(&render(Pagination {
             filters_event: "filter",

@@ -183,6 +183,7 @@ impl Payment {
         let mut items = Vec::new();
         if self.can_post && p.reversal.is_none() {
             items.push(RecordAction::here(
+                "arrow-uturn-left",
                 "Reverse receipt",
                 &format!("{RECEIPTS}/{}", p.id),
                 "reverse",
