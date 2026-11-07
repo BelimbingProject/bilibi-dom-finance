@@ -68,8 +68,8 @@ runs in an audited mutation transaction holding the company's lock, so an
 archived company is `CompanyArchived`. `finance.reports.sign-off` records an
 accountant's attestation against an issued conversion report.
 `finance.reports.reports-export` generates and downloads the auditor pack, with
-ledger view required, also for an archived company (its books stay available for audit). All nine source views enable the full evidence pack;
-otherwise it produces a clearly labelled ledger-and-reports pack. All three
+ledger view required, also for an archived company (its books stay available
+for audit). All nine source views enable the full evidence pack; otherwise it produces a clearly labelled ledger-and-reports pack. All three
 Reports capabilities are granted to `tenant_owner`.
 
 ## Figures that reproduce
@@ -217,7 +217,7 @@ Publication uses Base Artifacts' ordinary retained download policy (`artifacts.s
 
 The Generate event reauthorizes rather than trusting a mounted flag. Success and recoverable storage/refusal flashes use Bilimbi's wording. Period changes clear the previous download link. Artifact settings belong to Operator Settings; the reports page adds no setup fields.
 
-Run `DATABASE_URL=… AUDITOR_PACK_PROOF_DIR=/absolute/private/task-directory cargo run -p bilibi-finance-walkthrough-fixture --bin auditor-pack` on a fresh disposable PostgreSQL 18 database. It proves a 500-row page boundary under a second session's backdated posting, checks archive membership and checksums, exact totals, source hashes, formula protection, issued evidence, missing/cross-company access, size refusal, the download adapter and revocation of every source grant against an already-mounted page. Its final section assigns the production External accountant role to two people, proves adjusting journal submission and independent approval, preserves every line of a mixed payroll/sales entry, inspects the restricted ZIP and proves immediate revocation against retained scopes and links. Append `-- serve` to keep the real app at `http://127.0.0.1:4324` for browser proof; use the walkthrough manager account.
+Run `DATABASE_URL=… AUDITOR_PACK_PROOF_DIR=/absolute/private/task-directory cargo run -p bilibi-finance-walkthrough-fixture --bin auditor-pack` on a fresh disposable PostgreSQL 18 database. It proves a 500-row page boundary under a second session's backdated posting, checks archive membership and checksums, exact totals, source hashes, formula protection, issued evidence, missing/cross-company access, size refusal, the download adapter and revocation of every source grant against an already-mounted page. It also archives the company to prove a pack still generates and downloads while a ledger posting is refused as `CompanyArchived`. Its final section assigns the production External accountant role to two people, proves adjusting journal submission and independent approval, preserves every line of a mixed payroll/sales entry, inspects the restricted ZIP and proves immediate revocation against retained scopes and links. Append `-- serve` to keep the real app at `http://127.0.0.1:4324` for browser proof; use the walkthrough manager account.
 
 Report and control-page feedback clears on the shared `clear-flash` event for its current message kind. A dismissed auditor-pack success stays dismissed across tab changes and refresh; an older success timeout cannot clear a newer refusal.
 
