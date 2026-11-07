@@ -673,10 +673,7 @@ impl Settings {
                         self.account_choices("liability"),
                     )?,
                 )
-                .slot(
-                    "status",
-                    self.row_toggle("tax", t.id, &t.code, t.active)?,
-                );
+                .slot("status", self.row_toggle("tax", t.id, &t.code, t.active)?);
             rows.push(row);
         }
         body.push(&render(SectionHeading {
@@ -1378,7 +1375,11 @@ impl Settings {
                     .await?;
                 let key = format!(
                     "{}-{id}-active",
-                    if event == "toggle_series" { "series" } else { "tax" }
+                    if event == "toggle_series" {
+                        "series"
+                    } else {
+                        "tax"
+                    }
                 );
                 if let CommitStatus::Error(message) = self.statuses.get(&key) {
                     self.flash.set(StatusKind::Error, message);
