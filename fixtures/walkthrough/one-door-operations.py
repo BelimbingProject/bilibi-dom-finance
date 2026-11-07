@@ -122,10 +122,6 @@ second = 10001
 today = datetime.date.today()
 late_date = today - datetime.timedelta(days=100)
 if sys.argv[-1] == "setup":
-    currency = [{"key": "core.currency.enabled.set", "input": {"code": "MYR", "enabled": True}}]
-    preview = plan(channel, currency)
-    require(preview.get("valid") is True, "currency enable preview refused")
-    require("results" in commit(channel, currency, preview), "currency enable failed")
     for target in [company, second]:
         write(channel, "book.open", target, currency_code="MYR", minor_units=2)
         write(channel, "account.create", target, code="proof-asset", name="Proof asset", account_type="asset")

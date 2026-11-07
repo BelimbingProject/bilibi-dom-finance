@@ -18,15 +18,13 @@ use serde_json::json;
 
 pub(super) const INDEX: &str = "/finance/ledger/books";
 
-/// What `finance.ledger.book.currencies` answers: the currencies offered (every
-/// current one for a person who may enable currencies, else the enabled ones)
-/// with their ISO 4217 decimal places, and the proposed one.
+/// What `finance.ledger.book.currencies` answers: every current currency, the
+/// ones the tenant has used first, with their ISO 4217 decimal places, and the
+/// proposed one.
 #[derive(Default, Deserialize)]
 struct Options {
     #[serde(default)]
     reference: String,
-    #[serde(default)]
-    can_enable: bool,
     proposed: Option<Proposed>,
     #[serde(default)]
     currencies: Vec<Listed>,
@@ -42,11 +40,6 @@ struct Listed {
     code: String,
     name: String,
     minor_units: u32,
-    #[serde(default = "enabled")]
-    enabled: bool,
-}
-fn enabled() -> bool {
-    true
 }
 impl Options {
     fn find(&self, code: &str) -> Option<&Listed> {
@@ -55,9 +48,6 @@ impl Options {
     }
     fn listed(&self) -> bool {
         self.reference == "iso4217"
-    }
-    fn none_enabled(&self) -> bool {
-        self.reference == "none_enabled"
     }
 }
 
@@ -301,17 +291,6 @@ impl Book {
                 .id("ledger-book-not-open"),
             );
         }
-        // Only for a person who may not enable a currency: anyone who may is
-        // offered every currency, and opening the book enables the one chosen.
-        if self.options.none_enabled() {
-            return render(
-                bilibi_ui::EmptyState::missing(
-                    "No currency is enabled yet",
-                    "Opening the book needs its currency enabled first. Ask an administrator who manages currencies to enable it, then come back.",
-                )
-                .id("ledger-book-none-enabled"),
-            );
-        }
         if self.options.reference.is_empty() {
             return render(
                 bilibi_ui::EmptyState::missing(
@@ -343,7 +322,7 @@ impl Book {
         }
         let chosen = self.options.find(&self.currency);
         if self.options.listed() {
-            let mut hint = match (&self.options.proposed, chosen) {
+            let hint = match (&self.options.proposed, chosen) {
                 (Some(proposed), Some(c)) if proposed.code == c.code => format!(
                     "Proposed from the {} base currency. You cannot change it later.",
                     if proposed.source == "company" {
@@ -354,15 +333,6 @@ impl Book {
                 ),
                 _ => "Search by code or name. You cannot change it later.".into(),
             };
-            if !self.options.can_enable {
-                hint.push_str(" Only enabled currencies are listed; ask an administrator who manages currencies to enable another.");
-            }
-            if let Some(c) = chosen.filter(|c| !c.enabled) {
-                hint.push_str(&format!(
-                    " {} is not enabled yet: opening the book also enables it on the Currencies page.",
-                    c.code
-                ));
-            }
             body.push(&render(
                 Combobox::new("ledger-book-currency-code", "book[currency_code]")
                     .label("Currency *")
@@ -491,11 +461,6 @@ impl Book {
                     currency["standard_minor_units"]
                 ));
             }
-            if currency["enables_currency"].as_bool() == Some(true) {
-                detail.push_str(&format!(
-                    "This also enables {code} on the Currencies page, for every company. "
-                ));
-            }
             if currency["reference"].as_str() == Some("unchecked") {
                 detail.push_str(&format!(
                     "The currency list has not been imported, so {code} was not checked against ISO 4217. "
@@ -552,10 +517,6 @@ impl LiveState<Scope, Error> for Book {
                         self.refusal = Refusal::default();
                         self.notice.clear();
                         let units: i64 = self.units.parse().unwrap_or(-1);
-                        let enable = self
-                            .options
-                            .find(&self.currency)
-                            .is_some_and(|c| !c.enabled);
                         match self
                             .pages
                             .review_in(
@@ -564,7 +525,7 @@ impl LiveState<Scope, Error> for Book {
                                 r.credential,
                                 "review_open",
                                 "finance.ledger.book.open",
-                                json!({"currency_code": self.currency.trim().to_uppercase(), "minor_units": units,"separation_required":self.approver != "one_person","approval_reason": self.approval_reason,"enable_currency": enable}),
+                                json!({"currency_code": self.currency.trim().to_uppercase(), "minor_units": units,"separation_required":self.approver != "one_person","approval_reason": self.approval_reason}),
                             )
                             .await?
                         {

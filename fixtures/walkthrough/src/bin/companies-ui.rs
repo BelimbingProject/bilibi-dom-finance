@@ -63,9 +63,10 @@ async fn main() -> Outcome<()> {
             manager.mutation_context("finance.walkthrough.company-currencies"),
         )
         .await?;
+    // The currencies this walkthrough uses, so the controls list them first.
     for code in ["MYR", "JPY", "USD", "SGD"] {
         currencies
-            .set_enabled(&mut tx, &manager, code, true)
+            .check(&mut tx, &manager, code)
             .await?
             .map_err(|e| format!("currency: {e:?}"))?;
     }

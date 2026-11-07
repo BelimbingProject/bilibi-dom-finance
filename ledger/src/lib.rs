@@ -1344,7 +1344,7 @@ impl Ledger {
             return Err(LedgerError::BookAlreadyOpen);
         }
         let valid = books::validate(new).map_err(LedgerError::Invalid)?;
-        if let Err(refused) = currency::choose_on(tx, scope, &valid.currency_code, false).await? {
+        if let Err(refused) = currency::choose_on(tx, scope, &valid.currency_code).await? {
             return Err(LedgerError::Invalid(vec![refused]));
         }
         let controlled = bookkeeping::controlled(tx.sql(), tenant, company_id).await?;
