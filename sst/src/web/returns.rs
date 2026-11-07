@@ -1,20 +1,24 @@
 //! Bilimbi Sst.Web.ReturnsLive: the recent taxable periods of the company's
 //! registration with each registered tax's return for the period (open,
 //! finalised with its version, or none yet, with a control that prepares
-//! it), a form that prepares the return of any period, and every return on
-//! record. Preparing is a facade call that re-asks its capability.
+//! it), "+ Return" opening a dialog that prepares the return of any period,
+//! and every return on record. Preparing is a facade call that re-asks its
+//! capability.
 use super::{
-    clear_flash, columns, company, flash, format as f, render, table, Pages, DENIED, INDEX, SETUP,
+    clear_flash, columns, company, dialog_actions, flash, format as f, nav_button, render, table,
+    table_with, Pages, DENIED, INDEX, SETUP,
 };
-use crate::{Registration, SstError, TaxReturn, TaxType, TaxablePeriod, PREPARE_RETURNS};
+use crate::{
+    Registration, SstError, TaxReturn, TaxType, TaxablePeriod, MANAGE_SETTINGS, PREPARE_RETURNS,
+};
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Button, Cell, Choice, EmptyState, Field, FlashMap, FlexRow, Html, InputKind,
-    ListColumns, RecordLink, StatusKind,
+    params, Alert, Button, ButtonVariant, Cell, Choice, CreateButton, EmptyState, Field, FlashMap,
+    FlexRow, Html, InputKind, ListColumns, RecordLink, StatusKind,
 };
 use jiff::civil::Date;
 use std::collections::HashMap;
@@ -26,7 +30,11 @@ pub(super) struct Returns {
     returns: Option<Vec<TaxReturn>>,
     refusal: Option<SstError>,
     can_prepare: bool,
+    can_manage: bool,
     form: HashMap<String, String>,
+    /// The "+ Return" dialog is open, with the facade's refusal inside it.
+    adding: bool,
+    dialog_error: Option<String>,
     flash: Option<(StatusKind, String)>,
     framed: bool,
     period_columns: ListColumns,
@@ -42,6 +50,9 @@ impl Returns {
             returns: None,
             refusal: None,
             can_prepare: false,
+            can_manage: false,
+            adding: false,
+            dialog_error: None,
             form: HashMap::from([
                 ("tax_type".into(), "sales_tax".into()),
                 ("period_start".into(), String::new()),
@@ -102,6 +113,7 @@ impl Returns {
                 self.returns = Some(returns);
                 self.refusal = None;
                 self.can_prepare = self.pages.allowed(scope, PREPARE_RETURNS).await?;
+                self.can_manage = self.pages.allowed(scope, MANAGE_SETTINGS).await?;
             }
             Err(e) => {
                 self.registration = None;
@@ -109,6 +121,7 @@ impl Returns {
                 self.returns = None;
                 self.refusal = Some(e);
                 self.can_prepare = false;
+                self.can_manage = false;
             }
         }
         // One column per registered tax, as Bilimbi's `:for` column.
@@ -152,13 +165,23 @@ impl Returns {
             .copied()
     }
 
+    /// The "+ Return" button, opening the prepare dialog.
+    fn new_button(id: &str) -> Result<Html> {
+        render(CreateButton {
+            noun: "Return",
+            id,
+            event: "new_return",
+            button_type: "button",
+            ..CreateButton::default()
+        })
+    }
+
     pub(super) fn body(&self) -> Result<String> {
-        let actions = render(Link {
-            link_id: "sst-returns-setup",
-            href: SETUP.into(),
-            class: "",
-            text: "SST setup".into(),
-        })?;
+        let prepare = self.registration.is_some() && self.can_prepare;
+        let mut actions = nav_button("sst-returns-setup", SETUP, "SST setup")?;
+        if prepare {
+            actions.push(&Self::new_button("sst-return-new")?);
+        }
         let refusal = self
             .refusal
             .as_ref()
@@ -171,23 +194,44 @@ impl Returns {
             .transpose()?;
         let unregistered = (self.refusal.is_none() && self.registration.is_none())
             .then(|| {
-                render(
+                // The registration is recorded in SST setup's own dialog.
+                let mut empty = if self.can_manage {
                     EmptyState::missing(
                         "Not registered yet",
-                        "Record the company's SST registration in SST setup to prepare returns.",
+                        "Returns are prepared once the company's SST registration is recorded.",
                     )
-                    .id("sst-returns-unregistered"),
-                )
+                    .action(render(Button {
+                        id: "sst-returns-register",
+                        href: &format!("{SETUP}?do=register"),
+                        variant: ButtonVariant::Primary,
+                        body: Html::text("Record registration"),
+                        ..Button::default()
+                    })?)
+                } else {
+                    EmptyState::missing(
+                        "Not registered yet",
+                        "Returns are prepared once someone who manages SST setup records the company's registration.",
+                    )
+                };
+                empty = empty.id("sst-returns-unregistered");
+                render(empty)
             })
             .transpose()?;
         let periods = match &self.registration {
             Some(registration) => Some(self.periods_card(registration)?),
             None => None,
         };
+        // Before the registration there is nothing to list, unless returns
+        // were prepared under an earlier one.
         let list = match &self.returns {
-            Some(returns) => Some(self.returns_table(returns)?),
-            None => None,
+            Some(returns) if self.registration.is_some() || !returns.is_empty() => {
+                Some(self.returns_table(returns)?)
+            }
+            _ => None,
         };
+        let modal = (self.adding && prepare)
+            .then(|| self.prepare_dialog())
+            .transpose()?;
         View {
             title_actions: bilibi_ui::Html::EMPTY,
             flash: flash(&self.flash),
@@ -197,6 +241,7 @@ impl Returns {
             periods,
             list,
             count: self.returns.as_ref().map(Vec::len),
+            modal,
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -261,7 +306,6 @@ impl Returns {
                 render(empty)
             })
             .transpose()?;
-        let value = |k: &str| self.form.get(k).cloned().unwrap_or_default();
         Ok(PeriodsView {
             description: format!(
                 "{}-month periods; a return is due by the date shown (moved to the next working day when it falls on a weekend or holiday).",
@@ -269,7 +313,28 @@ impl Returns {
             ),
             table,
             forbidden,
-            can_prepare: self.can_prepare,
+        })
+    }
+
+    /// The "+ Return" dialog: the tax and the first day of its period, for a
+    /// period the list above does not show.
+    fn prepare_dialog(&self) -> Result<ModalView> {
+        let taxes = self.tax_types();
+        let value = |k: &str| self.form.get(k).cloned().unwrap_or_default();
+        let alert = self
+            .dialog_error
+            .as_ref()
+            .map(|message| {
+                render(Alert {
+                    kind: StatusKind::Error,
+                    id: "sst-prepare-alert",
+                    class: "mt-4",
+                    body: Html::text(message),
+                })
+            })
+            .transpose()?;
+        Ok(ModalView {
+            alert,
             tax_field: Field::in_form("prepare", "tax_type")
                 .id("prepare-tax-type")
                 .kind(InputKind::Select)
@@ -287,6 +352,12 @@ impl Returns {
                 .label("Period starts")
                 .value(value("period_start"))
                 .required(),
+            actions: dialog_actions(
+                "sst-prepare",
+                "close_return",
+                "Prepare return",
+                "Preparing…",
+            )?,
         })
     }
 
@@ -332,15 +403,24 @@ impl Returns {
                 ),
             );
         }
-        table(
+        let mut empty = EmptyState::missing(
+            "No returns yet",
+            if self.can_prepare {
+                "Prepare a taxable period's return above, or any period's with + Return."
+            } else {
+                "Someone who prepares SST returns starts each one from its taxable period."
+            },
+        )
+        .id("sst-returns-empty");
+        if self.can_prepare && self.registration.is_some() {
+            empty = empty.action(Self::new_button("sst-return-new-empty")?);
+        }
+        table_with(
             &self.list_columns,
             "returns_grid",
             "Returns on record",
             rows,
-            Some((
-                "No returns yet",
-                "Prepare the first return from its taxable period.",
-            )),
+            Some(empty),
             false,
         )
     }
@@ -350,6 +430,7 @@ impl Returns {
         scope: &Scope,
         tax_type: &str,
         period_start: &str,
+        from_dialog: bool,
     ) -> Result<LiveBody> {
         if !self.pages.allowed(scope, PREPARE_RETURNS).await? {
             self.flash = Some((StatusKind::Error, DENIED.into()));
@@ -377,6 +458,11 @@ impl Returns {
                 )),
                 ..LiveBody::default()
             }),
+            Err(e) if from_dialog => {
+                // The refusal shows inside the dialog, which stays open.
+                self.dialog_error = Some(f::refusal(&e));
+                self.live(true, scope).await
+            }
             Err(e) => {
                 self.flash = Some((StatusKind::Error, f::refusal(&e)));
                 self.live(true, scope).await
@@ -419,20 +505,34 @@ impl LiveState<Scope, Error> for Returns {
                     self.form.extend(params::form_values(v, "prepare"));
                     self.live(false, r.scope).await
                 }
+                Some("new_return") => {
+                    self.adding = true;
+                    self.dialog_error = None;
+                    self.flash = None;
+                    self.live(false, r.scope).await
+                }
+                Some("close_return") => {
+                    self.adding = false;
+                    self.dialog_error = None;
+                    self.form.insert("period_start".into(), String::new());
+                    self.live(false, r.scope).await
+                }
                 Some("prepare") => {
                     // A period's button sends `tax|start`; the form sends its fields.
-                    let (tax_type, period_start) = match v["period"].as_str() {
+                    let (tax_type, period_start, from_dialog) = match v["period"].as_str() {
                         Some(period) => {
                             let (t, s) = period.split_once('|').unwrap_or((period, ""));
-                            (t.to_owned(), s.to_owned())
+                            (t.to_owned(), s.to_owned(), false)
                         }
                         None => {
                             self.form.extend(params::form_values(v, "prepare"));
                             let get = |k: &str| self.form.get(k).cloned().unwrap_or_default();
-                            (get("tax_type"), get("period_start"))
+                            (get("tax_type"), get("period_start"), true)
                         }
                     };
-                    self.prepare(r.scope, &tax_type, &period_start).await
+                    self.dialog_error = None;
+                    self.prepare(r.scope, &tax_type, &period_start, from_dialog)
+                        .await
                 }
                 _ => Err(Error::Invalid),
             }
@@ -451,15 +551,20 @@ struct View<'a> {
     periods: Option<PeriodsView>,
     list: Option<Html>,
     count: Option<usize>,
+    modal: Option<ModalView>,
 }
 
 struct PeriodsView {
     description: String,
     table: Html,
     forbidden: Option<Html>,
-    can_prepare: bool,
+}
+
+struct ModalView {
+    alert: Option<Html>,
     tax_field: Field,
     period_field: Field,
+    actions: Html,
 }
 
 #[derive(Template)]

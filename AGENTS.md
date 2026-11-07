@@ -89,6 +89,9 @@ they govern this code and are not copied here.
   `change: true` and its buttons `type="button"` with their own `event`; the
   server keeps the draft (`ledger/src/web/journals.rs`). Show a refusal beside
   its field, and what has no field in the dialog's own alert (`Refusal::alert`).
+- Stack a Detail page's (`PageVariant::Detail`) cards in one `space-y-4`
+  wrapper below its header (`sst/templates/return.html`): that variant adds
+  no gap of its own, so cards placed one after another touch.
 - Lay a form dialog out as the shared specimen does
   (`apps/base/ui/templates/ui_feedback_specimen/modal_templates.html`): the
   `Form` gets `class: "mt-4"` under the title, and its actions are Cancel then

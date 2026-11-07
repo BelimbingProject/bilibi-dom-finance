@@ -58,7 +58,7 @@ pub const MODULE: &str = "finance/sst";
 pub const SERVICE: &str = "finance/sst.sst";
 inventory::submit! { Module {
     id: MODULE, layer: Layer::Domains,
-    dependencies: &["base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/tenancy", "base/ui", "core/company", "finance/ledger", "finance/payables", "finance/receivables"],
+    dependencies: &["base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/principal_directory", "base/tenancy", "base/ui", "core/company", "finance/ledger", "finance/payables", "finance/receivables"],
     migrations: &[("finance-sst-001-sst", include_str!("../migrations/001-sst.sql"))],
     services: &[Service { id: SERVICE, factory: |s| Ok(Arc::new(Sst {
         db: s.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -71,6 +71,7 @@ inventory::submit! { Module {
         ledger: s.get(bilibi_finance_ledger::SERVICE)?,
         display: s.get("base/datetime.display")?,
         locales: s.get("base/locale.locales")?,
+        directory: s.get(bilibi_finance_ledger::PEOPLE)?,
     })))) }, Service { id: web::FILES, factory: |s| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::Downloads {
         sst: s.get(SERVICE)?,
     })))) }],

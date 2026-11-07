@@ -80,13 +80,6 @@ pub(super) fn mapped_box_name(key: Option<&str>) -> String {
         .unwrap_or_else(|| key.to_owned())
 }
 
-pub(super) fn actor(user: i64, impersonator: Option<i64>) -> String {
-    match impersonator {
-        Some(i) => format!("user {user} (impersonated by {i})"),
-        None => format!("user {user}"),
-    }
-}
-
 pub(super) fn status_kind(status: ReturnStatus) -> BadgeKind {
     match status {
         ReturnStatus::Open => BadgeKind::Warning,

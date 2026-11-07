@@ -9,8 +9,8 @@
 //! changes. Every write is a facade call that re-asks its capability, and the
 //! dialog holds the adjustment it withdraws, never a value the browser sends.
 use super::{
-    clear_flash, columns, company, flash, format as f, render, table, time, Pages, DENIED, INDEX,
-    SETUP,
+    clear_flash, columns, company, dialog_actions, flash, format as f, render, table, time, Pages,
+    DENIED, INDEX, SETUP,
 };
 use crate::{
     AdjustmentInput, BoxKind, ReturnReport, ReturnStatus, Sst, SstError, TaxType, AMEND_RETURNS,
@@ -18,12 +18,14 @@ use crate::{
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{FieldError, MinorUnits, Money, PostingSubscription};
+use bilibi_finance_ledger::{
+    AccountName, FieldError, MinorUnits, Money, PostingSubscription, RecordAction, RecordActions,
+};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{self, LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    params, Button, Cell, Choice, EmptyState, Fact, Facts, Field, FlashMap, FlexRow, Html,
-    InputKind, ListColumns, RowMode, StatusKind,
+    params, Alert, BackLink, Cell, Choice, Combobox, CreateButton, EmptyState, Fact, Facts, Field,
+    FlashMap, FlexRow, Html, IconButton, ListColumns, RowMode, StatusKind,
 };
 use rust_decimal::Decimal;
 use std::{
@@ -64,6 +66,9 @@ pub(super) struct Return {
     reason: String,
     adjustment: HashMap<String, String>,
     adjustment_errors: Vec<FieldError>,
+    /// The "+ Adjustment" dialog is open, with a refusal that has no field.
+    adding: bool,
+    adjustment_alert: Option<String>,
     flash: Option<(StatusKind, String)>,
     redirect: Option<(String, String)>,
     posted_since: ListColumns,
@@ -113,6 +118,8 @@ impl Return {
             reason: String::new(),
             adjustment: HashMap::new(),
             adjustment_errors: vec![],
+            adding: false,
+            adjustment_alert: None,
             flash: None,
             redirect: None,
             posted_since: columns(
@@ -338,11 +345,46 @@ impl Return {
             }),
             superseded: r.superseded_by_return_id.is_some(),
         })?;
-        let actions = render(HeaderActions {
-            export: (r.status != ReturnStatus::Discarded)
-                .then(|| format!("{INDEX}/returns/{}/export.csv", r.id)),
-            print: format!("{INDEX}/returns/{}/print", r.id),
+        // Back, then the return's own actions as icon buttons.
+        let back = render(BackLink {
+            href: INDEX,
+            id: "sst-return-back",
+            title: "Back to SST returns",
+            ..BackLink::default()
         })?;
+        let mut local = Vec::new();
+        if r.status != ReturnStatus::Discarded {
+            local.push(RecordAction::local(
+                "arrow-down-tray",
+                "Export CSV",
+                format!("{INDEX}/returns/{}/export.csv", r.id),
+            ));
+            local.push(RecordAction::local(
+                "printer",
+                "Print",
+                format!("{INDEX}/returns/{}/print", r.id),
+            ));
+        }
+        let actions = RecordActions::render(
+            back,
+            "sst-return-actions",
+            &format!("Return {}", r.return_number),
+            local,
+            None,
+        )?;
+        let people = self
+            .pages
+            .people(
+                scope,
+                report
+                    .adjustments
+                    .iter()
+                    .flat_map(|a| [Some(a.recorded_by_user_id), a.recorded_by_impersonator_id])
+                    .chain(r.events.iter().flat_map(|e| {
+                        [Some(e.recorded_by_user_id), e.recorded_by_impersonator_id]
+                    })),
+            )
+            .await?;
 
         // Part A.
         let mut items = vec![
@@ -511,25 +553,37 @@ impl Return {
                     .cell("tax", Cell::text(money(Some(a.tax_amount))))
                     .cell(
                         "by",
-                        Cell::text(f::actor(
-                            a.recorded_by_user_id,
-                            a.recorded_by_impersonator_id,
-                        )),
+                        Cell::text(
+                            people.who(Some(a.recorded_by_user_id), a.recorded_by_impersonator_id),
+                        ),
                     );
+                // Withdrawing acts on this adjustment here: an icon button.
                 if open && a.standing && self.can_prepare {
-                    row.actions = render(Button {
+                    let label = format!("Withdraw adjustment {}", a.adjustment_number);
+                    row.actions = render(IconButton {
                         id: &format!("adjustment-{}-withdraw", a.id),
                         event: "open_withdraw",
                         name: "id",
                         value: &a.id.to_string(),
                         button_type: "button",
-                        body: Html::text("Withdraw"),
-                        ..Button::default()
+                        title: &label,
+                        ..IconButton::new("x-mark", &label)
                     })?;
                 }
                 rows.push(row);
             }
-            let fields = (open && self.can_prepare).then(|| self.adjustment_fields(tax_type));
+            let add = (open && self.can_prepare)
+                .then(|| {
+                    render(CreateButton {
+                        noun: "Adjustment",
+                        id: "sst-adjustment-new",
+                        event: "new_adjustment",
+                        button_type: "button",
+                        ..CreateButton::default()
+                    })
+                })
+                .transpose()?
+                .unwrap_or(Html::EMPTY);
             Some(AdjustmentsView {
                 count: Some(report.adjustments.iter().filter(|a| a.standing).count()),
                 table: table(
@@ -543,7 +597,7 @@ impl Return {
                     )),
                     true,
                 )?,
-                fields,
+                add,
             })
         };
 
@@ -609,9 +663,12 @@ impl Return {
                         f::badge("differs", bilibi_ui::BadgeKind::Warning, "ml-1")?
                     });
                     rows.push(
-                        row.cell(
+                        row.slot(
                             "account",
-                            Cell::text(format!("{} {}", a.account_code, a.account_name)),
+                            render(AccountName {
+                                name: &a.account_name,
+                                code: &a.account_code,
+                            })?,
                         )
                         .cell("ledger_debits", Cell::text(money(Some(a.ledger_debits))))
                         .cell("ledger_credits", Cell::text(money(Some(a.ledger_credits))))
@@ -660,10 +717,9 @@ impl Return {
                 row.cell("event", Cell::text(label))
                     .cell(
                         "by",
-                        Cell::text(f::actor(
-                            e.recorded_by_user_id,
-                            e.recorded_by_impersonator_id,
-                        )),
+                        Cell::text(
+                            people.who(Some(e.recorded_by_user_id), e.recorded_by_impersonator_id),
+                        ),
                     )
                     .slot(
                         "when",
@@ -696,6 +752,31 @@ impl Return {
                 .attr("maxlength", "500")
                 .required(),
         });
+        let adjustment = (self.adding && open && self.can_prepare)
+            .then(|| -> Result<AdjustmentModal> {
+                Ok(AdjustmentModal {
+                    alert: self
+                        .adjustment_alert
+                        .as_ref()
+                        .map(|message| {
+                            render(Alert {
+                                kind: StatusKind::Error,
+                                id: "sst-adjustment-alert",
+                                class: "mt-4",
+                                body: Html::text(message),
+                            })
+                        })
+                        .transpose()?,
+                    fields: self.adjustment_fields(tax_type)?,
+                    actions: dialog_actions(
+                        "sst-adjustment",
+                        "close_adjustment",
+                        "Add adjustment",
+                        "Adding…",
+                    )?,
+                })
+            })
+            .transpose()?;
 
         let title = format!(
             "{} return {}: {} to {}",
@@ -723,13 +804,16 @@ impl Return {
                 accounts,
                 events,
                 modal,
+                adjustment,
             }),
         }
         .render()
         .map_err(|_| Error::Internal)
     }
 
-    fn adjustment_fields(&self, tax_type: TaxType) -> Vec<Field> {
+    /// The dialog's fields; the item is a searchable choice, name first and
+    /// its number muted.
+    fn adjustment_fields(&self, tax_type: TaxType) -> Result<Vec<Html>> {
         let field = |key: &str, id: &str, label: &str| {
             Field::in_form("adjustment", key)
                 .id(id)
@@ -743,25 +827,37 @@ impl Return {
                         .collect(),
                 )
         };
-        vec![
-            field("box", "adjustment-box", "Item")
-                .kind(InputKind::Select)
-                .prompt("Choose an item")
-                .options(
-                    Sst::boxes(tax_type)
-                        .iter()
-                        .filter(|b| b.kind != BoxKind::Total)
-                        .map(|b| Choice::new(format!("{} {}", b.item, b.label), b.key))
-                        .collect(),
-                )
-                .required(),
+        let item = Combobox::new("adjustment-box", "adjustment[box]")
+            .label("Item *")
+            .aria_label("Item")
+            .placeholder("Search SST-02 items")
+            .value(self.adjustment.get("box").map_or("", String::as_str))
+            .options(
+                Sst::boxes(tax_type)
+                    .iter()
+                    .filter(|b| b.kind != BoxKind::Total)
+                    .map(|b| Choice::new(b.label, b.key).detail(format!("item {}", b.item)))
+                    .collect(),
+            )
+            .errors(
+                self.adjustment_errors
+                    .iter()
+                    .filter(|e| e.field == "box")
+                    .map(|e| e.message.clone())
+                    .collect(),
+            );
+        let mut fields = vec![render(item)?];
+        for f in [
             field("description", "adjustment-description", "Description")
                 .attr("maxlength", "500")
                 .required(),
             field("taxable_amount", "adjustment-taxable", "Value").attr("inputmode", "decimal"),
             field("tax_amount", "adjustment-tax", "Tax").attr("inputmode", "decimal"),
             field("reference", "adjustment-reference", "Reference").attr("maxlength", "100"),
-        ]
+        ] {
+            fields.push(render(f)?);
+        }
+        Ok(fields)
     }
 
     /// Bilimbi `act`: the capability again, then the facade; a success closes
@@ -862,18 +958,23 @@ impl Return {
                 ));
                 self.adjustment.clear();
                 self.adjustment_errors.clear();
+                self.adding = false;
+                self.adjustment_alert = None;
                 Ok(true)
             }
+            // A field's refusal shows beside it; the rest in the dialog's alert.
             Err(SstError::Invalid(errors)) => {
-                self.flash = Some((
-                    StatusKind::Error,
-                    f::refusal(&SstError::Invalid(errors.clone())),
-                ));
+                let other: Vec<String> = errors
+                    .iter()
+                    .filter(|e| !ADJUSTMENT_FIELDS.contains(&e.field))
+                    .map(|e| format!("{} {}", e.field.replace('_', " "), e.message))
+                    .collect();
+                self.adjustment_alert = (!other.is_empty()).then(|| other.join(" "));
                 self.adjustment_errors = errors;
                 Ok(false)
             }
             Err(e) => {
-                self.flash = Some((StatusKind::Error, f::refusal(&e)));
+                self.adjustment_alert = Some(f::refusal(&e));
                 Ok(true)
             }
         }
@@ -941,6 +1042,20 @@ impl Return {
             }
             "adjustment_change" => {
                 self.adjustment = adjustment_values(v);
+                Ok(false)
+            }
+            "new_adjustment" => {
+                self.adding = true;
+                self.adjustment_alert = None;
+                self.adjustment_errors.clear();
+                self.flash = None;
+                Ok(false)
+            }
+            "close_adjustment" => {
+                self.adding = false;
+                self.adjustment_alert = None;
+                self.adjustment.clear();
+                self.adjustment_errors.clear();
                 Ok(false)
             }
             "add_adjustment" => {
@@ -1062,6 +1177,14 @@ struct RecordView {
     accounts: Option<Html>,
     events: Html,
     modal: Option<ModalView>,
+    adjustment: Option<AdjustmentModal>,
+}
+
+/// The "+ Adjustment" dialog.
+struct AdjustmentModal {
+    alert: Option<Html>,
+    fields: Vec<Html>,
+    actions: Html,
 }
 
 struct ItemsView {
@@ -1072,7 +1195,7 @@ struct ItemsView {
 struct AdjustmentsView {
     count: Option<usize>,
     table: Html,
-    fields: Option<Vec<Field>>,
+    add: Html,
 }
 
 struct ModalView {
@@ -1090,16 +1213,6 @@ struct Subtitle {
     status: Html,
     amends: Option<String>,
     superseded: bool,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{% if let Some(export) = export %}<div class="flex flex-wrap items-center gap-3"><a id="sst-return-export" href="{{ export }}">Export CSV</a><a id="sst-return-print" href="{{ print }}" target="_blank">Printable</a></div>{% endif %}"#,
-    ext = "html"
-)]
-struct HeaderActions {
-    export: Option<String>,
-    print: String,
 }
 
 #[derive(Template)]

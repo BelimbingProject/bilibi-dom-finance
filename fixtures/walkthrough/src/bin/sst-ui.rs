@@ -230,10 +230,10 @@ async fn main() -> Outcome<()> {
     // Returns page: the manager prepares; a reader sees the withheld sentence,
     // and a forged prepare from the reader's page is refused and opens nothing.
     let html = render(&pages, &manager, "returns", &none).await?;
-    assert!(html.contains("id=\"sst-periods-table\"") && html.contains("id=\"sst-prepare-form\""));
+    assert!(html.contains("id=\"sst-periods-table\"") && html.contains("id=\"sst-return-new\""));
     assert!(html.contains(&format!("id=\"return-{}\"", finalised.return_number)));
     let html = render(&pages, &viewer, "returns", &none).await?;
-    assert!(html.contains("sst-prepare-forbidden") && !html.contains("sst-prepare-form"));
+    assert!(html.contains("sst-prepare-forbidden") && !html.contains("sst-return-new"));
     let mut state = mount(&pages, &viewer, "returns", &none).await?;
     let start = sst
         .taxable_periods(&viewer, COMPANY, None, Some(1))

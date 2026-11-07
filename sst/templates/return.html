@@ -7,11 +7,11 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% if flash.error.contains("/finance/reports/approval-exceptions") %}{% call ui::button(id="approval-control-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
 {% call ui::page(id="sst-return", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::back_link(href="/finance/sst", id="sst-return-back", title="SST returns") %}{% endcall %}
-{% if let Some(refusal) = refusal %}{{ refusal|safe }}{% endif %}
+{% if let Some(refusal) = refusal %}{% call ui::back_link(href="/finance/sst", id="sst-return-back", title="Back to SST returns") %}{% endcall %}{{ refusal|safe }}{% endif %}
 {% if let Some(r) = record %}
 {% call workspace::announce(kind="finance/sst", record_id=r.record) %}{% endcall %}
 {% call ui::header(subtitle_html=r.subtitle, title_actions=r.title_actions, actions=r.actions) %}{{ r.title }}{% endcall %}
+<div class="space-y-4">
 {% call ui::card(id="sst-return-facts", inner_class="p-5 sm:p-6", role="region", labelledby="sst-return-facts-heading") %}
 {% call ui::section_heading(id="sst-return-facts-heading", title="Part A", description="Finalising fixes these figures. It does not submit the return or pay the tax.") %}{% endcall %}
 {{ r.particulars|safe }}
@@ -37,14 +37,8 @@
 {% endif %}
 {% if let Some(adjustments) = r.adjustments %}
 {% call ui::card(id="sst-return-adjustments", inner_class="p-0", role="region", labelledby="sst-return-adjustments-heading") %}
-{% call ui::section_heading(id="sst-return-adjustments-heading", title="Adjustments", count=adjustments.count, class="p-5 pb-0", description="Amounts the documents cannot show: approved bad debt relief, a deduction, goods taken for own use, a recovered bad debt. Each adds to its item.") %}{% endcall %}
+{% call ui::section_heading(id="sst-return-adjustments-heading", title="Adjustments", count=adjustments.count, class="p-5 pb-0", description="Amounts the documents cannot show: approved bad debt relief, a deduction, goods taken for own use, a recovered bad debt. Each adds to its item.", actions=adjustments.add) %}{% endcall %}
 {{ adjustments.table|safe }}
-{% if let Some(fields) = adjustments.fields %}
-<form id="sst-adjustment-form" data-event="adjustment_change" data-change data-submit-event="add_adjustment" class="grid gap-x-6 gap-y-2 p-5 md:grid-cols-2">
-{% for field in fields %}{% call form::input(field=field) %}{% endcall %}{% endfor %}
-<div class="flex items-end pb-4">{% call ui::button(id="adjustment-save", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Adding…") %}Add adjustment{% endcall %}</div>
-</form>
-{% endif %}
 {% endcall %}
 {% endif %}
 {% if let Some(sources) = r.sources %}
@@ -63,6 +57,7 @@
 {% call ui::section_heading(id="sst-return-events-heading", title="History", class="p-5 pb-0") %}{% endcall %}
 {{ r.events|safe }}
 {% endcall %}
+</div>
 {% if let Some(m) = r.modal %}
 {% call dialog::modal(id="sst-reason-modal", title=m.title, cancel_event="close_modal", description=m.description) %}
 <form id="sst-reason-form" data-event="reason_change" data-change data-submit-event="submit_reason" class="mt-4">
@@ -71,6 +66,15 @@
 {% call ui::button(id="sst-reason-cancel", button_type="button", event="close_modal") %}Cancel{% endcall %}
 {% call ui::button(id="sst-reason-submit", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Confirming…") %}Confirm{% endcall %}
 </div>
+</form>
+{% endcall %}
+{% endif %}
+{% if let Some(a) = r.adjustment %}
+{% call dialog::modal(id="sst-adjustment-modal", title="Add an adjustment", cancel_event="close_adjustment", description="An amount the documents cannot show. It adds to its item.") %}
+{% if let Some(alert) = a.alert %}{{ alert|safe }}{% endif %}
+<form id="sst-adjustment-form" data-event="adjustment_change" data-change data-submit-event="add_adjustment" class="mt-4 space-y-3">
+{% for field in a.fields %}{{ field|safe }}{% endfor %}
+{{ a.actions|safe }}
 </form>
 {% endcall %}
 {% endif %}
