@@ -13,7 +13,7 @@ mod payments;
 mod setup;
 mod vendors;
 
-use crate::{Payables, CREATE_DOCUMENTS, MODULE, SUBMIT_PAYMENTS, VIEW};
+use crate::{Payables, MODULE, SUBMIT_PAYMENTS, VIEW};
 use askama::Template;
 use bilibi_agent_api::{
     page::{Call, PageContracts},
@@ -57,8 +57,6 @@ bilibi_records::drop_target!(
     }
 );
 const INDEX: &str = "/finance/payables/bills";
-const NEW_BILL: &str = "/finance/payables/bills/new";
-const NEW_NOTE: &str = "/finance/payables/debit-notes/new";
 const PAYMENTS: &str = "/finance/payables/payments";
 const NEW_PAYMENT: &str = "/finance/payables/payments/new";
 const AGED: &str = "/finance/payables/aged";
@@ -162,18 +160,6 @@ route!(
     "/finance/payables/bills/{id}",
     "bill",
     VIEW
-);
-route!(
-    "finance/payables.bill-new",
-    NEW_BILL,
-    "bill_new",
-    CREATE_DOCUMENTS
-);
-route!(
-    "finance/payables.note-new",
-    NEW_NOTE,
-    "note_new",
-    CREATE_DOCUMENTS
 );
 route!("finance/payables.payments", PAYMENTS, "payments", VIEW);
 route!(
@@ -310,8 +296,6 @@ impl Page<Scope, Error> for Pages {
             "vendors" => Some("Suppliers"),
             "bills" => Some("Bills"),
             "bill" => Some("Bill"),
-            "bill_new" => Some("Record a bill"),
-            "note_new" => Some("Record a debit note"),
             "payments" => Some("Payments"),
             "payment_new" => Some("Request a payment"),
             "payment" => Some("Payment"),
@@ -334,6 +318,7 @@ impl Page<Scope, Error> for Pages {
                 "bills" => {
                     let mut state = bills::Bills::new(self.clone(), r.query, r.framed)?;
                     state.reload(scope).await?;
+                    state.open_requested(scope).await?;
                     (state.body(scope).await?, None)
                 }
                 "bill" => {
@@ -341,12 +326,6 @@ impl Page<Scope, Error> for Pages {
                     state.reload(scope).await?;
                     state.open_requested(scope, "").await?;
                     (state.body(scope).await?, state.title())
-                }
-                "bill_new" | "note_new" => {
-                    let mut state =
-                        bill_form::BillForm::new(self.clone(), r.operation == "note_new", r.query)?;
-                    state.reload(scope).await?;
-                    (state.body()?, None)
                 }
                 "payments" => {
                     let mut state = payments::Payments::new(self.clone(), r.query, r.framed)?;
@@ -396,11 +375,6 @@ impl Page<Scope, Error> for Pages {
                 }
                 "bills" => Box::new(bills::Bills::new(self.clone(), r.query, r.framed)?),
                 "bill" => Box::new(bill::Bill::new(self.clone(), r.path, r.query)?),
-                "bill_new" | "note_new" => Box::new(bill_form::BillForm::new(
-                    self.clone(),
-                    r.operation == "note_new",
-                    r.query,
-                )?),
                 "payments" => Box::new(payments::Payments::new(self.clone(), r.query, r.framed)?),
                 "payment_new" => Box::new(payment_form::PaymentForm::new(self.clone(), r.query)?),
                 "payment" => Box::new(payment::Request::new(self.clone(), r.path, r.query)?),

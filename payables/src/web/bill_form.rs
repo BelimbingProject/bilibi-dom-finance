@@ -1,6 +1,8 @@
-//! Recording a bill or a debit note, and correcting a draft. Bilimbi recorded
-//! documents through its API; this page saves the same draft through the
-//! `finance.payables.bill.create`, `.bill.replace_draft` and
+//! Recording a bill or a debit note, and correcting a draft: the Bills list's
+//! dialog, as New invoice is the Invoices list's (one thing, one door: no page
+//! of its own). The list opens it from "+ Bill", from a bill's "Correct draft"
+//! (`?correct=`) and "Record debit note" (`?debit_note=`). It saves the same
+//! draft through the `finance.payables.bill.create`, `.bill.replace_draft` and
 //! `.debit_note.create` contracts the agent doors call, and leaves approving
 //! and posting to the bill's own page.
 use super::{company, format as f, record_id, render, Pages, Written, INDEX};
@@ -10,10 +12,8 @@ use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{Account, AccountType, MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    error_sentence,
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, AddMore, Alert, BackLink, Button, ButtonVariant, Choice, Combobox, EmptyState,
-    ErrorSummary, Fact, Facts, Field, Html, InputKind, StatusKind,
+    error_sentence, params, AddMore, Alert, Button, ButtonVariant, Choice, Combobox, EmptyState,
+    ErrorSummary, Fact, Facts, Field, Html, InputKind, Modal, ModalWidth, StatusKind,
 };
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{json, Value};
@@ -516,31 +516,52 @@ impl BillForm {
         }
     }
 
-    pub(super) fn body(&self) -> Result<String> {
+    /// The dialog: the form, or why nothing can be recorded, always with a
+    /// way out (Cancel, and Escape through the dialog's cancel event).
+    pub(super) fn dialog(&self) -> Result<Html> {
         let title = if self.note {
-            "Record a debit note"
+            "New debit note - draft"
         } else if self.source.is_some() {
-            "Correct a draft bill"
+            "Correct draft bill"
         } else {
-            "Record a bill"
+            "New bill - draft"
         };
-        let back = render(BackLink {
-            href: INDEX,
-            id: "payables-record-back",
-            title: "Back to bills",
-            class: "",
-        })?;
-        if let Some(why) = self.unavailable {
-            let mut empty = EmptyState::missing("Nothing to record here", why);
-            empty.id = "payables-record-unavailable".into();
-            return Unavailable {
-                title,
-                back,
-                empty: render(empty)?,
+        let body = match self.unavailable {
+            Some(why) => {
+                let mut empty = EmptyState::missing("Nothing to record here", why);
+                empty.id = "payables-record-unavailable".into();
+                let mut body = render(empty)?;
+                body.push(&f::actions(render(Button {
+                    id: "payables-record-close",
+                    button_type: "button",
+                    event: "cancel_record",
+                    body: Html::text("Close"),
+                    ..Button::default()
+                })?)?);
+                body
             }
-            .render()
-            .map_err(|_| Error::Internal);
-        }
+            None => Html::raw(self.body()?),
+        };
+        render(Modal {
+            id: "payables-record-modal",
+            title,
+            description: "Draft: no ref no and no posting until approved and posted.",
+            cancel_event: "cancel_record",
+            width: ModalWidth::Wide,
+            body,
+            ..Modal::default()
+        })
+    }
+
+    /// The success message the list shows once a draft is saved.
+    pub(super) fn saved(&self) -> String {
+        format!(
+            "{} saved as a draft. Approve and post it when it is ready.",
+            if self.note { "Debit note" } else { "Bill" }
+        )
+    }
+
+    fn body(&self) -> Result<String> {
         let units = self.units.ok_or(Error::Internal)?;
         let d = &self.draft;
         let field = |key: &str, element: &str, label: &str, value: &str| {
@@ -747,22 +768,23 @@ impl BillForm {
         let no_accounts = self.accounts.is_empty().then_some(
             "No accounts to choose from. Accounts come from the company's chart, and need permission to read the ledger.",
         );
-        let save = render(Button {
+        let mut save = render(Button {
+            id: "payables-record-cancel",
+            button_type: "button",
+            event: "cancel_record",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        save.push(&render(Button {
             id: "payables-record-save",
             button_type: "submit",
             variant: ButtonVariant::Primary,
             working: "Saving…",
             body: Html::text("Save draft"),
             ..Button::default()
-        })?;
+        })?);
+        let save = f::actions(save)?;
         View {
-            title,
-            subtitle: if self.note {
-                "Takes back part of a posted bill. It stays a draft until someone approves and posts it."
-            } else {
-                "It stays a draft until someone approves and posts it from its page."
-            },
-            back,
             summary,
             notice,
             replaces,
@@ -782,9 +804,15 @@ impl BillForm {
         .map_err(|_| Error::Internal)
     }
 
-    async fn event(&mut self, scope: &Scope, credential: &str, v: &Value) -> Result<LiveBody> {
+    /// One event of the dialog; `Some(address)` when a saved draft should be
+    /// opened (its own page).
+    pub(super) async fn act(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        v: &Value,
+    ) -> Result<Option<String>> {
         let kind = v["type"].as_str().ok_or(Error::Invalid)?;
-        let mut redirect = None;
         match kind {
             "edit" => {
                 self.read(v);
@@ -820,45 +848,12 @@ impl BillForm {
                     self.notice =
                         Some("You do not have permission to record this document.".into());
                 } else {
-                    redirect = self.save(scope, credential).await?;
+                    return self.save(scope, credential).await;
                 }
             }
             _ => return Err(Error::Invalid),
         }
-        Ok(match redirect {
-            Some(to) => LiveBody {
-                redirect: Some(to),
-                flash: Some((
-                    StatusKind::Success,
-                    format!(
-                        "{} saved as a draft. Approve and post it when it is ready.",
-                        if self.note { "Debit note" } else { "Bill" }
-                    ),
-                )),
-                ..LiveBody::default()
-            },
-            None => LiveBody {
-                html: self.body()?,
-                ..LiveBody::default()
-            },
-        })
-    }
-}
-
-impl LiveState<Scope, Error> for BillForm {
-    fn update<'a>(&'a mut self, r: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
-        Box::pin(async move {
-            match r.input {
-                LiveInput::Refresh | LiveInput::Params(_) => {
-                    self.reload(r.scope).await?;
-                    Ok(LiveBody {
-                        html: self.body()?,
-                        ..LiveBody::default()
-                    })
-                }
-                LiveInput::Event(v) => self.event(r.scope, r.credential, v).await,
-            }
-        })
+        Ok(None)
     }
 }
 
@@ -898,9 +893,6 @@ struct LineView {
 #[derive(Template)]
 #[template(path = "bill_form.html")]
 struct View {
-    title: &'static str,
-    subtitle: &'static str,
-    back: Html,
     summary: Option<Html>,
     notice: Option<Html>,
     replaces: Option<String>,
@@ -915,15 +907,4 @@ struct View {
     save: Html,
     party_heading: &'static str,
     document_heading: &'static str,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::page(id="payables-record", variant=bilibi_ui::PageVariant::Form) %}{% call ui::header(actions=back) %}{{ title }}{% endcall %}{{ empty|safe }}{% endcall %}"#,
-    ext = "html"
-)]
-struct Unavailable {
-    title: &'static str,
-    back: Html,
-    empty: Html,
 }

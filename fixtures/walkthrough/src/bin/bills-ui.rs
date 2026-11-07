@@ -370,7 +370,6 @@ async fn main() -> Outcome<()> {
     // need a browser session, so they are tried in the browser.
     for (operation, marker) in [
         ("bills", "id=\"payables-bills-new\""),
-        ("bill_new", "id=\"payables-record-form\""),
         ("payments", "payables-payments-table"),
         ("payment_new", "id=\"payables-pay-form\""),
         ("aged", "payables-aged-parties"),
