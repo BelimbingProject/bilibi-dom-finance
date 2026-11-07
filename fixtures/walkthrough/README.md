@@ -12,6 +12,16 @@ Sign in as `manager@other.example.test`, `reviewer@other.example.test` or `viewe
 
 No fixture is a production seed. The module-specific binaries remain the detailed accounting proofs; `scripts/domain-ci.sh` in the Platform is the repository gate.
 
+## Running them in CI
+
+`scripts/domain-ci.sh` only compiles these binaries. The **Walkthroughs** workflow (`.github/workflows/walkthroughs.yml`) runs them through `scripts/run-walkthroughs.sh`, one empty disposable database each: every night (and on a manual run) against the Platform's `main`, and on a pull request that touches `fixtures/`, that script or the workflow, against the pinned revision. The script lists what runs (`WALKTHROUGHS`) and what is known to fail (`KNOWN_BROKEN`, run and reported but not failing the run, with the reason beside each; remove a line when it passes). To run it by hand from a mounted Platform checkout after `cargo build -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins`:
+
+```sh
+DATABASE_URL=postgres://user:password@localhost:5432/postgres scripts/run-walkthroughs.sh [name ...]
+```
+
+Add a walkthrough by building its binary and adding a line to `WALKTHROUGHS`. A fixture account that acts in a company needs a Person, an affiliation and a desk there: `install` gives them to Company 001's administrator and viewer and tenant 2's manager through `install_staff`, `give_desk` adds one in a company a walkthrough created, and `sign_in` also writes the session row Agent Access needs. A binary that serves the app ends by serving: the script counts it as passed once it accepts connections and stops it by its PID. Not run, because they need more than a database: `agent-operations`, `one-door`, `bank-bridge`, `einvoice-operations` and `receivables-control` (OAuth credentials and a second process), `sst-ui` (needs `sst` on the same database first) and `payroll-source` (needs People mounted).
+
 ## Accounting system conversion
 
 On a fresh disposable PostgreSQL 18 database, run the composed fixture with the same private settings key and loopback origin throughout:

@@ -129,10 +129,45 @@ pub async fn install_platform(db: &Db) -> Result<()> {
     Ok(())
 }
 
+/// The Platform fixture's staff accounts that work in a Finance company need a
+/// Person, an affiliation and a desk before the Platform lets them act there:
+/// Company 001's administrator (user 4, who reviews) and viewer (user 2), and
+/// tenant 2's manager (user 5) in Company 100. Fixture identity SQL only,
+/// idempotent; every Finance record is still created by its facade.
+/// [`install`] calls it, so a binary that signs in as one of them needs no copy
+/// of its own; one that proves what an unaffiliated account sees
+/// (`report-controls`) calls only [`install_platform`]. Tenant 2's Person and
+/// affiliation take IDs of their own (106, 105) because Person IDs are global
+/// and `conversion` and `ledger-ui` insert their own at 6 and 5.
+pub async fn install_staff(db: &Db) -> Result<()> {
+    let client = db.get().await.map_err(Error::from)?;
+    client
+        .batch_execute(
+            "INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(4,1,'person_4','Alex Admin','human','admin@example.test'),(5,1,'person_5','Lee Viewer','human','viewer@example.test') ON CONFLICT DO NOTHING;
+             INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title,work_email) VALUES(3,1,4,1,'Reviewer','admin@example.test'),(4,1,5,1,'Reader','viewer@example.test') ON CONFLICT DO NOTHING;
+             UPDATE users SET person_id=4 WHERE tenant_id=1 AND id=4 AND person_id IS NULL; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=4 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+             UPDATE users SET person_id=5 WHERE tenant_id=1 AND id=2 AND person_id IS NULL; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=2 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+             INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(106,2,'person_106','Other Manager','human','manager@other.example.test') ON CONFLICT DO NOTHING;
+             INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(105,2,106,100,'Recorder') ON CONFLICT DO NOTHING;
+             UPDATE users SET person_id=106 WHERE tenant_id=2 AND id=5 AND person_id IS NULL; INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,100 FROM users WHERE tenant_id=2 AND id=5 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+             SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));
+             SELECT setval(pg_get_serial_sequence('person_affiliations','id'),(SELECT max(id) FROM person_affiliations))",
+        )
+        .await
+        .map_err(Error::from)?;
+    Ok(())
+}
+
 /// Installs the Platform fixture, reconciles the contributed roles, and opens
 /// Company 001's book and chart through the ledger facade as the manager.
 pub async fn install(db: &Db, services: &Services) -> Result<Installed> {
     install_platform(db).await?;
+    install_staff(db).await?;
+    // The administrator proves cross-company scope in Companies 002 and 003
+    // (003 is the disposable company later walkthroughs archive).
+    for company in [2, 3] {
+        give_desk(db, 1, 4, company).await?;
+    }
     services
         .get::<Grants>("base/authz.grants")
         .map_err(Error::from)?
@@ -254,14 +289,40 @@ pub async fn initialize_journal_approvals(
 }
 
 /// A sealed scope for one fixture account, as a signed-in session would hold.
+/// The account also gets the session row a sign-in writes (one per account,
+/// carrying the scope's empty CSRF value): Agent Access approves a connection
+/// from the person's own browser session and refuses a scope with none.
 pub async fn sign_in(db: &Db, services: &Services, tenant: i64, user: i64) -> Result<Scope> {
     let authentication = services
         .get::<Authentication>("base/tenancy.authentication")
         .map_err(Error::from)?;
     let client = db.get().await.map_err(Error::from)?;
+    client
+        .execute(
+            "INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,user_agent) VALUES($1,$2,$3,'',now()+interval '1 day','Walkthrough browser') ON CONFLICT DO NOTHING",
+            &[&format!("walkthrough-{tenant}-{user}"), &tenant, &user],
+        )
+        .await
+        .map_err(Error::from)?;
     Ok(authentication
         .authenticate(&**client, tenant, user, String::new())
         .await?)
+}
+
+/// Gives a fixture account a desk in a company a walkthrough created, which
+/// the Platform requires before the account can act there (an installed
+/// manager has Companies 001 and 002 only). Idempotent fixture identity SQL.
+pub async fn give_desk(db: &Db, tenant: i64, user: i64, company: i64) -> Result<()> {
+    db.get()
+        .await
+        .map_err(Error::from)?
+        .execute(
+            "INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,$3 FROM users WHERE tenant_id=$1 AND id=$2 AND person_id IS NOT NULL ON CONFLICT DO NOTHING",
+            &[&tenant, &user, &company],
+        )
+        .await
+        .map_err(Error::from)?;
+    Ok(())
 }
 
 /// What the Platform fixture's roles hold in the ledger, declared in the

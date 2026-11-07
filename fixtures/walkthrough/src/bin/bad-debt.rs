@@ -97,6 +97,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         book,
         accounts: ledger.list_accounts(&manager, 1).await?,
     };
+    // Manual journals are submitted for approval under Workflow's rules, which
+    // exist only once a walkthrough publishes them.
+    bilibi_finance_walkthrough_fixture::initialize_journal_approvals(&db, services, &manager, 1)
+        .await?;
     let ar = services.get::<Receivables>(bilibi_finance_receivables::SERVICE)?;
     let sst = services.get::<Sst>(bilibi_finance_sst::SERVICE)?;
     let account = |code: &str| {

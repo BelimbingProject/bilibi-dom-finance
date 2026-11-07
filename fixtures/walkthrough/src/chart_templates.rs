@@ -266,6 +266,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             CreateOutcome::Created(company) => company.id,
             other => return Err(format!("company create refused: {other:?}").into()),
         };
+        crate::give_desk(db, 2, 5, company).await?;
         targets.push(company);
     }
     for &company in &targets[..2] {

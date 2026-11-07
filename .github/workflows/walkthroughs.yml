@@ -1,0 +1,125 @@
+# Runs the walkthrough fixtures (fixtures/walkthrough), which ci.yml only
+# compiles (clippy --all-targets): a fixture that nobody runs rots unnoticed.
+#
+# Why its own workflow, and not a step of ci.yml's "Mounted in Bilibi" job:
+# that job takes 7 to 11 minutes on a pull request and 30 to 44 minutes on main
+# (a 45-minute limit), and running 25 walkthroughs adds a fixture build and
+# about 7 minutes of runs, which would double a pull request's wait. So it runs:
+#   - every night against the Platform's main branch, which finds the day's
+#     Platform changes that break a walkthrough (and the Domain), and
+#   - on a pull request that touches the fixtures, the runner script or this
+#     file, against the pinned Platform revision, so a fixture edit is proven
+#     before it merges.
+# scripts/run-walkthroughs.sh lists what runs and what is known to be broken.
+name: Walkthroughs
+
+on:
+  schedule:
+    # 19:00 UTC, 03:00 Malaysia time.
+    - cron: '0 19 * * *'
+  pull_request:
+    paths:
+      - 'fixtures/**'
+      - 'scripts/run-walkthroughs.sh'
+      - '.github/workflows/walkthroughs.yml'
+  workflow_dispatch:
+    inputs:
+      platform_ref:
+        description: 'Platform branch, tag or commit (default: main on a schedule, the pinned revision otherwise)'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: walkthroughs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CONTAINER_ROLE: domains
+  CONTAINER_ID: finance
+  # Debug info dominates compile and link time, and the walkthroughs do not read it.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+
+jobs:
+  walkthroughs:
+    name: Run the walkthroughs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: bilibi
+          POSTGRES_PASSWORD: bilibi
+          POSTGRES_USER: bilibi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bilibi"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: bilibi
+
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v7
+        with:
+          path: container
+
+      - name: Choose the Platform revision
+        id: pin
+        working-directory: .
+        env:
+          INPUT_REF: ${{ github.event.inputs.platform_ref }}
+        run: |
+          if [[ -n "$INPUT_REF" ]]; then
+            echo "revision=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+            echo "revision=main" >> "$GITHUB_OUTPUT"
+          else
+            echo "revision=$(tr -d '[:space:]' < container/.github/bilibi-revision)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out Bilibi
+        uses: actions/checkout@v7
+        with:
+          repository: BelimbingProject/bilibi
+          ref: ${{ steps.pin.outputs.revision }}
+          path: bilibi
+
+      - name: Mount the container
+        working-directory: .
+        run: mv container "bilibi/apps/$CONTAINER_ROLE/$CONTAINER_ID"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: bilibi
+          prefix-key: v1-walkthroughs
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      # The same discovery and pinning steps as scripts/domain-ci.sh, so the
+      # mounted crates resolve in Cargo.lock before the --locked build.
+      - name: Compose the mounted container
+        run: |
+          python3 scripts/discover-modules.py
+          cargo metadata --format-version 1 >/dev/null
+          python3 scripts/discover-modules.py --pin
+
+      - name: Build the app and every walkthrough
+        run: cargo build --locked -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins
+
+      - name: Run the walkthroughs
+        env:
+          WALKTHROUGH_SLOW: ${{ github.event_name != 'pull_request' && '1' || '' }}
+        run: apps/$CONTAINER_ROLE/$CONTAINER_ID/scripts/run-walkthroughs.sh

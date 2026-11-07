@@ -2,7 +2,7 @@
 //! mirroring Bilimbi Receivables setup/draft scenarios. Disposable data only.
 use crate::sign_in;
 use bilibi_database::{Db, Error};
-use bilibi_finance_ledger::{AccountChange, AccountType, Ledger, Money, NewAccount};
+use bilibi_finance_ledger::{AccountChange, AccountType, Ledger, LedgerError, Money, NewAccount};
 use bilibi_finance_receivables::{DocumentQuery, Page, ReceivableError as R, Receivables};
 use bilibi_module_registry::Services;
 use serde_json::{json, Value};
@@ -24,18 +24,20 @@ macro_rules! walkthrough_receivables_roles {
 }
 
 fn field<T: Debug>(result: Result<T, R>, name: &str, message: &str) {
-    match result {
-        Err(R::Invalid(errors)) => {
-            assert!(
-                errors
-                    .iter()
-                    .any(|e| e.field == name && e.message == message),
-                "{errors:?}"
-            );
-            println!("refused: {name} {message}");
-        }
+    // A refusal from the linked Core party arrives as the ledger's own.
+    let errors: Vec<(String, String)> = match result {
+        Err(R::Invalid(errors)) => errors.into_iter().map(|e| (e.field, e.message)).collect(),
+        Err(R::Ledger(LedgerError::Invalid(errors))) => errors
+            .into_iter()
+            .map(|e| (e.field.to_string(), e.message))
+            .collect(),
         other => panic!("expected field refusal for {name}: {other:?}"),
-    }
+    };
+    assert!(
+        errors.iter().any(|(f, m)| f == name && m == message),
+        "{errors:?}"
+    );
+    println!("refused: {name} {message}");
 }
 
 pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error::Error>> {
@@ -297,8 +299,11 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         "payment_terms_days",
         "can't be blank",
     );
+    // A viewer with a desk in the company reads the customer but changes nothing.
+    assert!(ar.get_customer(&viewer, 1, customer.id).await.is_ok());
     assert!(matches!(
-        ar.get_customer(&viewer, 1, customer.id).await,
+        ar.update_customer(&viewer, 1, customer.id, &json!({"active":true}))
+            .await,
         Err(R::Unauthorized)
     ));
     assert_eq!(
@@ -665,7 +670,9 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     assert!(matches!(
         ar.create_customer(&admin, 3, &json!({"record_kind":"company","record_id":10}))
             .await,
-        Err(R::CompanyArchived)
+        // The Platform's reach check leaves out an archived company, so the
+        // desk there no longer authorizes before the lock reports it archived.
+        Err(R::CompanyArchived | R::Unauthorized)
     ));
     field(
         ar.create_customer(&manager, 1, &json!({"record_kind":"company","record_id":3}))

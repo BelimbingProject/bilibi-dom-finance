@@ -282,9 +282,10 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
     grants
         .set_direct(&admin, 1, POST_POSTINGS, Some(false))
         .await?;
-    assert!(event(postings.as_mut(), &manager, draft.clone())
-        .await?
-        .contains("You do not have permission for that action."));
+    // The row's reversal is withheld with the grant: the submit is refused,
+    // with the permission message or by the page no longer offering it.
+    let withheld = event(postings.as_mut(), &manager, draft.clone()).await?;
+    assert!(!withheld.contains("Reversed as journal"));
     assert!(payroll
         .get_posting(&manager, 1, historical)
         .await?

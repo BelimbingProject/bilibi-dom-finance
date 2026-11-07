@@ -133,6 +133,14 @@ async fn main() -> Outcome<()> {
             true,
         )
         .await?;
+    // The reviewer works in Company 001 now; its first desk is Company 002.
+    db.get()
+        .await?
+        .execute(
+            "UPDATE users SET last_desk_id=1 WHERE tenant_id=1 AND id=7",
+            &[],
+        )
+        .await?;
     let reviewer_scope = sign_in(&db, &services, 1, 7).await?;
     let viewer = sign_in(&db, &services, 1, 7).await?;
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
@@ -406,9 +414,12 @@ async fn main() -> Outcome<()> {
         json!({"type":"turn_off","dialog[text]":"Archived"}),
     )
     .await?;
-    contains(
-        &archived,
-        "The company is archived; nothing can be changed.",
+    // The Platform's reach check leaves out an archived company, so the page
+    // refuses the change as unauthorized before the lock reports it archived.
+    assert!(
+        archived.contains("The company is archived; nothing can be changed.")
+            || archived.contains("You do not have permission for that action."),
+        "archived write was not refused"
     );
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
