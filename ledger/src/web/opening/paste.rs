@@ -70,6 +70,8 @@ pub(super) struct Paste {
     /// Which side a positive balance is.
     positive: Side,
     mark: char,
+    /// The chart's account codes, to tell a code column from an amount.
+    codes: Vec<String>,
     /// Why the paste is not read as a table at all.
     pub refusal: Option<String>,
 }
@@ -84,7 +86,7 @@ pub(super) enum Row<'a> {
 }
 
 impl Paste {
-    pub(super) fn new(text: &str) -> Self {
+    pub(super) fn new(text: &str, codes: Vec<String>) -> Self {
         let mut paste = Self {
             sheet: Sheet::default(),
             headed: false,
@@ -95,6 +97,7 @@ impl Paste {
             balance: None,
             positive: Side::Debit,
             mark: '.',
+            codes,
             refusal: None,
         };
         match Sheet::read(text) {
@@ -119,7 +122,19 @@ impl Paste {
         } else {
             Default::default()
         };
-        self.account = found.get("code").or_else(|| found.get("name")).copied();
+        let code_like = |i: &usize| {
+            let cells = self.sheet.cells(self.headed, *i);
+            !cells.is_empty()
+                && cells.iter().all(|cell| {
+                    cell.chars().all(|c| c.is_ascii_digit())
+                        && self.codes.iter().any(|code| code.eq_ignore_ascii_case(cell))
+                })
+        };
+        self.account = found
+            .get("code")
+            .or_else(|| found.get("name"))
+            .copied()
+            .or_else(|| (0..self.sheet.width()).find(code_like));
         let amounts: Vec<usize> = self
             .sheet
             .numeric_columns(self.headed, '.')

@@ -54,8 +54,8 @@ impl Opening {
                 units,
                 true,
             )?);
-            body.push(&self.totals(units)?);
-            let (debits, credits, readable) = self.draft.totals(units);
+            body.push(&self.totals(accounts, units)?);
+            let (debits, credits, readable) = self.draft.totals(accounts, units);
             let ready = readable && !debits.is_zero() && debits == credits;
             let mut buttons = render(Button {
                 id: "opening-clear",
@@ -235,10 +235,10 @@ impl Opening {
         Ok(html)
     }
 
-    pub(super) fn totals(&self, units: MinorUnits) -> Result<Html> {
-        let (debits, credits, readable) = self.draft.totals(units);
+    pub(super) fn totals(&self, accounts: &[view::Account], units: MinorUnits) -> Result<Html> {
+        let (debits, credits, readable) = self.draft.totals(accounts, units);
         let difference = debits - credits;
-        let text = if !readable {
+        let mut text = if !readable {
             "Some amounts are not numbers yet; see the marked cells.".to_owned()
         } else if debits.is_zero() && credits.is_zero() {
             "No balances yet. Debits and credits must be equal before you can submit.".to_owned()
@@ -256,6 +256,24 @@ impl Opening {
                 if difference.is_positive() { "in debits" } else { "in credits" },
             )
         };
+        let left_out = self.draft.left_out(accounts, units);
+        if !left_out.is_empty() {
+            let listed: Vec<String> = left_out
+                .iter()
+                .map(|(account, money)| {
+                    format!(
+                        "{} ({} {})",
+                        view::account_label(account),
+                        money.abs().display(units),
+                        if money.is_positive() { "debit" } else { "credit" }
+                    )
+                })
+                .collect();
+            text.push_str(&format!(
+                " Left out because it no longer takes postings: {}.",
+                listed.join("; ")
+            ));
+        }
         render(Alert {
             id: "opening-totals",
             kind: if readable && difference.is_zero() && !debits.is_zero() {
@@ -425,7 +443,7 @@ fn grid_table(
             rows.push(row);
         }
     }
-    let (debits, credits, _) = draft.totals(units);
+    let (debits, credits, _) = draft.totals(accounts, units);
     let mut total = FlexRow::new("total")
         .slot("account", render(Strong { text: "Total" })?)
         .slot(

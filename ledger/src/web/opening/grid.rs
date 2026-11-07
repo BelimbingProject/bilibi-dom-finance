@@ -158,11 +158,16 @@ impl Draft {
         }
     }
 
-    /// Total debits, total credits, and whether every cell reads.
-    pub(super) fn totals(&self, units: MinorUnits) -> (Money, Money, bool) {
+    /// Total debits, total credits, and whether every cell reads, over the
+    /// accounts that take postings: the ones the grid draws and `rows` sends.
+    pub(super) fn totals(
+        &self,
+        accounts: &[view::Account],
+        units: MinorUnits,
+    ) -> (Money, Money, bool) {
         let (mut debits, mut credits, mut readable) = (Money::ZERO, Money::ZERO, true);
-        for account in self.cells.keys() {
-            match self.amount(*account, units) {
+        for account in accounts.iter().filter(|a| a.postable()) {
+            match self.amount(account.id, units) {
                 Amount::Debit(m) => debits = debits + m,
                 Amount::Credit(m) => credits = credits + m,
                 Amount::Refused(..) => readable = false,
@@ -170,6 +175,24 @@ impl Draft {
             }
         }
         (debits, credits, readable)
+    }
+
+    /// Accounts that hold an amount here but no longer take postings, so the
+    /// grid does not draw them and the submission leaves them out.
+    pub(super) fn left_out<'a>(
+        &self,
+        accounts: &'a [view::Account],
+        units: MinorUnits,
+    ) -> Vec<(&'a view::Account, Money)> {
+        accounts
+            .iter()
+            .filter(|account| !account.postable())
+            .filter_map(|account| match self.amount(account.id, units) {
+                Amount::Debit(m) => Some((account, m)),
+                Amount::Credit(m) => Some((account, -m)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The accounts the contract's rows name, in the grid's order, so a

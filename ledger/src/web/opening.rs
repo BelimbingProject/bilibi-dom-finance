@@ -423,8 +423,13 @@ impl Opening {
                     self.paste_text.clear();
                     self.paste = None;
                 } else if text != self.paste_text {
+                    let codes = self
+                        .units_and_accounts(r.scope)
+                        .await?
+                        .map(|(_, _, accounts)| accounts.into_iter().map(|a| a.code).collect())
+                        .unwrap_or_default();
                     self.paste_text = text.to_owned();
-                    self.paste = Some(Paste::new(text));
+                    self.paste = Some(Paste::new(text, codes));
                 }
             }
             "paste_headed" => {
