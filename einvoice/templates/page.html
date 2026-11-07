@@ -4,5 +4,6 @@
 {% call ui::page(id=page_id, variant=variant) %}
 <span id="{{ page_id }}-state" data-history="params" hidden></span>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% for part in parts %}{{ part }}{% endfor %}
+{#- The header, then the sections a standard gap apart. -#}
+{% for part in parts %}{% if loop.first %}{{ part }}<div class="space-y-4">{% else %}{{ part }}{% endif %}{% endfor %}</div>
 {% endcall %}

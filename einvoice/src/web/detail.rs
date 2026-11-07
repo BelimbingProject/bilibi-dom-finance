@@ -1,9 +1,10 @@
 //! Bilimbi `Web.DocumentLive`: immutable snapshots and freshly authorized actions.
 use super::*;
 use crate::{Attention, DocumentView, PartySnapshot, StatusEvent, CANCEL, SUBMIT, VIEW};
+use bilibi_finance_ledger::Money;
 use bilibi_ui::{
-    params, BuiltinColumn, ConfirmDialog, EmptyState, Fact, Facts, Field, FlashMap, InputKind,
-    Modal, RecordLink, StatusKind, NO_FLASH,
+    params, BackLink, BuiltinColumn, Button, ButtonVariant, ConfirmDialog, EmptyState, Fact, Facts,
+    Field, FlashMap, IconButton, InputKind, Modal, RecordLink, StatusKind, NO_FLASH,
 };
 use std::collections::HashMap;
 
@@ -38,18 +39,109 @@ struct View<'a> {
     totals: Html,
     sources: Html,
     events: Html,
-    attention: Vec<(&'static str, String)>,
+    attention: Vec<(&'static str, Html)>,
     dialog: Html,
     flash: FlashMap<'a>,
 }
 
-#[derive(Template)]
-#[template(path = "document_actions.html")]
+/// What the document's header offers.
 struct Actions {
     submit: bool,
     refresh: bool,
     cancel: bool,
     pdf_href: Option<String>,
+}
+
+impl Actions {
+    /// Back, the document's own actions as icon buttons with their names as
+    /// tooltips, then the one primary verb (Submit to authority) at the end.
+    fn render(&self) -> Result<Html> {
+        let mut html = render(BackLink {
+            href: ADDRESS,
+            id: "einvoice-document-back",
+            title: "Back to e-invoices",
+            ..BackLink::default()
+        })?;
+        let mut icon = |id: &str, icon: &str, label: &str, event: &str, href: &str| {
+            render(IconButton {
+                id,
+                event,
+                href,
+                button_type: if href.is_empty() { "button" } else { "" },
+                title: label,
+                ..IconButton::new(icon, label)
+            })
+            .map(|button| html.push(&button))
+        };
+        if self.refresh {
+            icon(
+                "einvoice-document-refresh",
+                "arrow-path",
+                "Refresh status",
+                "refresh",
+                "",
+            )?;
+        }
+        if self.cancel {
+            icon(
+                "einvoice-document-open-cancel",
+                "x-mark",
+                "Cancel document",
+                "open_cancel",
+                "",
+            )?;
+        }
+        icon(
+            "einvoice-document-generate-pdf",
+            "document-plus",
+            "Generate PDF",
+            "generate_pdf",
+            "",
+        )?;
+        if let Some(link) = &self.pdf_href {
+            icon(
+                "einvoice-document-download-pdf",
+                "arrow-down-tray",
+                "Download PDF",
+                "",
+                link,
+            )?;
+        }
+        if self.submit {
+            html.push(&render(Button {
+                id: "einvoice-document-submit",
+                event: "submit",
+                button_type: "button",
+                variant: ButtonVariant::Primary,
+                body: Html::text("Submit to authority"),
+                ..Button::default()
+            })?);
+        }
+        Ok(html)
+    }
+}
+
+/// A ledger entry this document posted or reversed, linked to its journal.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="text-link hover:underline">{{ text }}</a>"#,
+    ext = "html"
+)]
+struct EntryById<'a> {
+    id: i64,
+    text: &'a str,
+}
+
+/// A line on the page with a link to where it is acted on.
+#[derive(Template)]
+#[template(
+    source = r#"{{ text }} <a href="{{ href }}" class="text-link hover:underline">{{ link }}</a>"#,
+    ext = "html"
+)]
+struct WithLink<'a> {
+    text: &'a str,
+    href: &'a str,
+    link: &'a str,
 }
 
 #[derive(Template)]
@@ -126,19 +218,30 @@ fn party_lines(p: &PartySnapshot) -> Vec<String> {
     .filter(|v| !v.is_empty())
     .collect()
 }
-fn event_detail(e: &StatusEvent) -> String {
-    [
+/// An event's facts; the ledger entry it names is a link to its journal.
+fn event_detail(e: &StatusEvent) -> Result<Html> {
+    let text = [
         e.authority_status.as_ref().map(|v| format!("status {v}")),
         e.submission_uid.as_ref().map(|v| format!("submission {v}")),
         e.document_uuid.as_ref().map(|v| format!("UUID {v}")),
-        e.ledger_entry_id.map(|v| format!("entry #{v}")),
         e.http_status.map(|v| format!("HTTP {v}")),
         e.reason.clone(),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
-    .join(" · ")
+    .join(" · ");
+    let mut html = Html::text(&text);
+    if let Some(id) = e.ledger_entry_id {
+        if !text.is_empty() {
+            html.push(&Html::text(" · "));
+        }
+        html.push(&render(EntryById {
+            id,
+            text: "Open journal",
+        })?);
+    }
+    Ok(html)
 }
 fn actor(e: &StatusEvent, people: &bilibi_finance_ledger::People) -> String {
     match (e.actor_type.as_str(), e.actor_user_id) {
@@ -147,7 +250,33 @@ fn actor(e: &StatusEvent, people: &bilibi_finance_ledger::People) -> String {
         _ => "—".into(),
     }
 }
-fn attention(flag: Attention) -> (&'static str, String) {
+/// A posting or reversal that needs attention is retried on the
+/// reconciliation page, at this document's row.
+fn attention(flag: Attention, id: i64) -> Result<(&'static str, Html)> {
+    let (key, message) = attention_text(flag);
+    let retry = match flag {
+        Attention::Unposted | Attention::PostingFailed => Some((
+            format!("/finance/einvoice/reconciliation#einvoice-unposted-{id}"),
+            "Go to posting retry",
+        )),
+        Attention::Unreversed | Attention::ReversalFailed => Some((
+            format!("/finance/einvoice/reconciliation#einvoice-unreversed-{id}"),
+            "Go to reversal retry",
+        )),
+        _ => None,
+    };
+    let html = match retry {
+        Some((href, link)) => render(WithLink {
+            text: &message,
+            href: &href,
+            link,
+        })?,
+        None => Html::text(&message),
+    };
+    Ok((key, html))
+}
+
+fn attention_text(flag: Attention) -> (&'static str, String) {
     let authority = Einvoice::authority();
     match flag {
         Attention::Overdue => (
@@ -170,7 +299,7 @@ fn attention(flag: Attention) -> (&'static str, String) {
         ),
         Attention::PostingFailed => (
             "posting_failed",
-            "The ledger posting failed; see the last posting event.".into(),
+            "The ledger posting failed; the last posting event says why.".into(),
         ),
         Attention::Unreversed => (
             "unreversed",
@@ -206,7 +335,8 @@ impl Detail {
                     ("amount", "Amount"),
                     ("tax", "Tax"),
                 ],
-            )?,
+            )?
+            .with_record_fields([bilibi_ui::RecordField::new("unit", "Unit")]),
             sources: columns(
                 "einvoice-sources",
                 &[
@@ -428,8 +558,12 @@ impl Detail {
             })?;
             view.supplier = party_lines(&d.document.supplier);
             view.buyer = party_lines(&d.document.buyer);
-            view.attention = d.attention.iter().copied().map(attention).collect();
-            view.actions = render(Actions {
+            view.attention = d
+                .attention
+                .iter()
+                .map(|flag| attention(*flag, d.document.id))
+                .collect::<Result<_>>()?;
+            view.actions = Actions {
                 submit: can_submit
                     && ["issued", "released", "refused", "invalid"].contains(&d.status.as_str())
                     && !d.submission_queued
@@ -441,7 +575,8 @@ impl Detail {
                     .pdf_artifact_id
                     .as_ref()
                     .map(|artifact| format!("{ADDRESS}/{}/pdf/{artifact}", d.document.id)),
-            })?;
+            }
+            .render()?;
             let at = |element, at: Option<jiff::Timestamp>| -> Result<Html> {
                 at.map_or(Ok(Html::text("—")), |at| {
                     render(Time {
@@ -474,12 +609,23 @@ impl Detail {
                 Fact {
                     title: "Ledger entry",
                     id: "",
-                    value: Html::text(&format!(
-                        "{}{}",
-                        d.ledger_entry_id.map_or("—".into(), |id| format!("#{id}")),
-                        d.reversal_entry_id
-                            .map_or(String::new(), |id| format!(" (reversed by #{id})"))
-                    )),
+                    value: match (d.ledger_entry_id, d.reversal_entry_id) {
+                        (None, _) => Html::text("—"),
+                        (Some(id), reversal) => {
+                            let mut html = render(EntryById {
+                                id,
+                                text: "Open journal",
+                            })?;
+                            if let Some(reversal) = reversal {
+                                html.push(&Html::text(" · "));
+                                html.push(&render(EntryById {
+                                    id: reversal,
+                                    text: "Open reversal",
+                                })?);
+                            }
+                            html
+                        }
+                    },
                 },
             ];
             if d.recognised_by_source {
@@ -522,23 +668,25 @@ impl Detail {
                     row.cell("number", Cell::text(l.line_number.to_string()))
                         .cell("description", Cell::text(&l.description))
                         .cell("classification", Cell::text(&l.classification_code))
+                        // The stored precision and unit code are the
+                        // authority's; the unit waits in the column picker.
+                        .cell("quantity", Cell::text(l.quantity.normalize().to_string()))
+                        .cell("unit", Cell::text(l.unit_code.as_deref().unwrap_or("—")))
                         .cell(
-                            "quantity",
-                            Cell::text(format!(
-                                "{} {}",
-                                l.quantity,
-                                l.unit_code.as_deref().unwrap_or("")
-                            )),
+                            "unit_price",
+                            Cell::text(Money::display_decimal(l.unit_price, None)),
                         )
-                        .cell("unit_price", Cell::text(l.unit_price.to_string()))
-                        .cell("amount", Cell::text(l.line_extension_amount.to_string()))
+                        .cell(
+                            "amount",
+                            Cell::text(Money::display_decimal(l.line_extension_amount, None)),
+                        )
                         .cell(
                             "tax",
                             Cell::text(format!(
-                                "{} {}% = {}",
+                                "{} · {}% · {}",
                                 l.tax_type,
-                                l.tax_rate.map_or("—".into(), |r| r.to_string()),
-                                l.tax_amount
+                                l.tax_rate.map_or("—".into(), |r| r.normalize().to_string()),
+                                Money::display_decimal(l.tax_amount, None)
                             )),
                         )
                 })
@@ -645,7 +793,7 @@ impl Detail {
                                 body: Html::text(&sentence(&e.event)),
                             })?,
                         )
-                        .cell("detail", Cell::text(event_detail(e)))
+                        .slot("detail", event_detail(e)?)
                         .cell("by", Cell::text(actor(e, &people))),
                 );
             }

@@ -62,11 +62,10 @@ struct View {
     unavailable: bool,
 }
 
-/// Bilimbi's header links to the two other document views.
+/// The header's buttons to the two other document views.
 #[derive(Template)]
 #[template(
-    source = r#"<a id="einvoice-documents-consolidation" href="/finance/einvoice/consolidation">Consolidation</a>
-<a id="einvoice-documents-reconciliation" href="/finance/einvoice/reconciliation">Reconciliation</a>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(id="einvoice-documents-consolidation", href="/finance/einvoice/consolidation") %}Consolidation{% endcall %}{% call ui::button(id="einvoice-documents-reconciliation", href="/finance/einvoice/reconciliation") %}Reconciliation{% endcall %}"#,
     ext = "html"
 )]
 struct HeaderLinks;
@@ -80,7 +79,6 @@ impl Index {
             ("buyer", "Counterparty"),
             ("payable_amount", "Payable"),
             ("status", "Status"),
-            ("environment", "Environment"),
         ]
         .into_iter()
         .map(|(key, name)| {
@@ -95,8 +93,11 @@ impl Index {
         Ok(Self {
             pages: pages.clone(),
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
+            // Every row of a company is in the same environment; the column
+            // waits in the picker.
             columns: ListColumns::mount("einvoice-documents", columns)
-                .map_err(|_| Error::Internal)?,
+                .map_err(|_| Error::Internal)?
+                .with_record_fields([bilibi_ui::RecordField::new("environment", "Environment")]),
             documents: None,
             framed,
         })

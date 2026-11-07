@@ -1,7 +1,0 @@
-{% import "components.html" as ui %}
-<a id="einvoice-document-back" href="/finance/einvoice/documents">All documents</a>
-{% if submit %}{% call ui::button(id="einvoice-document-submit", event="submit", variant=bilibi_ui::ButtonVariant::Primary) %}Submit to authority{% endcall %}{% endif %}
-{% if refresh %}{% call ui::button(id="einvoice-document-refresh", event="refresh") %}Refresh status{% endcall %}{% endif %}
-{% if cancel %}{% call ui::button(id="einvoice-document-open-cancel", event="open_cancel", variant=bilibi_ui::ButtonVariant::Danger) %}Cancel document{% endcall %}{% endif %}
-{% call ui::button(id="einvoice-document-generate-pdf", event="generate_pdf") %}Generate PDF{% endcall %}
-{% if let Some(link) = pdf_href %}<a id="einvoice-document-download-pdf" href="{{ link }}" download>Download PDF</a>{% endif %}
