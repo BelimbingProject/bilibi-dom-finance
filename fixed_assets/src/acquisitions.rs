@@ -250,8 +250,6 @@ impl FixedAssets {
 }
 /// Most acquisition debits a register is offered at once, newest first.
 const SOURCE_LIMIT: usize = 500;
-/// Entries read from the cost account before the list stops, in pages of 500.
-const SOURCE_SCAN: usize = 20_000;
 
 impl FixedAssets {
     /// The posted debits a category's cost account still has to register,
@@ -303,10 +301,8 @@ impl FixedAssets {
             account_id: Some(cost_account),
             ..Default::default()
         };
-        let mut scanned = 0;
         loop {
             let entries = self.ledger.list_entries_on(c, s, company, &query).await?;
-            scanned += entries.len();
             for entry in &entries {
                 if Some(entry.id) == opening
                     || entry.reversed_by_entry_id.is_some()
@@ -383,23 +379,31 @@ impl FixedAssets {
                     });
                 }
             }
+            if found.len() >= 2 * SOURCE_LIMIT {
+                newest_first(&mut found);
+                found.truncate(SOURCE_LIMIT);
+            }
             match entries.last() {
-                Some(last) if entries.len() == 500 && scanned < SOURCE_SCAN => {
+                Some(last) if entries.len() == 500 => {
                     query.after = Some((last.entry_date, last.id));
                 }
                 _ => break,
             }
         }
-        found.sort_by(|a, b| {
-            (b.acquisition_date, b.entry_number, a.line_number).cmp(&(
-                a.acquisition_date,
-                a.entry_number,
-                b.line_number,
-            ))
-        });
+        newest_first(&mut found);
         found.truncate(SOURCE_LIMIT);
         Ok(found)
     }
+}
+
+fn newest_first(found: &mut [AcquisitionSource]) {
+    found.sort_by(|a, b| {
+        (b.acquisition_date, b.entry_number, a.line_number).cmp(&(
+            a.acquisition_date,
+            a.entry_number,
+            b.line_number,
+        ))
+    });
 }
 
 /// Where an acquisition debit was posted from.
