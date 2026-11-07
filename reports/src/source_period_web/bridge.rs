@@ -2,7 +2,7 @@
 //! `finance.reports.source_period.bridge` so a person and an agent see the
 //! same months, figures and differences.
 use super::*;
-use crate::source_period_bridge::BRIDGE;
+use crate::source_period::BRIDGE;
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_ui::{Badge, BadgeKind, Card, SectionHeading};
 use rust_decimal::Decimal;

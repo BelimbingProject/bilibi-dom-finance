@@ -6,7 +6,7 @@
 //! netted away, and the accountant explains it. The bridge reads retained
 //! evidence and the ledger's facade only: it posts, corrects and certifies
 //! nothing.
-use crate::source_period::{authorise, company};
+use super::{authorise, company};
 use crate::{MODULE, VIEW};
 use bilibi_agent_api::{
     Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, ReadHandler,

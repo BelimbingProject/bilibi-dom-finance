@@ -44,7 +44,6 @@ mod pack_owner;
 mod setup;
 mod setup_page;
 mod source_period;
-mod source_period_bridge;
 mod source_period_web;
 mod statement;
 mod web;

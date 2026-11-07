@@ -1,5 +1,8 @@
 //! Retained conversion evidence. These records are source summaries, never
 //! ledger entries, tax returns, submissions, payroll runs or remittances.
+mod bridge;
+pub(crate) use bridge::BRIDGE;
+
 use crate::{Reports, MODULE, VIEW};
 use bilibi_agent_api::{
     Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, ReadHandler,
