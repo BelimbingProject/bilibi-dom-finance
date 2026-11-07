@@ -196,7 +196,14 @@ impl Setup {
     }
 
     /// One inline field of this page: its outcome is kept under `key`.
-    fn inline(&self, key: &str, field: &str, label: &str, value: String, record: &str) -> InlineField {
+    fn inline(
+        &self,
+        key: &str,
+        field: &str,
+        label: &str,
+        value: String,
+        record: &str,
+    ) -> InlineField {
         let mut inline = InlineField::new(format!("payables-{key}"), field, label, value)
             .version(0)
             .status(self.statuses.get(key));
@@ -491,7 +498,8 @@ impl Setup {
             id: "payables-tax-codes-heading",
             title: "Tax codes",
             class: "mt-6",
-            description: "A bill line picks a tax code. Posted bills keep the rate they were recorded with.",
+            description:
+                "A bill line picks a tax code. Posted bills keep the rate they were recorded with.",
             actions: if self.can_manage {
                 render(Button {
                     id: "payables-tax-add",
@@ -680,7 +688,8 @@ impl Setup {
                 input,
             )
             .await?;
-        self.statuses.put(key, commit_status(written, label, &shown));
+        self.statuses
+            .put(key, commit_status(written, label, &shown));
         Ok(())
     }
 
@@ -744,7 +753,8 @@ impl Setup {
                 input,
             )
             .await?;
-        self.statuses.put(key, commit_status(written, label, &shown));
+        self.statuses
+            .put(key, commit_status(written, label, &shown));
         Ok(())
     }
 
