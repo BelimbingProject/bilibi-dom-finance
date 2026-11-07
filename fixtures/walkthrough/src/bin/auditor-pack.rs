@@ -439,6 +439,42 @@ async fn main() -> Outcome<()> {
         .read_auditor_pack(&manager, COMPANY, "not-an-artifact")
         .await
         .is_err());
+    {
+        let client = db.get().await?;
+        client
+            .execute(
+                "UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1",
+                &[],
+            )
+            .await?;
+        let archived_pack = reports
+            .export_auditor_pack(&manager, COMPANY, date(2026, 3, 31))
+            .await?;
+        let archived_bytes = reports
+            .read_auditor_pack(&manager, COMPANY, &archived_pack.id)
+            .await?;
+        inspect(&archived_bytes.bytes)?;
+        match ledger
+            .post_entry(
+                &manager,
+                COMPANY,
+                &entry(debit, credit, amount),
+                &PostOptions::default(),
+            )
+            .await
+        {
+            Err(bilibi_finance_ledger::LedgerError::CompanyArchived) => {
+                println!("Archived company: pack generated and read, posting refused")
+            }
+            other => panic!("Expected CompanyArchived for a posting, received {other:?}"),
+        }
+        client
+            .execute(
+                "UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1",
+                &[],
+            )
+            .await?;
+    }
     let downloads = services.get::<DownloadService<Scope, Error>>("finance/reports.downloads")?;
     let paths = HashMap::from([("artifact_id".into(), artifact.id.clone())]);
     let empty = HashMap::new();
