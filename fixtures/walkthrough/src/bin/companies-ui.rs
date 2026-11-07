@@ -48,6 +48,9 @@ async fn main() -> Outcome<()> {
     bilibi_finance_walkthrough_fixture::without_step_up(&app.services)?;
     let services = &app.services;
     install(&db, services).await?;
+    for company in 3..=5 {
+        bilibi_finance_walkthrough_fixture::give_desk(&db, 1, 1, company).await?;
+    }
     let manager = sign_in(&db, services, 1, 1).await?;
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let payables = services.get::<Payables>(bilibi_finance_payables::SERVICE)?;

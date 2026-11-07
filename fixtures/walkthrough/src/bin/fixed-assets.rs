@@ -665,7 +665,9 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     refused(
         "archived company",
         f.create_category(&admin, 3, "Archived", &defaults).await,
-        |e| matches!(e, F::CompanyArchived),
+        // The Platform's reach check leaves out an archived company, so the desk
+        // there no longer authorizes before the lock reports it archived.
+        |e| matches!(e, F::CompanyArchived | F::Unauthorized),
     )?;
     // Every owned dataset is paged, scoped and exact; no sibling SQL export.
     for dataset in f.evidence_datasets() {

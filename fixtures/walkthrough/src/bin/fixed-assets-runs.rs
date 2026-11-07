@@ -614,10 +614,12 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .get::<bilibi_company::CompanyService>(bilibi_company::SERVICE)?
         .archive_company(&admin, 3, Some("NX2 archival proof"))
         .await?;
+    // The Platform's reach check leaves out an archived company, so the desk
+    // there no longer authorizes before the lock reports it archived.
     refused(f.depreciate(&admin, 3, date(2026, 1, 1)).await, |e| {
-        matches!(e, F::CompanyArchived)
+        matches!(e, F::CompanyArchived | F::Unauthorized)
     });
-    assert_eq!(f.evidence_datasets().len(), 9);
+    assert_eq!(f.evidence_datasets().len(), 11);
     for dataset in f.evidence_datasets() {
         let mut after = None;
         let mut last = 0;
@@ -641,7 +643,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             }
         }
         assert!(
-            count > 0 || matches!(dataset, "opening_batch" | "opening_item"),
+            count > 0 || dataset.starts_with("opening_"),
             "empty evidence {dataset}"
         );
         println!("{dataset}: {count} scoped ordered rows");

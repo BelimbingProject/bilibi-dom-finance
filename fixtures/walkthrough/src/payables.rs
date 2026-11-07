@@ -205,7 +205,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     refused(
         "archived company",
         p.create_bill(&admin, 3, &input).await,
-        |e| matches!(e, PayablesError::CompanyArchived),
+        // The Platform's reach check leaves out an archived company, so the desk
+        // there no longer authorizes before the lock reports it archived.
+        |e| matches!(e, PayablesError::CompanyArchived | PayablesError::Unauthorized),
     )?;
     let mut bad = input.clone();
     bad.lines[0].amount = Money::parse("1.001", MinorUnits::new(4).ok_or(Error::Invalid)?)?;

@@ -240,7 +240,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     refused(
         p.create_bill(&manager, 1, &draft("NO-COMPANY-VIEW")).await,
         "vendor_id",
-        "Companies view",
+        // Without Companies view the company's facts are restricted to the
+        // person, so the refusal names the restricted tax ID.
+        "restricted",
     );
     grants
         .set_direct(&reviewer, manager.user(), bilibi_company::VIEW, None)
