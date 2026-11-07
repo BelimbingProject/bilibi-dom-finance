@@ -58,7 +58,7 @@ impl Vendors {
                     ("payable", "Payable account"),
                     ("expense", "Default expense"),
                     ("tax", "Default tax"),
-                    ("active", "Availability"),
+                    ("active", "Status"),
                     ("relationship", "Company record"),
                 ]
                 .into_iter()
@@ -262,7 +262,12 @@ impl Vendors {
     pub(super) async fn body(&self, s: &Scope) -> Result<String> {
         let mut actions = Html::EMPTY;
         if self.can_manage {
-            actions = Self::button("vendor-add", "show_vendor", "Add supplier", "", "")?;
+            actions = render(CreateButton {
+                noun: "Supplier",
+                id: "vendor-add",
+                event: "show_vendor",
+                ..CreateButton::default()
+            })?;
         }
         let mut body = render(Header {
             title: Html::text("Suppliers"),
@@ -346,7 +351,7 @@ impl Vendors {
             let mut row = FlexRow::new(v.id.to_string()).cell("code", Cell::text(&v.code));
             let mut company_body = render(ActionLink {
                 href: &v.party.path,
-                body: Html::text(&format!("{} · {}", v.party.name, v.party.status)),
+                body: Html::text(&v.party.name),
                 ..ActionLink::default()
             })?;
             if self.columns.mode() != RowMode::Compact {
@@ -540,17 +545,17 @@ impl Vendors {
             row = row.slot(
                 "active",
                 render(InlineChoice {
-                    field: self.inline(v, "active", "Availability", v.active.to_string()),
-                    display: Html::text(if v.active { "Available" } else { "Unavailable" }),
+                    field: self.inline(v, "active", "Status", v.active.to_string()),
+                    display: bilibi_ui::active_badge(v.active),
                     editor: render(
                         Field::named("active")
                             .id(format!("vendor-{}-active-input", v.id))
-                            .label("Availability")
+                            .label("Status")
                             .kind(InputKind::Select)
                             .value(v.active.to_string())
                             .options(vec![
-                                Choice::new("Available", "true"),
-                                Choice::new("Unavailable", "false"),
+                                Choice::new("Active", "true"),
+                                Choice::new("Inactive", "false"),
                             ]),
                     )?,
                 })?,
@@ -563,7 +568,9 @@ impl Vendors {
             )
             .await?;
             let relation = match relation {
-                bilibi_finance_ledger::PartyRelation::Recorded { .. } => Html::text("Recorded"),
+                // Recorded is the normal case and says nothing; only a missing
+                // relationship needs the person.
+                bilibi_finance_ledger::PartyRelation::Recorded { .. } => Html::EMPTY,
                 bilibi_finance_ledger::PartyRelation::Hidden => {
                     Html::text("No access to company relationships")
                 }
@@ -594,7 +601,7 @@ impl Vendors {
             PageCounts::new(self.list.page, self.list.page_size, total),
             &[25, 50, 100],
         ))?);
-        body.push(&render(SectionHeading{title:"Supplier keys on old bills",description:"Match each key to a supplier after checking its details and similar keys. A match cannot be undone. Bills, payment keys and aging groups stay as they are.",..SectionHeading::default()})?);
+        body.push(&render(SectionHeading{class:"mt-6",title:"Supplier keys on old bills",description:"Match each key to a supplier after checking its details and similar keys. A match cannot be undone. Bills, payment keys and aging groups stay as they are.",..SectionHeading::default()})?);
         let mut rows = vec![];
         for h in &self.history {
             let snapshots = h

@@ -1,13 +1,10 @@
-{# Record a bill or a debit note. Shared components own the DOM. #}
-{% import "components.html" as ui %}
+{# Record a bill or a debit note, or correct a draft: the body of the Bills
+   list's dialog, as New invoice is the Invoices list's. Shared components own the DOM. #}
 {% import "forms.html" as form %}
-{% call ui::page(id="payables-record", variant=bilibi_ui::PageVariant::Form) %}
-{# A new bill or debit note has no stable record yet, so this page is not pinned. #}
-{% call ui::header(subtitle=subtitle, actions=back) %}{{ title }}{% endcall %}
 {% if let Some(summary) = summary %}{{ summary|safe }}{% endif %}
 {% if let Some(notice) = notice %}{{ notice|safe }}{% endif %}
 {% if let Some(text) = replaces %}<p id="payables-record-replaces" class="mb-3 text-sm text-ink-muted">{{ text }}</p>{% endif %}
-<form id="payables-record-form" data-event="edit" data-change data-submit-event="save" class="space-y-3">
+<form id="payables-record-form" data-event="edit" data-change data-submit-event="save" class="mt-4 space-y-3">
 {% call form::section(labelledby="payables-record-supplier-heading", heading=party_heading) %}
 {% if let Some(pick) = suppliers %}{% call form::combobox(combo=pick) %}{% endcall %}{% endif %}
 <div class="grid gap-x-6 gap-y-2 md:grid-cols-2">
@@ -40,6 +37,5 @@
 {{ totals|safe }}
 {% endcall %}
 {% endif %}
-<div class="flex flex-wrap items-center gap-2">{{ save|safe }}</div>
+{{ save|safe }}
 </form>
-{% endcall %}

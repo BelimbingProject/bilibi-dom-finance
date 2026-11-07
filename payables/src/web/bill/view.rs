@@ -5,7 +5,7 @@
 //! primary verb for its state in the header
 //! (`bilibi_finance_ledger::DocumentLayout`, `RecordActions`).
 use super::{
-    super::{format as f, render, INDEX, NEW_BILL, NEW_NOTE, NEW_PAYMENT},
+    super::{format as f, render, INDEX, NEW_PAYMENT},
     table, Attention, Bill, Corrects, Dialog, DialogView, ExceptionView, MatchResult, Missing,
 };
 use crate::{
@@ -179,7 +179,7 @@ impl Bill {
                     items.push(RecordAction::local(
                         "pencil-square",
                         "Correct draft",
-                        format!("{NEW_BILL}?correct={}", d.id),
+                        format!("{INDEX}?correct={}", d.id),
                     ));
                 }
             }
@@ -209,7 +209,7 @@ impl Bill {
                 if can.create {
                     items.push(RecordAction::link(
                         "Record debit note",
-                        format!("{NEW_NOTE}?bill={}", d.id),
+                        format!("{INDEX}?debit_note={}", d.id),
                     ));
                 }
             }

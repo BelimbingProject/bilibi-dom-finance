@@ -1,6 +1,6 @@
 //! Bilimbi Payables.Web.BillsLive: filters, paging and built-in ListColumns.
 use super::opening::Opening;
-use super::{company, format, render, Pages, INDEX, NEW_BILL, NEW_NOTE};
+use super::{bill_form::BillForm, company, format, render, Pages, INDEX};
 use crate::{DocumentPageRow, APPROVE_DOCUMENTS, CREATE_DOCUMENTS, VIEW};
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -49,6 +49,11 @@ pub(super) struct Bills {
     columns: ListColumns,
     documents: Vec<DocumentPageRow>,
     opening: Option<Opening>,
+    /// The New bill / debit note / correction dialog while it is open.
+    record: Option<Box<BillForm>>,
+    /// What an address asked the dialog to open on (`?record=bill`,
+    /// `?correct=<draft>`, `?debit_note=<bill>`), opened once the list loads.
+    requested: Option<(bool, HashMap<String, String>)>,
     can_open: bool,
     success: bool,
     total: u64,
@@ -90,6 +95,8 @@ impl Bills {
                 .map_err(|_| Error::Internal)?,
             documents: vec![],
             opening: None,
+            record: None,
+            requested: requested(query),
             can_open: false,
             success: false,
             total: 0,
@@ -152,7 +159,7 @@ impl Bills {
         if self.can_create {
             actions.push(&render(CreateButton {
                 noun: "Bill",
-                href: NEW_BILL,
+                event: "show_record",
                 id: "payables-bills-new",
                 ..CreateButton::default()
             })?);
@@ -312,6 +319,9 @@ impl Bills {
         if let Some(opening) = &mut self.opening {
             content.push(&opening.body(scope).await?);
         }
+        if let Some(record) = &self.record {
+            content.push(&record.dialog()?);
+        }
         View {
             title_actions: bilibi_ui::Html::EMPTY,
             actions,
@@ -338,7 +348,7 @@ impl Bills {
         if d.document_type == "bill" && d.status == "posted" && self.can_create {
             items.push(RecordAction::link(
                 "Record debit note",
-                format!("{NEW_NOTE}?bill={}", d.id),
+                format!("{INDEX}?debit_note={}", d.id),
             ));
         }
         if self.can_match
@@ -367,11 +377,77 @@ impl Bills {
     }
 }
 
+impl Bills {
+    /// Opens the bill dialog: a new bill, or what an address asked for.
+    pub(super) async fn open_record(
+        &mut self,
+        scope: &Scope,
+        note: bool,
+        query: HashMap<String, String>,
+    ) -> Result<()> {
+        if !self.pages.allowed(scope, CREATE_DOCUMENTS).await? {
+            return Ok(());
+        }
+        let mut form = BillForm::new(self.pages.clone(), note, &query)?;
+        form.reload(scope).await?;
+        self.record = Some(Box::new(form));
+        Ok(())
+    }
+
+    /// Opens the dialog an address asked for, once.
+    pub(super) async fn open_requested(&mut self, scope: &Scope) -> Result<()> {
+        if let Some((note, query)) = self.requested.take() {
+            self.open_record(scope, note, query).await?;
+        }
+        Ok(())
+    }
+}
+
+/// `?record=bill` (a new bill), `?correct=<draft>` or `?debit_note=<bill>`:
+/// the dialog an address opens, as `BillForm::new` reads it.
+fn requested(query: &HashMap<String, String>) -> Option<(bool, HashMap<String, String>)> {
+    let id = |key: &str| params::positive_id(query.get(key).map(String::as_str));
+    if let Some(bill) = id("debit_note") {
+        return Some((true, HashMap::from([("bill".into(), bill.to_string())])));
+    }
+    if let Some(draft) = id("correct") {
+        return Some((
+            false,
+            HashMap::from([("correct".into(), draft.to_string())]),
+        ));
+    }
+    (query.get("record").map(String::as_str) == Some("bill")).then(|| (false, HashMap::new()))
+}
+
 impl LiveState<Scope, Error> for Bills {
     fn update<'a>(&'a mut self, r: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             if let LiveInput::Event(value) = r.input {
-                match value["type"].as_str().unwrap_or("") {
+                let kind = value["type"].as_str().unwrap_or("");
+                if kind == "show_record" {
+                    self.open_record(r.scope, false, HashMap::new()).await?;
+                } else if kind == "cancel_record" {
+                    self.record = None;
+                } else if matches!(kind, "edit" | "add_line" | "remove_line" | "save") {
+                    let Some(record) = self.record.as_mut() else {
+                        return Err(Error::Invalid);
+                    };
+                    if let Some(to) = record.act(r.scope, r.credential, value).await? {
+                        let message = record.saved();
+                        self.record = None;
+                        return Ok(LiveBody {
+                            redirect: Some(to),
+                            flash: Some((StatusKind::Success, message)),
+                            ..LiveBody::default()
+                        });
+                    }
+                    return Ok(LiveBody {
+                        html: self.body(r.scope).await?,
+                        query: self.list.to_params(),
+                        ..LiveBody::default()
+                    });
+                }
+                match kind {
                     "open_opening" if self.can_open => {
                         self.opening = Some(Opening::new(self.pages.clone())?)
                     }
@@ -433,13 +509,17 @@ impl LiveState<Scope, Error> for Bills {
                         self.columns.handle(&params::string_values(v));
                         false
                     }
-                    Some("open_opening" | "close_opening" | "clear-flash") => false,
+                    Some(
+                        "open_opening" | "close_opening" | "clear-flash" | "show_record"
+                        | "cancel_record",
+                    ) => false,
                     _ => return Err(Error::Invalid),
                 },
             };
             if reload {
                 self.reload(r.scope).await?;
             }
+            self.open_requested(r.scope).await?;
             Ok(LiveBody {
                 html: self.body(r.scope).await?,
                 query: self.list.to_params(),
