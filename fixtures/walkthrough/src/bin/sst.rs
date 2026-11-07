@@ -1079,14 +1079,10 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let readable = sst.get_registration(&manager, COMPANY).await;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
-    // The Platform's reach check leaves out an archived company, so a person
-    // with a desk there is refused as unauthorized before the lock reports it.
     refused("an archived company", archived, |e| {
-        matches!(e, E::CompanyArchived | E::Unauthorized)
+        matches!(e, E::CompanyArchived)
     })?;
-    // TODO(platform): an archived company is meant to read, but the Platform's
-    // reach check now refuses a desk there for reads too.
-    assert!(matches!(readable, Ok(Some(_)) | Err(E::Unauthorized)));
+    assert_eq!(readable?.map(|r| r.version), Some(4));
 
     // Every row is audited.
     for (table, kind) in [

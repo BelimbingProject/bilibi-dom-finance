@@ -1092,12 +1092,6 @@ impl Reports {
         match self.settings.get(&**client, scope, target, SECTIONS).await {
             Ok(resolved) => Ok(resolved.value),
             Err(Error::Invalid) => Ok(Value::Array(Vec::new())),
-            // TODO(platform): Base Settings proves a company target only while
-            // it is unarchived, even for a read, but an archived company's
-            // reports stay readable (the caller authorized the company
-            // already): they list their accounts under no section until
-            // Settings resolves an archived company's values.
-            Err(Error::Forbidden) => Ok(Value::Array(Vec::new())),
             Err(error) => Err(refusal(error)),
         }
     }

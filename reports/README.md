@@ -68,7 +68,7 @@ runs in an audited mutation transaction holding the company's lock, so an
 archived company is `CompanyArchived`. `finance.reports.sign-off` records an
 accountant's attestation against an issued conversion report.
 `finance.reports.reports-export` generates and downloads the auditor pack, with
-ledger view required. All nine source views enable the full evidence pack;
+ledger view required, also for an archived company (its books stay available for audit). All nine source views enable the full evidence pack;
 otherwise it produces a clearly labelled ledger-and-reports pack. All three
 Reports capabilities are granted to `tenant_owner`.
 
@@ -203,7 +203,7 @@ Run the page-service proof on a fresh disposable database with `DATABASE_URL=…
 
 The page's company is the session's current company (`Scope::current_company()`), as on the other Finance pages. A scope with no current company gets an explicit missing-company state. The page proof creates and binds the independent reviewer's Company 001 affiliation through the Core Affiliation and User facades; its administrator stays unaffiliated so this missing-context case remains covered.
 
-Archived-company history remains readable. Until Base Settings accepts an archived company for display reads, these pages fall back to the user's tenant display clock, as the report facade already does for the unavailable company layout. The ledger still refuses every archived-company write; this display fallback only keeps that refusal visible on the live page.
+Archived-company history remains readable to the people with a desk there, under the company's own display clock and report layout (Base Settings resolves an archived company's values for reads). The ledger refuses every archived-company write as `CompanyArchived`, and the live page shows that refusal.
 
 ## Auditor pack
 
