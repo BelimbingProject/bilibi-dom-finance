@@ -41,6 +41,9 @@ impl Source for Documents {
             })
         })
     }
+    fn href(&self, id: i64) -> Option<String> {
+        Some(format!("/finance/payables/bills/{id}"))
+    }
 }
 inventory::submit! {Contribution::new(SOURCES,DOCUMENT_SOURCE,Provenance {module:MODULE,source:file!(),line:line!()},&SourceDefinition {source:&Documents})}
 
@@ -81,6 +84,9 @@ impl Source for Payments {
                 })
             })
         })
+    }
+    fn href(&self, id: i64) -> Option<String> {
+        Some(format!("/finance/payables/payments/{id}"))
     }
 }
 inventory::submit! {Contribution::new(SOURCES,PAYMENT_SOURCE,Provenance {module:MODULE,source:file!(),line:line!()},&SourceDefinition {source:&Payments})}

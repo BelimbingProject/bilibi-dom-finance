@@ -1,9 +1,10 @@
 //! `/finance/attachments` (Bilimbi `Finance.Attachments.Web.IndexLive`): the
-//! company's source documents by number with the record each supports, its
-//! file, SHA-256, retain-until and capture, a download link each, and the
-//! company's retention setting with its change history. The list is filtered
-//! by the kind of record and by standing; lengthening the retention is a
-//! facade call that re-asks its capability.
+//! company's source documents by number with the record each supports (linked
+//! to its page), its file, retain-until and capture (the SHA-256 waits in the
+//! column picker), a download link each, and the company's retention setting
+//! with its change history folded away. The list is filtered in the shared
+//! toolbar by the kind of record and by standing; lengthening the retention
+//! is a dialog whose save is a facade call that re-asks its capability.
 //!
 //! Attaching a file happens on the record's own page through the panel
 //! (`panel.rs`).
@@ -22,9 +23,10 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Badge, BadgeKind, BuiltinColumn, Cell, Choice, ColumnType, EmptyState, Field, Filter,
-    FlashMap, FlexRow, FlexTable, Html, InputKind, ListColumns, ListSpec, ListState, StatusKind,
-    TableEmpty, NO_FLASH,
+    params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice,
+    ColumnType, EmptyState, Field, Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Fold, Html,
+    InputKind, ListColumns, ListSpec, ListState, RecordField, StatusKind, TableEmpty,
+    ToolbarControl, NO_FLASH,
 };
 use std::{
     collections::HashMap,
@@ -69,7 +71,6 @@ fn attachment_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("record", "Record"),
         dated,
         BuiltinColumn::new("file", "File"),
-        BuiltinColumn::new("sha256", "SHA-256"),
         BuiltinColumn::new("kept_until", "Kept until"),
         captured,
         BuiltinColumn::new("standing", "Current"),
@@ -106,9 +107,12 @@ struct RetentionView {
     reason: String,
 }
 
+/// The "Lengthen retention" dialog.
 struct RetentionForm {
+    alert: Option<Html>,
     years: Field,
     reason: Field,
+    actions: Html,
 }
 
 #[derive(Template)]
@@ -117,6 +121,7 @@ struct View<'a> {
     title_actions: Html,
     flash: FlashMap<'a>,
     retention: Option<RetentionView>,
+    lengthen: Html,
     retention_form: Option<RetentionForm>,
     changes: Html,
     count: Option<usize>,
@@ -125,14 +130,26 @@ struct View<'a> {
     more: bool,
 }
 
+/// The record a file supports, linked to its page, then its kind muted.
 #[derive(Template)]
 #[template(
-    source = r#"{% import "forms.html" as form %}<form id="attachments-filter" data-event="filter" data-change class="flex gap-2">{% call form::input(field=source) %}{% endcall %}{% call form::input(field=status) %}{% endcall %}</form>"#,
+    source = r#"{% if let Some(href) = href %}<a href="{{ href }}" class="text-link hover:underline">{{ label }}</a>{% else %}{{ label }}{% endif %}{% if !kind.is_empty() %} <span class="text-ink-muted">{{ kind }}</span>{% endif %}"#,
     ext = "html"
 )]
-struct FilterForm {
-    source: Field,
-    status: Field,
+struct RecordCell<'a> {
+    href: Option<String>,
+    label: &'a str,
+    kind: &'a str,
+}
+
+/// The dialog's actions: Cancel, then the one verb at the end of the row.
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex w-full flex-wrap justify-end gap-2">{{ buttons|safe }}</div>"#,
+    ext = "html"
+)]
+struct DialogActions {
+    buttons: Html,
 }
 
 fn render(fragment: impl Template) -> Result<Html> {
@@ -169,6 +186,9 @@ struct Index {
     more: bool,
     draft_years: String,
     draft_reason: String,
+    /// The "Lengthen retention" dialog is open, with its refusal.
+    lengthening: bool,
+    dialog_alert: Option<String>,
     flash: Option<(StatusKind, String)>,
 }
 
@@ -177,8 +197,11 @@ impl Index {
         Ok(Self {
             pages: pages.clone(),
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
+            // The fingerprint is for an auditor checking a file; it waits
+            // in the column picker.
             columns: ListColumns::mount("attachments", attachment_columns())
-                .map_err(|_| Error::Internal)?,
+                .map_err(|_| Error::Internal)?
+                .with_record_fields([RecordField::new("sha256", "SHA-256")]),
             change_columns: ListColumns::mount("attachments-retention-changes", change_columns())
                 .map_err(|_| Error::Internal)?,
             shown: Vec::new(),
@@ -186,6 +209,8 @@ impl Index {
             more: false,
             draft_years: String::new(),
             draft_reason: String::new(),
+            lengthening: false,
+            dialog_alert: None,
             flash: None,
         })
     }
@@ -275,11 +300,11 @@ impl Index {
         for a in &self.shown {
             let mut row = FlexRow::new(a.id.to_string());
             row.dom_id = Some(format!("attachment-{}", a.id));
-            let record = format!(
-                "{} · {}",
-                a.source_label.as_deref().unwrap_or(&a.source),
-                a.document_label
-            );
+            let record = render(RecordCell {
+                href: self.pages.attachments.record_href(&a.source, a.document_id),
+                label: &a.document_label,
+                kind: a.source_label.as_deref().unwrap_or(&a.source),
+            })?;
             let date = a.document_date.to_string();
             let file = render(FileCell {
                 id: a.id,
@@ -310,7 +335,7 @@ impl Index {
             })?;
             row = row
                 .cell("number", Cell::text(a.attachment_number.to_string()))
-                .cell("record", Cell::text(record))
+                .slot("record", record)
                 .cell("dated", Cell::date(&date, &date))
                 .slot("file", file)
                 .cell("sha256", Cell::text(a.sha256.clone()))
@@ -328,10 +353,23 @@ impl Index {
         table.framed = false;
         table.caption = "Attachments";
         if self.shown.is_empty() {
-            table.empty = Some(TableEmpty::State(EmptyState::missing(
-                "No source documents",
-                "Nothing matching has been attached to this company's records.",
-            )));
+            let filtered = self
+                .list
+                .filters
+                .get("source")
+                .is_some_and(|s| !s.is_empty())
+                || self.list.filters.get("status").map(String::as_str) != Some("standing");
+            table.empty = Some(TableEmpty::State(if filtered {
+                EmptyState::missing(
+                    "No source documents match",
+                    "Choose every kind of record and Current to see the rest.",
+                )
+            } else {
+                EmptyState::missing(
+                    "No source documents yet",
+                    "Files are attached on each record's own page, such as a bill or an invoice.",
+                )
+            }));
         }
         render(table)
     }
@@ -340,6 +378,10 @@ impl Index {
         if changes.is_empty() {
             return Ok(Html::EMPTY);
         }
+        let summary = match changes.len() {
+            1 => "1 change".to_owned(),
+            n => format!("{n} changes"),
+        };
         let rows = changes
             .iter()
             .map(|c| {
@@ -362,7 +404,13 @@ impl Index {
         table.add_query = &self.change_columns.add_query;
         table.framed = false;
         table.caption = "Retention changes";
-        render(table)
+        render(Fold {
+            id: "attachments-retention-history",
+            title: "History",
+            summary: &summary,
+            open: false,
+            body: render(table)?,
+        })
     }
 
     async fn body(&mut self, scope: &Scope) -> Result<String> {
@@ -432,7 +480,48 @@ impl Index {
             }),
             None => None,
         };
-        let retention_form = can_manage.then(|| RetentionForm {
+        let lengthen = if can_manage && retention.is_some() {
+            render(Button {
+                id: "attachments-retention-open",
+                event: "open_retention",
+                button_type: "button",
+                body: Html::text("Lengthen retention"),
+                ..Button::default()
+            })?
+        } else {
+            Html::EMPTY
+        };
+        let mut buttons = render(Button {
+            id: "attachments-retention-cancel",
+            event: "close_retention",
+            button_type: "button",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        buttons.push(&render(Button {
+            id: "attachments-retention-submit",
+            variant: ButtonVariant::Primary,
+            button_type: "submit",
+            working: "Saving…",
+            body: Html::text("Lengthen retention"),
+            ..Button::default()
+        })?);
+        let actions = render(DialogActions { buttons })?;
+        let alert = self
+            .dialog_alert
+            .as_ref()
+            .map(|message| {
+                render(Alert {
+                    kind: StatusKind::Error,
+                    id: "attachments-retention-alert",
+                    class: "mt-4",
+                    body: Html::text(message),
+                })
+            })
+            .transpose()?;
+        let retention_form = (can_manage && self.lengthening).then(|| RetentionForm {
+            alert,
+            actions,
             years: Field::in_form("retention", "years")
                 .id("retention_years")
                 .kind(InputKind::Number)
@@ -449,35 +538,45 @@ impl Index {
                 .value(self.draft_reason.clone()),
         });
 
-        let filter = render(FilterForm {
-            source: Field::named("filter[source]")
-                .id("attachments-filter-source")
-                .kind(InputKind::Select)
-                .prompt("Every kind of record")
-                .options(
-                    sources
-                        .iter()
-                        .map(|(l, v)| Choice::new(l.clone(), v.clone()))
-                        .collect(),
-                )
-                .value(self.list.filters.get("source").cloned().unwrap_or_default()),
-            status: Field::named("filter[status]")
-                .id("attachments-filter-status")
-                .kind(InputKind::Select)
-                .options(vec![
-                    Choice::new("Current", "standing"),
-                    Choice::new("Replaced", "replaced"),
-                    Choice::new("Removed", "removed"),
-                    Choice::new("All", "all"),
-                ])
-                .value(
-                    self.list
+        // The filters sit in the shared toolbar, the height of every list's.
+        let mut kinds = vec![Choice::new("Every kind of record", "")];
+        kinds.extend(
+            sources
+                .iter()
+                .map(|(l, v)| Choice::new(l.clone(), v.clone())),
+        );
+        let mut toolbar = FilterToolbar::new(
+            "attachments-filter",
+            vec![
+                ToolbarControl::select(
+                    "attachments-filter-source",
+                    "source",
+                    "Filter by kind of record",
+                    &self.list.filters.get("source").cloned().unwrap_or_default(),
+                    kinds,
+                ),
+                ToolbarControl::select(
+                    "attachments-filter-status",
+                    "status",
+                    "Filter by standing",
+                    &self
+                        .list
                         .filters
                         .get("status")
                         .cloned()
                         .unwrap_or_else(|| "standing".into()),
+                    vec![
+                        Choice::new("Current", "standing"),
+                        Choice::new("Replaced", "replaced"),
+                        Choice::new("Removed", "removed"),
+                        Choice::new("All", "all"),
+                    ],
                 ),
-        })?;
+            ],
+        );
+        toolbar.event = "filter";
+        toolbar.class = "px-5";
+        let filter = render(toolbar)?;
 
         let mut flash = NO_FLASH;
         if let Some((kind, message)) = &self.flash {
@@ -492,6 +591,7 @@ impl Index {
             title_actions: bilibi_ui::Html::EMPTY,
             flash,
             retention: retention_view,
+            lengthen,
             retention_form,
             changes: self.change_table(&changes, &display)?,
             count: Some(self.shown.len()),
@@ -505,7 +605,7 @@ impl Index {
 
     async fn set_retention(&mut self, scope: &Scope) -> Result<()> {
         if !self.can_manage(scope).await? {
-            self.flash(StatusKind::Error, DENIED);
+            self.dialog_alert = Some(DENIED.into());
             return Ok(());
         }
         let Some(company) = company_of(scope) else {
@@ -529,10 +629,7 @@ impl Index {
                     "is invalid"
                 },
             ));
-            self.flash(
-                StatusKind::Error,
-                format::refusal(AttachmentError::Invalid(errors))?,
-            );
+            self.dialog_alert = Some(format::refusal(AttachmentError::Invalid(errors))?);
             return Ok(());
         };
         match told(
@@ -551,8 +648,11 @@ impl Index {
                 );
                 self.draft_years.clear();
                 self.draft_reason.clear();
+                self.lengthening = false;
+                self.dialog_alert = None;
             }
-            Err(message) => self.flash(StatusKind::Error, message),
+            // The dialog stays open with the refusal inside it.
+            Err(message) => self.dialog_alert = Some(message),
         }
         Ok(())
     }
@@ -563,7 +663,7 @@ impl Index {
         match get("type").ok_or(Error::Invalid)? {
             "filter" => {
                 self.list
-                    .apply_filters(&params::form_values(value, "filter"));
+                    .apply_filters(&params::form_values(value, "filters"));
                 self.pages_loaded = 1;
                 Ok(true)
             }
@@ -575,6 +675,19 @@ impl Index {
                 let posted = params::form_values(value, "retention");
                 self.draft_years = posted.get("years").cloned().unwrap_or_default();
                 self.draft_reason = posted.get("reason").cloned().unwrap_or_default();
+                Ok(false)
+            }
+            "open_retention" => {
+                self.lengthening = true;
+                self.dialog_alert = None;
+                self.flash = None;
+                Ok(false)
+            }
+            "close_retention" => {
+                self.lengthening = false;
+                self.dialog_alert = None;
+                self.draft_years.clear();
+                self.draft_reason.clear();
                 Ok(false)
             }
             "set_retention" => {

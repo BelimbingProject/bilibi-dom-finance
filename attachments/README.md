@@ -56,7 +56,10 @@ on the caller's connection and with the caller's scope. Attachments authorizes
 every declared capability before asking the source to authorize and read the
 record. The source answers `SourceRefusal::NotFound` or `Unauthorized`. The
 attachments facade stores the source id and the contributing module with each
-attachment and never reads the owner's tables.
+attachment and never reads the owner's tables. A source with a record page
+also answers `href(document_id)` (`/finance/payables/bills/{id}`), which
+`Attachments::record_href` hands the Source documents list so each record is a
+link; the page itself authorizes its reader again.
 
 A record whose date can change while it is a draft calls
 `refresh_retention` inside the transaction that finalises it.
@@ -107,16 +110,19 @@ history names that person; the module's own events name the principal.
 | Panel | embed `finance.attachments-panel` | signed in; every read and write asks the facade | Bilimbi `Web.Panel` |
 
 **Source documents** shows the company's retention (the years in force and the
-latest change; holders of `finance.attachments.retention.manage` get the
-Lengthen retention form, which re-asks the capability, and the change history;
-a recorded change reads the page again, and a blank or non-numeric years is
-refused with the reason's error first, as Bilimbi's changeset words it)
-and every attachment by number in a FlexTable (column settings, compact rows)
-with the record it supports, file and size, SHA-256, retention date and legal
-hold, capture time and standing. The kind-of-record and standing selects
-(`filter[source]`, `filter[status]` in the form; `source`, `status` in the
-URL; standing by default) keep to the address, and "Show more" reads the next
-200 after the last attachment number. The page's message stays until the
+latest change; holders of `finance.attachments.retention.manage` get
+Lengthen retention, a dialog whose save re-asks the capability, and the change
+history folded under History; a recorded change reads the page again, and a
+blank or non-numeric years is refused inside the dialog with the reason's
+error first, as Bilimbi's changeset words it) and every attachment by number
+in a FlexTable (column settings, compact rows) with the record it supports
+(linked to its page when its source has one), file and size, retention date
+and legal hold, capture time and standing; the SHA-256 waits in the column
+picker. The kind-of-record and standing filters sit in the shared filter
+toolbar (`filters[source]`, `filters[status]`; `source`, `status` in the URL;
+standing by default) and keep to the address; an empty list says "No source
+documents yet" or, with a filter set, "No source documents match". "Show
+more" reads the next 200 after the last attachment number. The page's message stays until the
 browser dismisses it (`clear-flash`), across form changes and filter patches. Attaching a
 file happens on the record's own page.
 

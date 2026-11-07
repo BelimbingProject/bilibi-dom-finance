@@ -98,6 +98,11 @@ pub trait Source: Send + Sync {
         company_id: i64,
         document_id: i64,
     ) -> SourceFuture<'a>;
+    /// The record's own page, so the Source documents list can link the
+    /// record each file supports; `None` for a record with no page.
+    fn href(&self, _document_id: i64) -> Option<String> {
+        None
+    }
 }
 
 /// The contribution payload: `Contribution::new(SOURCES, "finance/<module>/<record>", provenance, &SourceDefinition { source: &BillSource })`.

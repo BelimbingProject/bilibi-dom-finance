@@ -559,4 +559,12 @@ impl Attachments {
     pub fn source_label(&self, source: &str) -> Option<&'static str> {
         self.sources.get(source).map(|r| r.source.label())
     }
+
+    /// The page of record `document_id` of `source`, if its owner has one.
+    /// A link only: the page authorizes its reader again.
+    pub fn record_href(&self, source: &str, document_id: i64) -> Option<String> {
+        self.sources
+            .get(source)
+            .and_then(|r| r.source.href(document_id))
+    }
 }

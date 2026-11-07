@@ -683,7 +683,9 @@ impl Reports {
             "accountant-access",
             "Accountant access",
             true,
-            "/authz/roles",
+            // The roles list narrowed to the accountant roles, whose pages
+            // give a person the role.
+            "/authz/roles?search=accountant",
             SetupState::NotTracked,
             "Give the people who keep this company's books a role, such as External accountant.",
         ));
