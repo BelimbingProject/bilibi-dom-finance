@@ -367,16 +367,41 @@ async fn prove_payroll_messages(
         })
         .await?
         .unwrap();
-    let save = json!({"type":"save_settings","settings[net_pay_account_id]":id("2000"),"settings[claims_payable_account_id]":id("2000"),"settings[reason]":"Initial browser setup"});
+    let payroll =
+        services.get::<bilibi_finance_payroll::Payroll>(bilibi_finance_payroll::SERVICE)?;
+    // Before the setup, the first account chosen waits on the page; the
+    // second saves both together.
+    let first =
+        json!({"type":"save_account","field":"net_pay_account_id","id":"","value":id("2000")});
+    let waiting = state
+        .update(LiveRequest {
+            scope,
+            credential: "",
+            input: LiveInput::Event(&first),
+        })
+        .await?;
+    assert!(waiting.html.contains("they are saved together"));
+    assert!(payroll.get_settings(scope, company).await.is_err());
+    let second = json!({"type":"save_account","field":"claims_payable_account_id","id":"","value":id("2000")});
     let saved = state
         .update(LiveRequest {
             scope,
             credential: "",
-            input: LiveInput::Event(&save),
+            input: LiveInput::Event(&second),
         })
         .await?;
-    assert!(saved.html.contains("Posting accounts saved."));
-    let invalid = json!({"type":"save_mapping","mapping[kind]":"component","mapping[code]":"","mapping[direction]":"earning","mapping[expense_account_id]":id("5000"),"mapping[liability_account_id]":id("2000")});
+    assert!(!saved.html.contains("they are saved together"));
+    assert!(payroll.get_settings(scope, company).await.is_ok());
+    // A refusal in the "+ Mapping" dialog stays in the dialog, not the page.
+    let open = json!({"type":"new_mapping"});
+    state
+        .update(LiveRequest {
+            scope,
+            credential: "",
+            input: LiveInput::Event(&open),
+        })
+        .await?;
+    let invalid = json!({"type":"save_mapping","mapping[kind]":"component","mapping[code]":"","mapping[direction]":"earning","mapping[expense_account_id]":id("5000")});
     let refused = state
         .update(LiveRequest {
             scope,
@@ -384,7 +409,9 @@ async fn prove_payroll_messages(
             input: LiveInput::Event(&invalid),
         })
         .await?;
-    assert!(refused.html.contains("id=\"flash-error\""));
+    assert!(refused.html.contains("id=\"payroll-mapping-modal\""));
+    assert!(refused.html.contains("payroll-mapping-code-error-0"));
+    assert!(!refused.html.contains("id=\"flash-error\""));
     let stale = json!({"type":"clear-flash","key":"success"});
     let kept = state
         .update(LiveRequest {
@@ -394,17 +421,17 @@ async fn prove_payroll_messages(
         })
         .await?;
     assert_eq!(refused.html, kept.html);
-    let dismiss = json!({"type":"clear-flash","key":"error"});
-    let cleared = state
+    let close = json!({"type":"close_mapping"});
+    let closed = state
         .update(LiveRequest {
             scope,
             credential: "",
-            input: LiveInput::Event(&dismiss),
+            input: LiveInput::Event(&close),
         })
         .await?;
-    assert!(!cleared.html.contains("id=\"flash-error\""));
+    assert!(!closed.html.contains("id=\"payroll-mapping-modal\""));
     println!(
-        "NU1: payroll setup and mapping use real facades; stale success dismissal retains the mapping refusal"
+        "NU1: payroll accounts chosen in place save together; the mapping dialog keeps its refusal and closes"
     );
     Ok(())
 }
