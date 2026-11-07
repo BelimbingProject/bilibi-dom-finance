@@ -120,4 +120,6 @@ jobs:
         run: cargo build --locked -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins
 
       - name: Run the walkthroughs
+        env:
+          WALKTHROUGH_SLOW: ${{ github.event_name != 'pull_request' && '1' || '' }}
         run: apps/$CONTAINER_ROLE/$CONTAINER_ID/scripts/run-walkthroughs.sh
