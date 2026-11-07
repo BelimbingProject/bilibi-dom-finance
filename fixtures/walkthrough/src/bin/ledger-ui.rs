@@ -84,9 +84,6 @@ async fn main() -> Outcome<()> {
     )
     .await?;
 
-    // Tenant 2's books are in MYR: its administrator enables it first, as
-    // Core requires once its currency list is seeded (`empty` turns it off).
-    bilibi_finance_walkthrough_fixture::enable(&db, services, &reviewer, "MYR").await?;
     let unopened = matches!(
         ledger.get_book(&manager, COMPANY).await,
         Err(bilibi_finance_ledger::LedgerError::BookNotOpen)

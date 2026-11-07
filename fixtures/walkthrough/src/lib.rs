@@ -116,35 +116,6 @@ pub fn services(
     Ok(services)
 }
 
-/// Enables `code` in the administrator's tenant through Core's own write,
-/// when Core's currency list is seeded and it is not enabled yet.
-pub async fn enable(db: &Db, services: &Services, administrator: &Scope, code: &str) -> Result<()> {
-    let currencies = services
-        .get::<bilibi_currency::Currencies>(bilibi_currency::SERVICE)
-        .map_err(Error::from)?;
-    let mut client = db.get().await.map_err(Error::from)?;
-    let off = currencies
-        .get(&**client, administrator, code)
-        .await?
-        .is_some_and(|currency| !currency.enabled);
-    if off {
-        let mut tx = services
-            .get::<bilibi_database::MutationBoundary>("base/database.mutations")
-            .map_err(Error::from)?
-            .begin(
-                &mut client,
-                administrator.mutation_context("finance.walkthrough.currency"),
-            )
-            .await?;
-        currencies
-            .set_enabled(&mut tx, administrator, code, true)
-            .await?
-            .map_err(|_| Error::Invalid)?;
-        tx.commit().await?;
-    }
-    Ok(())
-}
-
 /// The Platform fixture's accounts and tenants, plus the Core default
 /// relationship roles (customer, supplier, ...) its tenants are installed
 /// without. A binary that skips [`install`] still calls this, never
