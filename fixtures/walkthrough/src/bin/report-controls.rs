@@ -136,7 +136,10 @@ async fn main() -> Outcome<()> {
     // The reviewer works in Company 001 now; its first desk is Company 002.
     db.get()
         .await?
-        .execute("UPDATE users SET last_desk_id=1 WHERE tenant_id=1 AND id=7", &[])
+        .execute(
+            "UPDATE users SET last_desk_id=1 WHERE tenant_id=1 AND id=7",
+            &[],
+        )
         .await?;
     let reviewer_scope = sign_in(&db, &services, 1, 7).await?;
     let viewer = sign_in(&db, &services, 1, 7).await?;

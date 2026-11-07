@@ -215,7 +215,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         p.submit_payment(&reviewer, 3, &input).await,
         // The Platform's reach check leaves out an archived company, so a desk
         // there no longer authorizes before the lock reports it archived.
-        |e| matches!(e, PayablesError::CompanyArchived | PayablesError::Unauthorized),
+        |e| {
+            matches!(
+                e,
+                PayablesError::CompanyArchived | PayablesError::Unauthorized
+            )
+        },
     )?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants

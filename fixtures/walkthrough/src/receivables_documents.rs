@@ -1277,10 +1277,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     // there no longer authorizes before the lock reports it archived.
     // TODO(platform): an archived company is meant to read; the reach check now
     // refuses it for reads too.
-    assert!(matches!(
-        refused,
-        Err(R::CompanyArchived | R::Unauthorized)
-    ));
+    assert!(matches!(refused, Err(R::CompanyArchived | R::Unauthorized)));
     assert!(readable.is_ok() || matches!(readable, Err(R::Unauthorized)));
     let waiting = ar
         .create_draft(&admin, 1, &invoice(Some("2026-10-08"), "1"))
