@@ -264,6 +264,7 @@ they govern this code and are not copied here.
 - Read sibling context inside a write with `Ledger::get_book_on`,
   `list_accounts_on`, `get_entry_on` and `Payables::get_document_on`, not pooled
   methods: another connection while holding the company lock can exhaust the pool.
+- Add a bank account with its name and ledger account only, and map its bank's columns on its first import (`Reconciliation::preview_statement` guesses them, `import_statement_mapped` keeps them with the account in the import's own write; `reconciliation/src/web/import.rs`), never an always-open mapping form or mapping fields in the account's dialog: a person maps columns while looking at the file's rows, and a bank that changes its export is caught by the next import.
 - Register assets through `FixedAssets`, never by posting or claiming their
   acquisition entry: ordinary acquisitions freeze one whole source debit and its revision; opening registers use `import_opening_register` against approved aggregate balances, preserving source accumulation and prospective remaining life;
   projected schedules are not posted depreciation (see `fixed_assets/README.md`).

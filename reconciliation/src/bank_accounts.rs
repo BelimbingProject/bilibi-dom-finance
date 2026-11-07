@@ -98,7 +98,7 @@ pub(crate) struct ValidNew {
     charges_account_id: Option<i64>,
     interest_account_id: Option<i64>,
     match_window_days: i32,
-    import_mapping: ImportMapping,
+    import_mapping: Option<ImportMapping>,
     active: bool,
     reason: Option<String>,
 }
@@ -114,7 +114,12 @@ pub(crate) async fn validate_new(
     let name = name(&new.name, &mut errors);
     let window = new.match_window_days.unwrap_or(DEFAULT_WINDOW);
     window_in_range(window, &mut errors);
-    let mapping = mapping(&new.import_mapping, &mut errors);
+    // A new account may leave its columns to its first import.
+    let mapping = if new.import_mapping.is_null() {
+        Some(None)
+    } else {
+        mapping(&new.import_mapping, &mut errors).map(Some)
+    };
     account(
         chart,
         "ledger_account_id",
@@ -185,7 +190,7 @@ pub(crate) async fn insert(
                 &valid.charges_account_id,
                 &valid.interest_account_id,
                 &(valid.match_window_days as i16),
-                &valid.import_mapping.to_json(),
+                &valid.import_mapping.as_ref().map(ImportMapping::to_json),
                 &valid.active,
             ],
         )
@@ -222,10 +227,7 @@ pub(crate) async fn insert(
             "match_window_days",
             Some(account.match_window_days.to_string()),
         ),
-        (
-            "import_mapping",
-            Some(canonical(&account.import_mapping.to_json())),
-        ),
+        ("import_mapping", text(&account, "import_mapping")),
         ("active", Some(account.active.to_string())),
     ];
     for (field, new) in first {
@@ -308,8 +310,8 @@ pub(crate) async fn validate_change(
     }
     if let Some(requested) = &change.import_mapping {
         if let Some(parsed) = mapping(requested, &mut errors) {
-            if parsed != current.import_mapping {
-                next.import_mapping = parsed;
+            if current.import_mapping.as_ref() != Some(&parsed) {
+                next.import_mapping = Some(parsed);
                 fields.push("import_mapping");
             }
         }
@@ -349,6 +351,22 @@ pub(crate) async fn validate_change(
     })))
 }
 
+/// The account with `mapping` as its import mapping, logged with `reason`;
+/// `None` when it already reads that way. A statement import keeps the
+/// mapping it read the file through this way.
+pub(crate) fn remap(current: &BankAccount, mapping: &ImportMapping, reason: &str) -> Option<Next> {
+    if current.import_mapping.as_ref() == Some(mapping) {
+        return None;
+    }
+    let mut account = current.clone();
+    account.import_mapping = Some(mapping.clone());
+    Some(Next {
+        account,
+        fields: vec!["import_mapping"],
+        reason: self::reason(Some(reason)),
+    })
+}
+
 /// Saves the change and logs every field that changed.
 pub(crate) async fn update(
     sql: &(impl GenericClient + Sync),
@@ -371,7 +389,7 @@ pub(crate) async fn update(
             &saved.charges_account_id,
             &saved.interest_account_id,
             &(saved.match_window_days as i16),
-            &saved.import_mapping.to_json(),
+            &saved.import_mapping.as_ref().map(ImportMapping::to_json),
             &saved.active,
         ],
     )
@@ -558,7 +576,10 @@ fn text(account: &BankAccount, field: &str) -> Option<String> {
         "charges_account_id" => account.charges_account_id.map(|id| id.to_string()),
         "interest_account_id" => account.interest_account_id.map(|id| id.to_string()),
         "match_window_days" => Some(account.match_window_days.to_string()),
-        "import_mapping" => Some(canonical(&account.import_mapping.to_json())),
+        "import_mapping" => account
+            .import_mapping
+            .as_ref()
+            .map(|mapping| canonical(&mapping.to_json())),
         _ => Some(account.active.to_string()),
     }
 }
@@ -588,7 +609,7 @@ pub(crate) fn to_json(company_id: i64, account: &BankAccount) -> Value {
         "charges_account_id": account.charges_account_id,
         "interest_account_id": account.interest_account_id,
         "match_window_days": account.match_window_days,
-        "import_mapping": account.import_mapping.to_json(),
+        "import_mapping": account.import_mapping.as_ref().map(ImportMapping::to_json),
         "active": account.active,
     })
 }
@@ -601,7 +622,10 @@ fn from_row(row: &Row) -> Result<BankAccount> {
         charges_account_id: row.get(3),
         interest_account_id: row.get(4),
         match_window_days: i32::from(row.get::<_, i16>(5)),
-        import_mapping: serde_json::from_value(row.get::<_, Value>(6))
+        import_mapping: row
+            .get::<_, Option<Value>>(6)
+            .map(serde_json::from_value)
+            .transpose()
             .map_err(|_| bilibi_database::Error::Internal)?,
         active: row.get(7),
     })

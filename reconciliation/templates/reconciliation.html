@@ -7,11 +7,12 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% if flash.error.contains("/finance/reports/approval-exceptions") %}{% call ui::button(id="approval-control-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
 {% call ui::page(id="reconciliation", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::back_link(id="reconciliation-back", href=back, title=back_title) %}{% endcall %}
+{{ back|safe }}
 {{ refusal|safe }}
 {% if let Some(r) = record %}
 {% call workspace::announce(kind="finance/reconciliation/reconciliation", record_id=r.id.to_string()) %}{% endcall %}
-{% call ui::header(subtitle_html=r.subtitle, title_actions=r.title_actions, actions=r.actions) %}{{ r.title }}{% endcall %}
+{{ r.header|safe }}
+<div class="space-y-4">
 {% call ui::card(id="reconciliation-figures", inner_class="p-5 sm:p-6", role="region", labelledby="reconciliation-figures-heading") %}
 {% call ui::section_heading(id="reconciliation-figures-heading", title="Figures") %}{% endcall %}
 {{ r.figures|safe }}
@@ -27,6 +28,7 @@
 {% call ui::section_heading(id="reconciliation-events-heading", title="History", class="p-5 pb-0") %}{% endcall %}
 {{ r.events|safe }}
 {% endcall %}
+</div>
 {% if let Some(reason) = r.abandon %}
 {% call dialog::modal(id="abandon-modal", title="Abandon this reconciliation", cancel_event="cancel_abandon", description="It stays on record as abandoned with this reason, and a new one can be opened.") %}
 <form id="abandon-form" data-event="abandon_change" data-change data-submit-event="abandon" class="mt-4">

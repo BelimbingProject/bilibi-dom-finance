@@ -54,6 +54,7 @@ mod bank_accounts;
 mod contributions;
 mod csv;
 mod evidence;
+mod guess;
 mod import;
 mod mapping;
 mod matching;
@@ -70,7 +71,7 @@ pub use contributions::{
     MANAGE_MATCHES, MANAGE_RECONCILIATIONS, MANAGE_STATEMENT_LINES, POST_STATEMENT_LINES, VIEW,
 };
 pub use evidence::EvidencePage;
-pub use import::MAX_LINES;
+pub use import::{PreviewLine, StatementPreview, MAX_LINES};
 pub use mapping::{
     Column, ImportMapping, AMOUNT_SIGNS, DATE_FORMATS, DECIMAL_SEPARATORS, DELIMITERS,
 };
@@ -97,10 +98,11 @@ inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
         dependencies: &[
-            "base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/tenancy", "base/ui", "core/company", "finance/attachments", "finance/ledger",
+            "base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/tenancy", "base/ui", "core/company", "finance/attachments", "finance/ledger",
         ],
         migrations: &[("finance-reconciliation-001-reconciliation", include_str!("../migrations/001-reconciliation.sql")),
-            ("finance-reconciliation-002-opening-bridge", include_str!("../migrations/002-opening-bridge.sql"))],
+            ("finance-reconciliation-002-opening-bridge", include_str!("../migrations/002-opening-bridge.sql")),
+            ("finance-reconciliation-003-mapping-on-first-import", include_str!("../migrations/003-mapping-on-first-import.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let reconciliation = Arc::new(Reconciliation {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -119,6 +121,8 @@ inventory::submit! {
             locales: services.get("base/locale.locales")?,
             contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             plans: services.get("base/agent_api.plans")?,
+            parties: services.get("base/tenancy.parties")?,
+            directory: services.get(bilibi_finance_ledger::PEOPLE)?,
         })))) }],
     }
 }
@@ -167,6 +171,10 @@ pub enum ReconciliationError {
     MissingHeaders(Vec<String>),
     #[error("The file holds no lines")]
     NoLines,
+    /// The bank account's columns are not mapped yet: its first import maps
+    /// them ([`Reconciliation::import_statement_mapped`]).
+    #[error("The bank account's columns are not mapped yet")]
+    MappingNotSet,
     #[error("A statement holds at most {0} lines")]
     TooManyLines(usize),
     /// The balance column does not follow from the amounts in either order.
@@ -331,13 +339,16 @@ pub struct BankAccount {
     pub interest_account_id: Option<i64>,
     /// How many days a suggested match's dates may differ by, 0 to 90.
     pub match_window_days: i32,
-    pub import_mapping: ImportMapping,
+    /// How its bank's export is read; `None` until the first import maps the
+    /// columns ([`Reconciliation::import_statement_mapped`]).
+    pub import_mapping: Option<ImportMapping>,
     pub active: bool,
 }
 
 /// What adds a bank account: a `name` of at most 200 characters, the
 /// `ledger_account_id` (an active asset account of the company no other bank
-/// account maps), the `import_mapping` (see [`ImportMapping::parse`]), and
+/// account maps), the `import_mapping` (see [`ImportMapping::parse`]; `null`
+/// leaves the columns to be mapped on the first import), and
 /// optionally a `charges_account_id` (an expense account), an
 /// `interest_account_id` (an income account), `match_window_days` (0 to 90,
 /// 5 when absent), `active` (true when absent) and a `reason` for the change
@@ -787,6 +798,15 @@ impl Reconciliation {
         }
     }
 
+    /// A first guess at how a bank's CSV export is read, from the file
+    /// alone (separator, rows above the data, which column is which, date
+    /// format, decimal mark), as [`Reconciliation::preview_statement`] makes
+    /// for an account with no mapping yet. It only proposes; nothing is read
+    /// from the database.
+    pub fn guess_mapping(content: &[u8]) -> Value {
+        guess::mapping(content)
+    }
+
     /// Ledger account identifiers used by bank reconciliation, for cash reports.
     /// Only ledger view is required; no bank names, mappings or statements escape.
     pub async fn cash_account_ids(&self, scope: &Scope, company_id: i64) -> Result<Vec<i64>> {
@@ -978,7 +998,8 @@ impl Reconciliation {
     /// mapping cannot read, `MissingHeaders`, `NoLines`, `TooManyLines`,
     /// `RunningBalanceMismatch` when the balance column does not follow from
     /// the amounts in either direction, and the reader's `FileTooLarge`,
-    /// `NotUtf8`, `StrayQuote` and `UnterminatedQuote`. A row whose amount is
+    /// `NotUtf8`, `StrayQuote` and `UnterminatedQuote`, and `MappingNotSet`
+    /// while the account's columns are not mapped yet. A row whose amount is
     /// zero is skipped and counted in `skipped_count`.
     pub async fn import_statement(
         &self,
@@ -986,6 +1007,79 @@ impl Reconciliation {
         company_id: i64,
         bank_account_id: i64,
         file: &NewFile,
+    ) -> Result<ImportedStatement> {
+        self.import(scope, company_id, bank_account_id, file, None)
+            .await
+    }
+
+    /// Imports a statement as [`Reconciliation::import_statement`] does, read
+    /// through `mapping` (see [`ImportMapping::parse`]) rather than the bank
+    /// account's, and keeps that mapping with the account in the same
+    /// transaction, so the next import reads the same way: the first import
+    /// of an account added without one maps its columns. Setting the first
+    /// mapping needs only `finance.reconciliation.statements.import`;
+    /// replacing a different one is a change to the bank account and also
+    /// needs `finance.reconciliation.bank-accounts.manage`. The account's
+    /// change log records it with the file's name as the reason. A refused
+    /// import keeps the account's mapping as it was.
+    pub async fn import_statement_mapped(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        bank_account_id: i64,
+        file: &NewFile,
+        mapping: &Value,
+    ) -> Result<ImportedStatement> {
+        let mapping = ImportMapping::parse(mapping).map_err(|message| {
+            ReconciliationError::Invalid(vec![FieldError::new("import_mapping", message)])
+        })?;
+        self.import(scope, company_id, bank_account_id, file, Some(mapping))
+            .await
+    }
+
+    /// How a statement file would import, before anything is stored
+    /// (`finance.reconciliation.statements.import` and
+    /// `finance.reconciliation.view`, and `finance.ledger.view` for the
+    /// book's precision): its columns and first rows, and the first lines the
+    /// import would read through `mapping`, the bank account's own mapping
+    /// when `mapping` is `None`, or, for an account whose columns are not
+    /// mapped yet, a mapping guessed from the file's header row and values
+    /// (`guessed`). Why that mapping does not read the file is in `refusal`;
+    /// a file already imported is refused only by the import itself.
+    pub async fn preview_statement(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        bank_account_id: i64,
+        content: &[u8],
+        mapping: Option<&Value>,
+    ) -> Result<StatementPreview> {
+        {
+            let client = self.db.get().await.map_err(Error::from)?;
+            authorize(&**client, scope, company_id, IMPORT_STATEMENTS).await?;
+            authorize(&**client, scope, company_id, VIEW).await?;
+        }
+        let account = self
+            .active_bank_account(scope, company_id, bank_account_id)
+            .await?;
+        let book = self.ledger.get_book(scope, company_id).await?;
+        let (mapping, guessed) = match (mapping, &account.import_mapping) {
+            (Some(mapping), _) => (mapping.clone(), false),
+            (None, Some(mapping)) => (mapping.to_json(), false),
+            (None, None) => (guess::mapping(content), true),
+        };
+        Ok(import::preview(content, mapping, guessed, book.minor_units))
+    }
+
+    /// [`Reconciliation::import_statement`], through `mapping` when given
+    /// (kept with the account) or the account's own.
+    async fn import(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        bank_account_id: i64,
+        file: &NewFile,
+        mapping: Option<ImportMapping>,
     ) -> Result<ImportedStatement> {
         let tenant = scope.tenant();
         {
@@ -996,6 +1090,20 @@ impl Reconciliation {
         let account = self
             .active_bank_account(scope, company_id, bank_account_id)
             .await?;
+        let replaces = |current: &Option<ImportMapping>, given: &ImportMapping| {
+            current.as_ref().is_some_and(|current| current != given)
+        };
+        let keep = mapping.is_some();
+        let mapping = match mapping.or_else(|| account.import_mapping.clone()) {
+            Some(mapping) => mapping,
+            None => return Err(ReconciliationError::MappingNotSet),
+        };
+        let mut capabilities = vec![IMPORT_STATEMENTS];
+        if keep && replaces(&account.import_mapping, &mapping) {
+            capabilities.push(MANAGE_BANK_ACCOUNTS);
+            let client = self.db.get().await.map_err(Error::from)?;
+            authorize(&**client, scope, company_id, MANAGE_BANK_ACCOUNTS).await?;
+        }
         let book = self.ledger.get_book(scope, company_id).await?;
         let prepared = {
             let client = self.db.get().await.map_err(Error::from)?;
@@ -1003,7 +1111,8 @@ impl Reconciliation {
                 &**client,
                 tenant,
                 company_id,
-                &account,
+                account.id,
+                &mapping,
                 book.minor_units,
                 file,
             )
@@ -1025,16 +1134,24 @@ impl Reconciliation {
                 &mut client,
                 scope,
                 company_id,
-                &[IMPORT_STATEMENTS],
+                &capabilities,
                 "finance.reconciliation.import_statement",
             )
             .await?;
         // The bank account may have been deactivated, and another import may
         // have landed, since the checks above: ask again under the lock.
-        bank_accounts::find(tx.sql(), tenant, company_id, account.id)
+        let locked = bank_accounts::find(tx.sql(), tenant, company_id, account.id)
             .await?
             .filter(|account| account.active)
             .ok_or(ReconciliationError::BankAccountInactive)?;
+        // Someone may have mapped the columns meanwhile: replacing theirs is
+        // a bank account change.
+        if keep
+            && replaces(&locked.import_mapping, &mapping)
+            && !capabilities.contains(&MANAGE_BANK_ACCOUNTS)
+        {
+            authorize(tx.sql(), scope, company_id, MANAGE_BANK_ACCOUNTS).await?;
+        }
         import::check_fresh(tx.sql(), tenant, company_id, account.id, &prepared).await?;
         let (actor, impersonator) = people(scope);
         let statement_id = import::insert(
@@ -1043,10 +1160,30 @@ impl Reconciliation {
             company_id,
             actor,
             impersonator,
-            &account,
+            &locked,
             &prepared,
         )
         .await?;
+        if keep {
+            let reason = format!("Mapped when importing {}", prepared.file.file_name);
+            if let Some(next) = bank_accounts::remap(&locked, &mapping, &reason) {
+                tx.mutate(move |sql| {
+                    Box::pin(async move {
+                        bank_accounts::update(
+                            sql,
+                            tenant,
+                            company_id,
+                            actor,
+                            impersonator,
+                            &locked,
+                            &next,
+                        )
+                        .await
+                    })
+                })
+                .await?;
+            }
+        }
         self.attachments
             .attach_capture(
                 &mut tx,

@@ -16,11 +16,12 @@ use crate::{
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{Format, Precision};
-use bilibi_finance_ledger::{LedgerError, MinorUnits, Money};
+use bilibi_finance_ledger::{EntryLink, LedgerError, MinorUnits, Money};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, BuiltinColumn, Button, ButtonVariant, Cell, EmptyState, Field, FlashMap,
-    FlexRow, FlexTable, Html, Instant, ListColumns, RowMode, StatusKind, TableEmpty,
+    page::*, params, BackLink, BuiltinColumn, Button, ButtonVariant, Cell, EmptyState, Field,
+    FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconKind, Instant, ListColumns,
+    RowMode, StatusKind, TableEmpty,
 };
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
@@ -85,9 +86,8 @@ fn columns(id: &str, values: &[(&str, &str)]) -> Result<ListColumns> {
 #[derive(Template)]
 #[template(path = "matching.html")]
 struct View<'a> {
-    title_actions: Html,
+    header: Html,
     flash: FlashMap<'a>,
-    account: &'a BankAccount,
     can_match: bool,
     forbidden: Html,
     line_count: Option<usize>,
@@ -113,7 +113,7 @@ struct UnmatchView {
 /// `form=`: FlexTable carries forms of its own, which cannot nest in one.
 #[derive(Template)]
 #[template(
-    source = r#"<input type="checkbox" form="matching-form" name="{{ name }}" value="{{ value }}" id="{{ dom_id }}"{% if checked %} checked{% endif %} aria-label="{{ label }}" />"#,
+    source = r#"<label class="-mx-1 -my-1 inline-flex size-10 cursor-pointer items-center justify-center pointer-coarse:-my-2"><input type="checkbox" form="matching-form" name="{{ name }}" value="{{ value }}" id="{{ dom_id }}"{% if checked %} checked{% endif %} aria-label="{{ label }}" class="size-4" /></label>"#,
     ext = "html"
 )]
 struct Select<'a> {
@@ -136,25 +136,21 @@ struct Described<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion">Entry {{ entry.entry_number }} on {{ entry.entry_date }}</span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
+    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion" class="mr-1.5">{{ journal|safe }} on {{ entry.entry_date }}</span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
     ext = "html"
 )]
 struct Suggested<'a> {
     line: i64,
     entry: Option<&'a LedgerItem>,
+    journal: Html,
     accept: bool,
     accept_id: String,
 }
 
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}{% if manage %}{% call ui::button(id=unmatch_id, button_type="button", event="unmatching", name="id", value=match_id.to_string()) %}Unmatch{% endcall %}{% endif %}"#,
-    ext = "html"
-)]
-struct UnmatchAction {
-    manage: bool,
-    match_id: i64,
-    unmatch_id: String,
+/// A ledger entry as its journal's link ("Journal 12"), so a person can open
+/// what was posted.
+fn journal(entry: Option<&LedgerItem>) -> Result<Html> {
+    EntryLink::html(entry.map(|e| e.entry_id), entry.map(|e| e.entry_number))
 }
 
 fn described(text: &str, reference: Option<&str>, mode: RowMode) -> Result<Html> {
@@ -584,6 +580,7 @@ impl Matching {
             let mut row = FlexRow::new(line.id.to_string())
                 .slot("select", select)
                 .cell("date", Cell::date(&date, &date))
+                .slot("date", super::nowrap(&date)?)
                 .cell("description", Cell::text(&line.description))
                 .slot(
                     "description",
@@ -598,6 +595,7 @@ impl Matching {
                     render(Suggested {
                         line: line.id,
                         entry: l.suggestions.get(&line.id),
+                        journal: journal(l.suggestions.get(&line.id))?,
                         accept: l.can_match,
                         accept_id: format!("line-{}-accept", line.id),
                     })?,
@@ -622,7 +620,7 @@ impl Matching {
                 );
                 if l.can_import {
                     let href = format!(
-                        "/finance/reconciliation/accounts/{}#statement-import",
+                        "/finance/reconciliation/accounts/{}?do=import",
                         l.account.id
                     );
                     empty.action(render(Button {
@@ -656,7 +654,9 @@ impl Matching {
             let mut row = FlexRow::new(entry.entry_id.to_string())
                 .slot("select", select)
                 .cell("entry", Cell::text(entry.entry_number.to_string()))
+                .slot("entry", journal(Some(entry))?)
                 .cell("date", Cell::date(&date, &date))
+                .slot("date", super::nowrap(&date)?)
                 .cell("description", Cell::text(&entry.description))
                 .slot(
                     "description",
@@ -690,6 +690,19 @@ impl Matching {
                 .chain(m.opening_items.iter().map(|i| i.amount.amount()))
                 .sum();
             let time = display.render(m.matched_at, Format::DateTime, Precision::Minute);
+            let mut journals = Html::EMPTY;
+            for (i, e) in m.entries.iter().enumerate() {
+                if i > 0 {
+                    journals.push(&Html::text(", "));
+                }
+                journals.push(&journal(Some(e))?);
+            }
+            for i in &m.opening_items {
+                if !journals.is_empty() {
+                    journals.push(&Html::text(", "));
+                }
+                journals.push(&Html::text(&format!("Opening item {}", i.source_id)));
+            }
             let mut row = FlexRow::new(m.id.to_string())
                 .cell("match", Cell::text(m.match_number.to_string()))
                 .cell("lines", Cell::text(m.statement_line_ids.len().to_string()))
@@ -708,6 +721,7 @@ impl Matching {
                             .join(", "),
                     ),
                 )
+                .slot("entries", journals)
                 .cell(
                     "amount",
                     Cell::text(Money::display_decimal(
@@ -727,31 +741,48 @@ impl Matching {
                     )),
                 );
             row.dom_id = Some(format!("match-{}", m.id));
-            row.actions = render(UnmatchAction {
-                manage: l.can_match,
-                match_id: m.id,
-                unmatch_id: format!("match-{}-unmatch", m.id),
-            })?;
+            if l.can_match {
+                let label = format!("Unmatch match {}", m.match_number);
+                row.actions = render(IconButton {
+                    id: &format!("match-{}-unmatch", m.id),
+                    kind: IconKind::Danger,
+                    event: "unmatching",
+                    name: "id",
+                    value: &m.id.to_string(),
+                    ..IconButton::new("link-slash", &label)
+                })?;
+            }
             rows.push(row);
         }
         let matches = Self::table(
             &self.matches_columns,
             "matches_grid",
             rows,
-            true,
+            l.can_match && !l.matches.is_empty(),
             EmptyState::missing(
-                "No standing matches",
-                "Matches made above are listed here and can be unmatched with a reason.",
+                "No matches yet",
+                "Lines matched above are listed here and can be unmatched with a reason.",
             ),
         )?;
 
         let sum = |items: Vec<Decimal>| {
             Money::display_decimal(items.into_iter().sum(), MinorUnits::new(i64::from(units)))
         };
+        let back = format!("/finance/reconciliation/accounts/{}", l.account.id);
+        let header = render(Header {
+            title: Html::text(&format!("{}: matching", l.account.name)),
+            subtitle: "Tick statement lines and ledger entries whose amounts agree, then match them; or accept a suggestion.",
+            title_actions: Html::EMPTY,
+            actions: render(BackLink {
+                href: &back,
+                id: "matching-back",
+                title: &l.account.name,
+                ..BackLink::default()
+            })?,
+        })?;
         View {
-            title_actions: bilibi_ui::Html::EMPTY,
+            header,
             flash: flash_map(&self.flash),
-            account: &l.account,
             can_match: l.can_match,
             forbidden: if l.can_match {
                 Html::EMPTY

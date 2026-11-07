@@ -1,6 +1,12 @@
-//! Mirrors Bilimbi `Finance.Reconciliation.Web.BankAccountsLive`.
+//! Mirrors Bilimbi `Finance.Reconciliation.Web.BankAccountsLive`: the
+//! company's bank accounts. "+ Bank account" asks only the name and the
+//! ledger account; the bank's columns are mapped on the account's first
+//! statement import. A row's own actions (edit, match its lines) are icon
+//! buttons and its Active is a toggle; the row's Non-local actions menu holds
+//! only what opens another module (its ledger account).
 use super::{
-    clear_flash, company, event_type, flash_map, format::told, record_id, render, Pages, DENIED,
+    clear_flash, company, event_type, flash_map, format::told, index_dialogs as dialogs, record_id,
+    render, Pages, DENIED,
 };
 use crate::{
     BankAccount, BankAccountEdit, FieldError, NewBankAccount, ReconciliationError,
@@ -8,17 +14,19 @@ use crate::{
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{Account, AccountType, LedgerError};
+use bilibi_finance_ledger::{Account, AccountName, LedgerError};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, Badge, BadgeKind, BuiltinColumn, Cell, Choice, EmptyState, Field, FlashMap,
-    FlexRow, FlexTable, Html, InputKind, ListColumns, ListSpec, ListState, StatusKind, TableEmpty,
+    page::*, params, AddToItem, AddToMenu, Alert, Badge, BadgeKind, BuiltinColumn, Cell,
+    CreateButton, EmptyState, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, ListColumns,
+    ListSpec, ListState, StatusKind, TableEmpty, Toggle,
 };
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
 };
 
+const ACCOUNT: &str = "/finance/reconciliation/accounts";
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         omit_defaults: true,
@@ -27,92 +35,57 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .shared()
     .expect("bank accounts list")
 });
-const MAPPING: [&str; 12] = [
-    "delimiter",
-    "header_rows",
-    "date",
-    "date_format",
-    "description",
-    "reference",
-    "amount",
-    "amount_sign",
-    "debit",
-    "credit",
-    "balance",
-    "decimal_separator",
-];
-fn blank() -> HashMap<String, String> {
-    [
-        ("name", ""),
-        ("ledger_account_id", ""),
-        ("charges_account_id", ""),
-        ("interest_account_id", ""),
-        ("match_window_days", "5"),
-        ("delimiter", ","),
-        ("header_rows", "1"),
-        ("date", ""),
-        ("date_format", "YYYY-MM-DD"),
-        ("description", ""),
-        ("reference", ""),
-        ("amount", ""),
-        ("amount_sign", "deposits_positive"),
-        ("debit", ""),
-        ("credit", ""),
-        ("balance", ""),
-        ("decimal_separator", "."),
-        ("reason", ""),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect()
-}
 fn columns() -> Vec<BuiltinColumn> {
     [
         ("name", "Name"),
         ("ledger", "Ledger account"),
-        ("charges", "Charges to"),
+        ("charges", "Bank charges to"),
         ("interest", "Interest to"),
-        ("window", "Window"),
-        ("status", "Status"),
+        ("window", "Match window"),
+        ("active", "Active"),
     ]
     .into_iter()
     .map(|(k, v)| BuiltinColumn::new(k, v))
     .collect()
 }
+
+/// The dialog the page holds open, with what the person typed so far.
+enum Dialog {
+    New {
+        name: String,
+        ledger: String,
+        errors: Vec<FieldError>,
+    },
+    Edit {
+        account: Box<BankAccount>,
+        name: String,
+        charges: String,
+        interest: String,
+        window: String,
+        reason: String,
+        errors: Vec<FieldError>,
+    },
+}
+
 pub(super) struct Index {
     pages: Pages,
     list: ListState,
     columns: ListColumns,
-    editing: Option<BankAccount>,
-    draft: HashMap<String, String>,
-    errors: Vec<FieldError>,
+    dialog: Option<Dialog>,
     flash: Option<(StatusKind, String)>,
+    redirect: Option<String>,
     workspace: bool,
 }
+
 #[derive(Template)]
 #[template(path = "bank_accounts.html")]
 struct View<'a> {
-    title_actions: Html,
     flash: FlashMap<'a>,
+    header: Html,
     table: Option<Html>,
     forbidden: Html,
-    chart_forbidden: Html,
-    manage_forbidden: Html,
-    fields: Option<Vec<Field>>,
-    editing: bool,
-    heading: String,
-    ledger_fixed: String,
-}
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}<a id="bank-account-{{ account.id }}-matching" href="/finance/reconciliation/accounts/{{ account.id }}/matching">Matching</a>{% if manage %}{% call ui::button(id=edit_id, event="edit", name="id", value=account.id.to_string()) %}Edit{% endcall %}{% call ui::button(id=toggle_id, event="toggle_active", name="id", value=account.id.to_string()) %}{% if account.active %}Deactivate{% else %}Activate{% endif %}{% endcall %}{% endif %}"#,
-    ext = "html"
-)]
-struct Actions<'a> {
-    account: &'a BankAccount,
-    manage: bool,
-    edit_id: String,
-    toggle_id: String,
+    notice: Html,
+    dialog: Html,
 }
 
 impl Index {
@@ -125,80 +98,126 @@ impl Index {
             pages: pages.clone(),
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Invalid)?,
             columns: ListColumns::mount("bank-accounts", columns()).map_err(|_| Error::Internal)?,
-            editing: None,
-            draft: blank(),
-            errors: vec![],
+            dialog: None,
             flash: None,
+            redirect: None,
             workspace,
         })
     }
-    fn get(&self, key: &str) -> String {
-        self.draft.get(key).cloned().unwrap_or_default()
-    }
-    fn field(&self, key: &str, dom: &str, label: &str) -> Field {
-        Field::in_form("bank_account", key)
-            .id(dom)
-            .label(label)
-            .value(self.get(key))
-            .errors(
-                self.errors
-                    .iter()
-                    .filter(|e| e.field == key || (key == "date" && e.field == "import_mapping"))
-                    .map(|e| e.message.clone())
-                    .collect(),
-            )
-    }
-    fn fields(&self, chart: &[Account]) -> Vec<Field> {
-        let choice = |kind| {
-            chart
-                .iter()
-                .filter(|a| a.postable() && a.account_type == kind)
-                .map(|a| Choice::new(format!("{} {}", a.code, a.name), a.id.to_string()))
-                .collect()
+
+    fn account_cell(chart: Option<&[Account]>, id: Option<i64>) -> Result<(String, Html)> {
+        let Some(id) = id else {
+            return Ok(("—".into(), Html::text("—")));
         };
-        let mut fields = vec![self
-            .field("name", "bank-account-name", "Name")
-            .attr("maxlength", "200")
-            .required()];
-        if self.editing.is_none() {
-            fields.push(
-                self.field(
-                    "ledger_account_id",
-                    "bank-account-ledger-account",
-                    "Ledger account (asset)",
-                )
-                .kind(InputKind::Select)
-                .prompt("Choose an account")
-                .options(choice(AccountType::Asset))
-                .required(),
-            );
+        match chart.and_then(|c| c.iter().find(|a| a.id == id)) {
+            Some(a) => Ok((
+                format!("{} · {}", a.name, a.code),
+                render(AccountName {
+                    name: &a.name,
+                    code: &a.code,
+                })?,
+            )),
+            None => Ok((
+                "Account unavailable".into(),
+                Html::text("Account unavailable"),
+            )),
         }
-        fields.extend([
-            self.field("charges_account_id","bank-account-charges-account","Bank charges post to (expense)").kind(InputKind::Select).prompt("Not set").options(choice(AccountType::Expense)),
-            self.field("interest_account_id","bank-account-interest-account","Interest posts to (income)").kind(InputKind::Select).prompt("Not set").options(choice(AccountType::Income)),
-            self.field("match_window_days","bank-account-window","Suggested match window (days)").kind(InputKind::Number).attr("min","0").attr("max","90").hint("How far apart a statement line's and an entry's dates may be for a suggested match."),
-            self.field("delimiter","bank-account-delimiter","Column separator").kind(InputKind::Select).options([("Comma",","),("Semicolon",";"),("Tab","\t"),("Pipe","|")].into_iter().map(|(l,v)|Choice::new(l,v)).collect()),
-            self.field("header_rows","bank-account-header-rows","Rows before the data").kind(InputKind::Number).attr("min","0").attr("max","20").hint("The last of them is the header row; 0 when the file has none."),
-            self.field("date","bank-account-date","Date column").required(),
-            self.field("date_format","bank-account-date-format","Date format").kind(InputKind::Select).options(crate::DATE_FORMATS.into_iter().map(|v|Choice::new(v,v)).collect()),
-            self.field("description","bank-account-description","Description column").required(),
-            self.field("reference","bank-account-reference","Reference column"),
-            self.field("amount","bank-account-amount","Amount column").hint("One signed column; leave blank when the file has debit and credit columns."),
-            self.field("amount_sign","bank-account-amount-sign","Sign of the amount column").kind(InputKind::Select).options(vec![Choice::new("Money in is positive","deposits_positive"),Choice::new("Money out is positive","withdrawals_positive")]),
-            self.field("debit","bank-account-debit","Debit column (money out)"),
-            self.field("credit","bank-account-credit","Credit column (money in)"),
-            self.field("balance","bank-account-balance","Running balance column").hint("Optional; with it, each import checks the balances follow from the amounts."),
-            self.field("decimal_separator","bank-account-decimal-separator","Decimal separator").kind(InputKind::Select).options(vec![Choice::new("Point (1,234.56)","."),Choice::new("Comma (1.234,56)",",")]),
-        ]);
-        if self.editing.is_some() {
-            fields.push(
-                self.field("reason", "bank-account-reason", "Reason for the change")
-                    .attr("maxlength", "500")
-                    .wrapper_class("md:col-span-2 mb-4"),
-            );
-        }
-        fields
     }
+
+    fn row(&self, a: &BankAccount, chart: Option<&[Account]>, manage: bool) -> Result<FlexRow> {
+        let key = a.id.to_string();
+        let href = format!("{ACCOUNT}/{}", a.id);
+        let link = render(bilibi_ui::RecordLink {
+            workspace: self.workspace,
+            kind: "finance/reconciliation/bank_account",
+            record_id: &key,
+            href: &href,
+            class: "font-medium text-ink-strong hover:underline",
+            body: Html::text(&a.name),
+        })?;
+        let (ledger_text, ledger) = Self::account_cell(chart, Some(a.ledger_account_id))?;
+        let (charges_text, charges) = Self::account_cell(chart, a.charges_account_id)?;
+        let (interest_text, interest) = Self::account_cell(chart, a.interest_account_id)?;
+        let active = if manage {
+            render(Toggle {
+                on: a.active,
+                label: &format!("{} is active", a.name),
+                id: &format!("bank-account-{}-active", a.id),
+                event: "toggle_active",
+                name: "id",
+                value: &key,
+                disabled: false,
+            })?
+        } else {
+            render(Badge {
+                kind: if a.active {
+                    BadgeKind::Success
+                } else {
+                    BadgeKind::Neutral
+                },
+                dot: false,
+                class: "",
+                body: Html::text(if a.active { "Active" } else { "Inactive" }),
+            })?
+        };
+        let mut row = FlexRow::new(key.clone())
+            .cell("name", Cell::text(&a.name))
+            .slot("name", link)
+            .cell("ledger", Cell::text(ledger_text))
+            .slot("ledger", ledger)
+            .cell("charges", Cell::text(charges_text))
+            .slot("charges", charges)
+            .cell("interest", Cell::text(interest_text))
+            .slot("interest", interest)
+            .cell(
+                "window",
+                Cell::text(format!(
+                    "{} {}",
+                    a.match_window_days,
+                    if a.match_window_days == 1 {
+                        "day"
+                    } else {
+                        "days"
+                    }
+                )),
+            )
+            .cell("active", Cell::text(if a.active { "Yes" } else { "No" }))
+            .slot("active", active);
+        row.dom_id = Some(format!("bank-account-{}", a.id));
+        // Local actions on this bank account: plain icon buttons.
+        let mut actions = Html::EMPTY;
+        if a.active {
+            let label = format!("Match statement lines of {}", a.name);
+            actions.push(&render(IconButton {
+                id: &format!("bank-account-{}-matching", a.id),
+                href: &format!("{ACCOUNT}/{}/matching", a.id),
+                ..IconButton::new("arrows-right-left", &label)
+            })?);
+        }
+        if manage {
+            let label = format!("Edit {}", a.name);
+            actions.push(&render(IconButton {
+                id: &format!("bank-account-{}-edit", a.id),
+                event: "edit",
+                name: "id",
+                value: &key,
+                ..IconButton::new("pencil-square", &label)
+            })?);
+        }
+        // Non-local: the ledger account it posts to, in the Ledger module.
+        actions.push(&render(AddToMenu::new(
+            format!("bank-account-{}-actions", a.id),
+            a.name.clone(),
+            vec![AddToItem {
+                label: "Ledger account".into(),
+                href: format!("/finance/ledger/accounts/{}", a.ledger_account_id),
+                disabled: None,
+            }],
+        ))?);
+        row.actions = actions;
+        Ok(row)
+    }
+
     async fn body(&self, scope: &Scope) -> Result<String> {
         let company = company(scope)?;
         let accounts = told(
@@ -213,368 +232,321 @@ impl Index {
             Err(_) => None,
         };
         let manage = self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await?;
-        let label = |id: Option<i64>| {
-            id.map(|id| {
-                chart
-                    .as_ref()
-                    .and_then(|v| v.iter().find(|a| a.id == id))
-                    .map(|a| format!("{} {}", a.code, a.name))
-                    .unwrap_or_else(|| "Account unavailable".into())
+        let can_add = accounts.is_ok() && manage && chart.is_some();
+        let add = |id: &'static str| -> Result<Html> {
+            render(CreateButton {
+                noun: "Bank account",
+                id,
+                event: "new",
+                button_type: "button",
+                ..CreateButton::default()
             })
-            .unwrap_or_else(|| "—".into())
         };
-        let table = if let Ok(accounts) = &accounts {
-            let mut rows = vec![];
-            for a in accounts {
-                let key = a.id.to_string();
-                let href = format!("/finance/reconciliation/accounts/{}", a.id);
-                let link = render(bilibi_ui::RecordLink {
-                    workspace: self.workspace,
-                    kind: "finance/reconciliation/bank_account",
-                    record_id: &key,
-                    href: &href,
-                    class: "font-medium text-ink-strong hover:underline",
-                    body: Html::text(&a.name),
-                })?;
-                let mut row = FlexRow::new(key)
-                    .cell("name", Cell::text(&a.name))
-                    .slot("name", link)
-                    .cell("ledger", Cell::text(label(Some(a.ledger_account_id))))
-                    .cell("charges", Cell::text(label(a.charges_account_id)))
-                    .cell("interest", Cell::text(label(a.interest_account_id)))
-                    .cell(
-                        "window",
-                        Cell::text(format!("{} days", a.match_window_days)),
-                    )
-                    .slot(
-                        "status",
-                        render(Badge {
-                            kind: if a.active {
-                                BadgeKind::Success
-                            } else {
-                                BadgeKind::Neutral
-                            },
-                            dot: false,
-                            class: "",
-                            body: Html::text(if a.active { "active" } else { "inactive" }),
-                        })?,
-                    );
-                row.dom_id = Some(format!("bank-account-{}", a.id));
-                row.actions = render(Actions {
-                    account: a,
-                    manage,
-                    edit_id: format!("bank-account-{}-edit", a.id),
-                    toggle_id: format!("bank-account-{}-toggle", a.id),
-                })?;
-                rows.push(row);
-            }
-            let mut table =
-                FlexTable::new("bank-accounts-table", self.columns.flex_columns(), rows);
-            table.event = "accounts_grid";
-            table.actions = true;
-            table.framed = false;
-            table.zoom = self.columns.zoom;
-            table.suggestions = self.columns.flex_suggestions();
-            table.add_query = &self.columns.add_query;
-            table.empty = Some(TableEmpty::State(EmptyState::missing(
-                "No bank accounts yet",
-                "Add the first bank account below to start importing its statements.",
-            )));
-            Some(render(table)?)
-        } else {
-            None
-        };
-        View {
-            title_actions: bilibi_ui::Html::EMPTY,
+        let header = render(Header {
+            title: Html::text("Bank accounts"),
+            subtitle: "",
+            title_actions: Html::EMPTY,
+            actions: if can_add {
+                add("bank-account-new")?
+            } else {
+                Html::EMPTY
+            },
+        })?;
+        let mut view = View {
             flash: flash_map(&self.flash),
-            table,
-            forbidden: render(
-                EmptyState::forbidden("view bank reconciliation").id("bank-accounts-forbidden"),
-            )?,
-            chart_forbidden: if accounts.is_ok() && chart.is_none() {
-                render(
-                    EmptyState::forbidden(
-                        "view the ledger's chart of accounts, which a bank account is mapped to",
-                    )
-                    .id("bank-accounts-chart-forbidden"),
-                )?
-            } else {
-                Html::EMPTY
-            },
-            manage_forbidden: if accounts.is_ok() && chart.is_some() && !manage {
-                render(
-                    EmptyState::forbidden("add or change bank accounts")
-                        .id("bank-accounts-manage-forbidden"),
-                )?
-            } else {
-                Html::EMPTY
-            },
-            fields: if accounts.is_ok() && manage {
-                chart.as_ref().map(|c| self.fields(c))
-            } else {
-                None
-            },
-            editing: self.editing.is_some(),
-            heading: self
-                .editing
-                .as_ref()
-                .map(|a| format!("Change {}", a.name))
-                .unwrap_or_else(|| "Add a bank account".into()),
-            ledger_fixed: self
-                .editing
-                .as_ref()
-                .map(|a| format!("{} (never changes)", label(Some(a.ledger_account_id))))
-                .unwrap_or_default(),
-        }
-        .render()
-        .map_err(|_| Error::Internal)
-    }
-    async fn save(&mut self, scope: &Scope) -> Result<()> {
-        if !self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await? {
-            self.flash = Some((StatusKind::Error, DENIED.into()));
-            return Ok(());
-        }
-        let mapping = MAPPING
-            .into_iter()
-            .map(|key| {
-                let text = self.get(key);
-                let text = text.trim();
-                let value = if key == "header_rows" {
-                    text.parse::<i64>()
-                        .ok()
-                        .map(serde_json::Value::from)
-                        .unwrap_or(serde_json::Value::Null)
-                } else if [
-                    "date",
-                    "description",
-                    "reference",
-                    "amount",
-                    "debit",
-                    "credit",
-                    "balance",
-                ]
-                .contains(&key)
-                {
-                    if text.is_empty() {
-                        serde_json::Value::Null
-                    } else {
-                        text.parse::<u32>()
-                            .ok()
-                            .filter(|v| *v > 0)
-                            .map(serde_json::Value::from)
-                            .unwrap_or_else(|| text.into())
-                    }
-                } else if key == "delimiter" {
-                    self.get(key).into()
-                } else {
-                    text.into()
-                };
-                (key.to_owned(), value)
-            })
-            .collect::<serde_json::Map<_, _>>();
-        let mut errors = vec![];
-        let mut optional = |key: &'static str| {
-            let text = self.get(key);
-            if text.trim().is_empty() {
-                None
-            } else {
-                match text.trim().parse::<i64>() {
-                    Ok(id) if id > 0 => Some(id),
-                    _ => {
-                        errors.push(FieldError::new(key, "is invalid"));
-                        None
-                    }
-                }
+            header,
+            table: None,
+            forbidden: Html::EMPTY,
+            notice: Html::EMPTY,
+            dialog: Html::EMPTY,
+        };
+        let accounts = match accounts {
+            Ok(accounts) => accounts,
+            Err(_) => {
+                view.forbidden = render(
+                    EmptyState::forbidden("view bank accounts").id("bank-accounts-forbidden"),
+                )?;
+                return view.render().map_err(|_| Error::Internal);
             }
         };
-        let charges = optional("charges_account_id");
-        let interest = optional("interest_account_id");
-        if !errors.is_empty() {
-            self.errors = errors;
-            self.flash = Some((StatusKind::Error, "Refused: account is invalid.".into()));
+        let rows = accounts
+            .iter()
+            .map(|a| self.row(a, chart.as_deref(), manage))
+            .collect::<Result<Vec<_>>>()?;
+        let mut empty = EmptyState::missing(
+            "No bank accounts yet",
+            "Add a bank account to import its statements and match them with the books.",
+        );
+        if can_add {
+            empty = empty.action(add("bank-accounts-empty-new")?);
+        }
+        let mut table = FlexTable::new("bank-accounts-table", self.columns.flex_columns(), rows);
+        table.event = "accounts_grid";
+        table.caption = "Bank accounts";
+        table.actions = !accounts.is_empty();
+        table.framed = false;
+        table.zoom = self.columns.zoom;
+        table.suggestions = self.columns.flex_suggestions();
+        table.add_query = &self.columns.add_query;
+        table.empty = Some(TableEmpty::State(empty));
+        view.table = Some(render(table)?);
+        if chart.is_none() && manage {
+            view.notice = render(Alert {
+                id: "bank-accounts-chart-forbidden",
+                kind: StatusKind::Info,
+                body: Html::text(
+                    "Adding or changing a bank account needs access to view the chart of accounts.",
+                ),
+                ..Alert::default()
+            })?;
+        }
+        if let (Some(dialog), Some(chart), true) = (&self.dialog, &chart, manage) {
+            view.dialog = match dialog {
+                Dialog::New {
+                    name,
+                    ledger,
+                    errors,
+                } => {
+                    let taken: Vec<i64> = accounts.iter().map(|a| a.ledger_account_id).collect();
+                    let company_name = self.pages.company_name(scope).await?;
+                    dialogs::new_dialog(&company_name, chart, &taken, name, ledger, errors)?
+                }
+                Dialog::Edit {
+                    account,
+                    name,
+                    charges,
+                    interest,
+                    window,
+                    reason,
+                    errors,
+                } => dialogs::edit_dialog(
+                    chart, account, name, charges, interest, window, reason, errors,
+                )?,
+            };
+        }
+        view.render().map_err(|_| Error::Internal)
+    }
+
+    /// Keeps what the person typed in the open dialog.
+    fn keep(&mut self, value: &serde_json::Value) {
+        let form = params::form_values(value, "bank_account");
+        let get = |key: &str| form.get(key).cloned().unwrap_or_default();
+        match &mut self.dialog {
+            Some(Dialog::New { name, ledger, .. }) => {
+                *name = get("name");
+                *ledger = get("ledger_account_id");
+            }
+            Some(Dialog::Edit {
+                name,
+                charges,
+                interest,
+                window,
+                reason,
+                ..
+            }) => {
+                *name = get("name");
+                *charges = get("charges_account_id");
+                *interest = get("interest_account_id");
+                *window = get("match_window_days");
+                *reason = get("reason");
+            }
+            None => {}
+        }
+    }
+
+    async fn create(&mut self, scope: &Scope) -> Result<()> {
+        let Some(Dialog::New {
+            name,
+            ledger,
+            errors,
+        }) = &mut self.dialog
+        else {
+            return Ok(());
+        };
+        let Some(ledger_account_id) = dialogs::optional_id(ledger) else {
+            *errors = vec![FieldError {
+                field: "ledger_account_id",
+                message: "can't be blank".into(),
+            }];
+            return Ok(());
+        };
+        let result = self
+            .pages
+            .reconciliation
+            .create_bank_account(
+                scope,
+                company(scope)?,
+                &NewBankAccount {
+                    name: name.clone(),
+                    ledger_account_id,
+                    import_mapping: serde_json::Value::Null,
+                    charges_account_id: None,
+                    interest_account_id: None,
+                    match_window_days: None,
+                    active: None,
+                    reason: None,
+                },
+            )
+            .await;
+        if let Err(ReconciliationError::Invalid(refused)) = &result {
+            *errors = refused.clone();
             return Ok(());
         }
-        let result = if let Some(a) = &self.editing {
-            self.pages
-                .reconciliation
-                .update_bank_account(
-                    scope,
-                    company(scope)?,
-                    a.id,
-                    &BankAccountEdit {
-                        name: Some(self.get("name")),
-                        charges_account_id: Some(charges),
-                        interest_account_id: Some(interest),
-                        match_window_days: Some(
-                            self.get("match_window_days").parse().unwrap_or(-1),
-                        ),
-                        import_mapping: Some(mapping.into()),
-                        reason: Some(self.get("reason")),
-                        ..Default::default()
-                    },
-                )
-                .await
-        } else {
-            self.pages
-                .reconciliation
-                .create_bank_account(
-                    scope,
-                    company(scope)?,
-                    &NewBankAccount {
-                        name: self.get("name"),
-                        ledger_account_id: self.get("ledger_account_id").parse().unwrap_or(0),
-                        charges_account_id: charges,
-                        interest_account_id: interest,
-                        match_window_days: Some(
-                            self.get("match_window_days").parse().unwrap_or(-1),
-                        ),
-                        import_mapping: mapping.into(),
-                        active: None,
-                        reason: Some(self.get("reason")),
-                    },
-                )
-                .await
-        };
-        self.errors = match &result {
-            Err(ReconciliationError::Invalid(e)) => e.clone(),
-            _ => vec![],
-        };
         match told(result)? {
             Ok(a) => {
+                self.dialog = None;
                 self.flash = Some((
                     StatusKind::Success,
-                    format!(
-                        "Bank account {} {}.",
-                        a.name,
-                        if self.editing.is_some() {
-                            "changed"
-                        } else {
-                            "added"
-                        }
-                    ),
+                    format!("{} added. Import its first statement.", a.name),
                 ));
-                self.editing = None;
-                self.draft = blank();
+                // The next step is the account's first import.
+                self.redirect = Some(format!("{ACCOUNT}/{}", a.id));
             }
-            Err(e) => self.flash = Some((StatusKind::Error, e)),
+            Err(e) => {
+                *errors = vec![FieldError {
+                    field: "base",
+                    message: e,
+                }]
+            }
         }
         Ok(())
     }
+
+    async fn save(&mut self, scope: &Scope) -> Result<()> {
+        let Some(Dialog::Edit {
+            account,
+            name,
+            charges,
+            interest,
+            window,
+            reason,
+            errors,
+        }) = &mut self.dialog
+        else {
+            return Ok(());
+        };
+        let result = self
+            .pages
+            .reconciliation
+            .update_bank_account(
+                scope,
+                company(scope)?,
+                account.id,
+                &BankAccountEdit {
+                    name: Some(name.clone()),
+                    charges_account_id: Some(dialogs::optional_id(charges)),
+                    interest_account_id: Some(dialogs::optional_id(interest)),
+                    match_window_days: Some(window.trim().parse().unwrap_or(-1)),
+                    reason: Some(reason.clone()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        if let Err(ReconciliationError::Invalid(refused)) = &result {
+            *errors = refused.clone();
+            return Ok(());
+        }
+        match told(result)? {
+            Ok(a) => {
+                self.dialog = None;
+                self.flash = Some((StatusKind::Success, format!("{} saved.", a.name)));
+            }
+            Err(e) => {
+                *errors = vec![FieldError {
+                    field: "base",
+                    message: e,
+                }]
+            }
+        }
+        Ok(())
+    }
+
     async fn event(&mut self, scope: &Scope, value: &serde_json::Value) -> Result<()> {
-        match event_type(value)? {
+        let event = event_type(value)?;
+        if matches!(event, "new" | "edit" | "create" | "save" | "toggle_active")
+            && !self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await?
+        {
+            self.flash = Some((StatusKind::Error, DENIED.into()));
+            return Ok(());
+        }
+        match event {
             "clear-flash" => clear_flash(&mut self.flash, value),
             "accounts_grid" => {
                 self.columns.handle(&params::string_values(value));
             }
-            "change" => self.draft = params::form_values(value, "bank_account"),
-            "save_account" => {
-                self.draft = params::form_values(value, "bank_account");
+            "close_dialog" => self.dialog = None,
+            "new_change" | "edit_change" => self.keep(value),
+            "new" => {
+                self.dialog = Some(Dialog::New {
+                    name: String::new(),
+                    ledger: String::new(),
+                    errors: vec![],
+                })
+            }
+            "create" => {
+                self.keep(value);
+                self.create(scope).await?;
+            }
+            "save" => {
+                self.keep(value);
                 self.save(scope).await?;
             }
-            "cancel" => {
-                self.editing = None;
-                self.errors.clear();
-                self.draft = blank();
-            }
             "edit" => {
-                if !self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await? {
-                    self.flash = Some((StatusKind::Error, DENIED.into()));
+                let Some(id) = record_id(value) else {
                     return Ok(());
-                }
-                if let Some(id) = record_id(value) {
-                    match told(
-                        self.pages
-                            .reconciliation
-                            .get_bank_account(scope, company(scope)?, id)
-                            .await,
-                    )? {
-                        Ok(a) => {
-                            self.draft = blank();
-                            let map = serde_json::to_value(&a.import_mapping)
-                                .map_err(|_| Error::Internal)?;
-                            for key in MAPPING {
-                                self.draft.insert(
-                                    key.into(),
-                                    match &map[key] {
-                                        serde_json::Value::Null => String::new(),
-                                        serde_json::Value::String(s) => s.clone(),
-                                        v => v.to_string(),
-                                    },
-                                );
-                            }
-                            for (key, text) in [
-                                ("name", a.name.clone()),
-                                ("ledger_account_id", a.ledger_account_id.to_string()),
-                                (
-                                    "charges_account_id",
-                                    a.charges_account_id
-                                        .map(|id| id.to_string())
-                                        .unwrap_or_default(),
-                                ),
-                                (
-                                    "interest_account_id",
-                                    a.interest_account_id
-                                        .map(|id| id.to_string())
-                                        .unwrap_or_default(),
-                                ),
-                                ("match_window_days", a.match_window_days.to_string()),
-                            ] {
-                                self.draft.insert(key.into(), text);
-                            }
-                            self.errors.clear();
-                            self.editing = Some(a);
-                        }
-                        Err(e) => self.flash = Some((StatusKind::Error, e)),
+                };
+                match told(
+                    self.pages
+                        .reconciliation
+                        .get_bank_account(scope, company(scope)?, id)
+                        .await,
+                )? {
+                    Ok(a) => {
+                        let id = |id: Option<i64>| id.map(|id| id.to_string()).unwrap_or_default();
+                        self.dialog = Some(Dialog::Edit {
+                            name: a.name.clone(),
+                            charges: id(a.charges_account_id),
+                            interest: id(a.interest_account_id),
+                            window: a.match_window_days.to_string(),
+                            reason: String::new(),
+                            errors: vec![],
+                            account: Box::new(a),
+                        });
                     }
+                    Err(e) => self.flash = Some((StatusKind::Error, e)),
                 }
             }
             "toggle_active" => {
-                if !self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await? {
-                    self.flash = Some((StatusKind::Error, DENIED.into()));
+                let Some(id) = record_id(value) else {
                     return Ok(());
-                }
-                if let Some(id) = record_id(value) {
-                    match told(
-                        self.pages
-                            .reconciliation
-                            .get_bank_account(scope, company(scope)?, id)
-                            .await,
-                    )? {
-                        Ok(a) => match told(
-                            self.pages
-                                .reconciliation
-                                .update_bank_account(
-                                    scope,
-                                    company(scope)?,
-                                    a.id,
-                                    &BankAccountEdit {
-                                        active: Some(!a.active),
-                                        ..Default::default()
-                                    },
-                                )
-                                .await,
-                        )? {
-                            Ok(a) => {
-                                self.flash = Some((
-                                    StatusKind::Success,
-                                    format!(
-                                        "{} is now {}.",
-                                        a.name,
-                                        if a.active { "active" } else { "inactive" }
-                                    ),
-                                ))
-                            }
-                            Err(e) => self.flash = Some((StatusKind::Error, e)),
-                        },
-                        Err(e) => self.flash = Some((StatusKind::Error, e)),
+                };
+                let company = company(scope)?;
+                let r = &self.pages.reconciliation;
+                let toggled = match told(r.get_bank_account(scope, company, id).await)? {
+                    Ok(a) => {
+                        let edit = BankAccountEdit {
+                            active: Some(!a.active),
+                            ..Default::default()
+                        };
+                        told(r.update_bank_account(scope, company, a.id, &edit).await)?
                     }
-                }
+                    Err(e) => Err(e),
+                };
+                self.flash = Some(match toggled {
+                    Ok(a) if a.active => (StatusKind::Success, format!("{} is active.", a.name)),
+                    Ok(a) => (
+                        StatusKind::Success,
+                        format!("{} is inactive: it imports and reconciles no more.", a.name),
+                    ),
+                    Err(e) => (StatusKind::Error, e),
+                });
             }
             _ => return Err(Error::Invalid),
         }
         Ok(())
     }
 }
+
 impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
@@ -584,6 +556,13 @@ impl LiveState<Scope, Error> for Index {
                     self.list = ListState::parse(v, SPEC.clone()).map_err(|_| Error::Invalid)?
                 }
                 LiveInput::Event(v) => self.event(request.scope, v).await?,
+            }
+            if let Some(redirect) = self.redirect.take() {
+                return Ok(LiveBody {
+                    redirect: Some(redirect),
+                    flash: self.flash.take(),
+                    ..Default::default()
+                });
             }
             Ok(LiveBody {
                 html: self.body(request.scope).await?,

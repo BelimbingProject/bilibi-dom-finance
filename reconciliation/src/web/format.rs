@@ -15,6 +15,7 @@ pub(super) fn refusal(error: &E) -> String {
         E::Unauthorized => super::DENIED.into(),
         E::CompanyArchived => "The company is archived; nothing can be changed.".into(),
         E::CompanyNotFound => "The company could not be found.".into(),
+        E::MappingNotSet => "Match the file's columns first: import it again and choose which column is which.".into(),
         E::BookNotOpen => "The company's ledger book is not open yet.".into(),
         E::BankAccountNotFound => "The bank account no longer exists.".into(),
         E::BankAccountInactive => "The bank account is inactive.".into(),
@@ -36,7 +37,7 @@ pub(super) fn refusal(error: &E) -> String {
             let more = if lines.len() > 5 {format!("; and {} more", lines.len()-5)} else {String::new()};
             format!("Nothing was imported: {shown}{more}.")
         }
-        E::MissingHeaders(headers) => format!("The file has no column named {}; check the bank account's import mapping.", headers.iter().map(|h|format!("“{h}”")).collect::<Vec<_>>().join(", ")),
+        E::MissingHeaders(headers) => format!("The file has no column named {}; import it again and match its columns.", headers.iter().map(|h|format!("“{h}”")).collect::<Vec<_>>().join(", ")),
         E::TooManyLines(max) => format!("The file holds more than {max} lines; split it."),
         E::RunningBalanceMismatch(row) => format!("Row {row}'s running balance does not follow from the amounts; check the amount sign or the balance column."),
         E::UnterminatedQuote(row) => format!("Row {row} opens a quote it never closes."),
