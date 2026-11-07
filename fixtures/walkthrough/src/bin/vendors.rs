@@ -239,9 +239,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     refused(
         p.create_bill(&manager, 1, &draft("NO-COMPANY-VIEW")).await,
         "vendor_id",
-        // Without Companies view the company's facts are restricted to the
-        // person, so the refusal names the restricted tax ID.
-        "restricted",
+        // Without Companies view the company's facts cannot be copied onto
+        // the bill, so the refusal names the missing permission.
+        "needs Companies view permission to copy the company's tax ID onto the document",
     );
     grants
         .set_direct(&reviewer, manager.user(), bilibi_company::VIEW, None)

@@ -171,10 +171,7 @@ impl Receivables {
             .parse()
             .map_err(|_| invalid("issue_date", "is invalid"))?;
         if draft.kind == "invoice" {
-            if !customer.active {
-                return Err(invalid("customer_id", "is inactive"));
-            }
-            self.invoiceable(client, scope, company, &customer).await?;
+            Self::invoiceable(&customer)?;
         }
         if series["active"] != true {
             return Err(invalid("series_id", "is inactive"));

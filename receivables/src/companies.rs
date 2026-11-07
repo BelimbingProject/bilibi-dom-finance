@@ -73,7 +73,7 @@ impl Receivables {
             .map_err(|e| match e {
                 Error::Forbidden => invalid(
                     "customer_id",
-                    "needs Addresses view permission to freeze the party's billing address",
+                    "needs Addresses view permission to copy the billing address onto the document",
                 ),
                 other => other.into(),
             })?
@@ -103,65 +103,40 @@ impl Receivables {
         }
         Ok(frozen)
     }
-    pub(crate) async fn invoiceable(
-        &self,
-        client: &dyn OperationClient,
-        scope: &Scope,
-        source: i64,
-        customer: &Customer,
-    ) -> Result<()> {
-        if !customer.active {
-            return Err(invalid("customer_id", "is an inactive customer"));
-        }
-        if !customer.party.active() {
-            return Err(invalid(
-                "customer_id",
-                match (customer.party.kind.as_str(), customer.party.status.as_str()) {
-                    ("company", "pending") => {
-                        "is a pending company; activate it in Companies before invoicing"
-                    }
-                    ("company", "suspended") => {
-                        "is a suspended company; reactivate it in Companies before invoicing"
-                    }
-                    ("company", "archived") => "is an archived company",
-                    ("person", "retired") => "is a retired person",
-                    _ => "the linked Core party is not available",
+    /// A new invoice goes only to a customer that is active in Finance and
+    /// whose Core company or person is active; every other status is refused
+    /// by name. Credit notes, receipts and reversals do not ask.
+    pub(crate) fn invoiceable(customer: &Customer) -> Result<()> {
+        let (what, status) = if !customer.active {
+            ("customer", "inactive")
+        } else if !customer.party.active() {
+            (
+                match customer.party.kind.as_str() {
+                    "person" => "person",
+                    _ => "company",
                 },
-            ));
-        }
-        let role = self.customer_role(client, scope, "customer_id").await?;
-        if self
-            .current_customer_relationship(
-                client,
-                scope,
-                source,
-                &customer.party.kind,
-                customer.party.id,
-                &role,
+                customer.party.status.as_str(),
             )
-            .await?
-            .is_none()
-        {
-            return Err(invalid(
-                "customer_id",
-                "has no current customer relationship from the current company; record it in Core before invoicing",
-            ));
-        }
-        Ok(())
+        } else {
+            return Ok(());
+        };
+        Err(invalid(
+            "customer_id",
+            format!("This {what} is {status}, so it cannot be invoiced"),
+        ))
     }
     /// Without Companies view the role read is refused as a raw `Forbidden`,
-    /// which the live transport treats as fatal; name it on `field` instead.
+    /// which the live transport treats as fatal; name it instead.
     async fn customer_role(
         &self,
         client: &dyn OperationClient,
         scope: &Scope,
-        field: &'static str,
     ) -> Result<RelationshipRole> {
         bilibi_company::relationship_role_by_code(client, scope, "customer")
             .await
             .map_err(|e| match e {
                 Error::Forbidden => invalid(
-                    field,
+                    "base",
                     "needs Companies view permission to check the customer relationship",
                 ),
                 other => other.into(),
@@ -204,7 +179,7 @@ impl Receivables {
         if let Some(id) = target.id {
             if client.query_opt("SELECT id FROM finance_receivables_customers WHERE tenant_id=$1 AND company_id=$2 AND record_kind=$3 AND record_id=$4",&[&scope.tenant(),&source,&target.kind,&id.to_string()]).await?.is_some(){return Err(invalid("record_id","is already a customer of the current company"));}
         }
-        let role = self.customer_role(client, scope, "base").await?;
+        let role = self.customer_role(client, scope).await?;
         let current = match target.id {
             Some(id) => {
                 self.current_customer_relationship(client, scope, source, &target.kind, id, &role)
@@ -238,7 +213,7 @@ impl Receivables {
         let party = PartyLinks::new(&self.parties)
             .compose_target(&self.records, tx, scope, source, attrs)
             .await?;
-        let role = self.customer_role(tx.sql(), scope, "base").await?;
+        let role = self.customer_role(tx.sql(), scope).await?;
         if self
             .current_customer_relationship(tx.sql(), scope, source, &party.kind, party.id, &role)
             .await?

@@ -119,6 +119,20 @@ impl<'a> PartyLinks<'a> {
         kind: &str,
         id: i64,
     ) -> Result<PartyFacts> {
+        Ok(self.read(client, scope, kind, id).await?.0)
+    }
+
+    /// The summary, and whether the reader may see the party's record at all:
+    /// without that view every fact is withheld, which a freeze names as the
+    /// missing permission rather than as a restricted fact.
+    async fn read(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        kind: &str,
+        id: i64,
+    ) -> Result<(PartyFacts, bool)> {
+        let mut seen = true;
         let identity = self
             .parties
             .party_identity(client, scope, party_id(kind, id)?)
@@ -170,7 +184,8 @@ impl<'a> PartyLinks<'a> {
                         }
                     }
                 }
-                Err(Error::Forbidden | Error::NotFound) => {
+                Err(error @ (Error::Forbidden | Error::NotFound)) => {
+                    seen = !matches!(error, Error::Forbidden);
                     facts.restricted = ["tax_id", "registration_number", "email", "phone"]
                         .map(String::from)
                         .into();
@@ -200,13 +215,14 @@ impl<'a> PartyLinks<'a> {
                         facts.restricted.push(field);
                     }
                 }
-                Err(Error::Forbidden | Error::NotFound) => {
+                Err(error @ (Error::Forbidden | Error::NotFound)) => {
+                    seen = !matches!(error, Error::Forbidden);
                     facts.restricted = ["email", "phone"].map(String::from).into();
                 }
                 Err(error) => return Err(error.into()),
             }
         }
-        Ok(facts)
+        Ok((facts, seen))
     }
 
     /// Core identities for exact stored codes, in one call for the whole set.
@@ -471,8 +487,10 @@ impl<'a> PartyLinks<'a> {
         Ok(())
     }
 
-    /// Facts frozen on a document, with the saved Core code. A restricted
-    /// fact is refused instead of being written as an absent or masked fact.
+    /// Facts frozen on a document, with the saved Core code, read under the
+    /// issuer's own Core permissions. A fact the issuer may not see is refused,
+    /// naming the missing view or the hidden fact, instead of being written as
+    /// an absent or masked fact.
     pub async fn frozen_party(
         &self,
         client: &dyn OperationClient,
@@ -482,7 +500,7 @@ impl<'a> PartyLinks<'a> {
         field: &'static str,
         include_contacts: bool,
     ) -> Result<Value> {
-        let facts = self.summary(client, scope, kind, id).await?;
+        let (facts, seen) = self.read(client, scope, kind, id).await?;
         let required = if include_contacts {
             &["tax_id", "registration_number", "email", "phone"][..]
         } else {
@@ -497,16 +515,18 @@ impl<'a> PartyLinks<'a> {
         .iter()
         .find(|(key, _)| required.contains(key) && facts.restricted.iter().any(|f| f == key))
         {
+            let (who, view) = if kind == "company" {
+                ("company", "Companies")
+            } else {
+                ("person", "People")
+            };
             return Err(invalid(
                 field,
-                format!(
-                    "the {}'s {label} is restricted for you, so it cannot be frozen on the document",
-                    if kind == "company" {
-                        "company"
-                    } else {
-                        "person"
-                    }
-                ),
+                if seen {
+                    format!("the {who}'s {label} is restricted for you, so it cannot be copied onto the document; ask an administrator to lift the restriction")
+                } else {
+                    format!("needs {view} view permission to copy the {who}'s {label} onto the document")
+                },
             ));
         }
         let name = if kind == "company" {

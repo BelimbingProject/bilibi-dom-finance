@@ -31,7 +31,7 @@ What the role does **not** hide, because Receivables records it: the income and 
 Two details to know:
 
 - Money amounts on Receivables pages use `finance.receivables.book_figures.get`, which returns only the book's currency and decimal places under Receivables view. Preparing a draft checks the chart and currency under Receivables' own capability; it never returns the chart.
-- Preparing an invoice draft also reads the customer relationship in Core Company, which asks for Core's tenant-wide `admin.company.view`. Core keys cannot be company-scoped, so give that key on its own (a direct grant or a Companies role). Without it the draft is refused.
+- Preparing an invoice draft checks only that the customer and its Core company or person are active, so it needs no Core Companies permission. Issuing (outside this role) copies the company's facts onto the invoice and needs Core's tenant-wide `admin.company.view` and `admin.address.view`.
 
 ## Every door uses the same decision
 
