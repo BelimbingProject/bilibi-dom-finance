@@ -157,10 +157,7 @@ impl Entry {
         if let Some(owner) = &entry.owner {
             match super::owner_page(&owner.module, &owner.record) {
                 Some((href, noun)) => {
-                    let mut body = Html::text(&format!(
-                        "Posted from {} {noun}. Correct it on the ",
-                        if noun.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" }
-                    ));
+                    let mut body = Html::text(&format!("Posted from a {noun}. Correct it on the "));
                     body.push(&render(super::RecordLink {
                         href: &href,
                         label: noun,
