@@ -12,8 +12,8 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice,
     Combobox, ConfirmDialog, CreateButton, EmptyState, Field, Filter, FlexRow, FlexTable, Form,
-    Header, Html, InputKind, ListColumns, ListSpec, ListState, Modal, PageVariant, SectionHeading,
-    StatusKind, TableEmpty,
+    Header, Html, IconButton, IconKind, InputKind, ListColumns, ListSpec, ListState, Modal,
+    PageVariant, SectionHeading, StatusKind, TableEmpty,
 };
 use jiff::{civil::Date, ToSpan};
 use serde_json::json;
@@ -237,17 +237,19 @@ impl Years {
             _ => ALL_COMPANIES.to_owned(),
         };
         // The shared filter toolbar has no combobox, so the filter is its own
-        // `filters` form around one (Platform follow-up).
+        // `filters` form around one (Platform follow-up), laid out and sized
+        // as the toolbar is: one row of compact controls.
         render(Form {
             id: "ledger-years-filter",
             event: "company_filter",
             change: true,
-            class: "mb-4 max-w-sm",
+            class: "ui-compact-controls mb-3 flex flex-wrap items-start gap-x-3 gap-y-2",
             body: {
                 let mut body = render(
                     Combobox::new("ledger-years-company", format!("{FILTER_FORM}[company]"))
-                        .label("Company")
-                        .wrapper_class("mb-0")
+                        .aria_label("Company")
+                        .placeholder("All companies")
+                        .wrapper_class("mb-0 w-full sm:w-96")
                         .value(value)
                         .options(options),
                 )?;
@@ -255,6 +257,8 @@ impl Years {
                     Field::in_form(FILTER_FORM, "status")
                         .id("ledger-years-status")
                         .label("Status")
+                        .label_class("sr-only")
+                        .wrapper_class("mb-0 w-full sm:w-auto sm:min-w-36")
                         .kind(InputKind::Select)
                         .value(&self.list.filters["status"])
                         .options(vec![
@@ -535,32 +539,38 @@ impl Years {
                 "period {} ({} to {})",
                 period.period_number, period.start_date, period.end_date
             );
+            // The period's next step is local to it, so it is a plain icon
+            // button with a tooltip, raising the page's own confirmation.
             let mut actions = Html::EMPTY;
-            let mut button =
-                |kind: &str, text: &'static str, variant: ButtonVariant| -> Result<()> {
-                    actions.push(&render(Button {
-                        id: &format!("ledger-period-{kind}-{}", period.id),
-                        button_type: "button",
-                        event: "choose",
-                        name: "action",
-                        value: &format!("{kind}:{}:{}:{}", company.id, period.id, label),
-                        variant,
-                        body: Html::text(text),
-                        ..Button::default()
-                    })?);
-                    Ok(())
-                };
+            let mut button = |kind: &str, icon: &str, text: &str, danger: bool| -> Result<()> {
+                let value = format!("{kind}:{}:{}:{}", company.id, period.id, label);
+                let label = format!("{text} {label}");
+                actions.push(&render(IconButton {
+                    kind: if danger {
+                        IconKind::Danger
+                    } else {
+                        IconKind::Neutral
+                    },
+                    id: &format!("ledger-period-{kind}-{}", period.id),
+                    button_type: "button",
+                    event: "choose",
+                    name: "action",
+                    value: &value,
+                    ..IconButton::new(icon, &label)
+                })?);
+                Ok(())
+            };
             match period.status.as_str() {
                 // The last period of a year closes with the year.
                 "open" if manage && close_id == Some(period.id) && Some(period.id) != last => {
-                    button("close_period", "Close", ButtonVariant::Secondary)?
+                    button("close_period", "check-circle", "Close", false)?
                 }
                 "closed" => {
                     if reopen && !closed && reopen_id == Some(period.id) {
-                        button("reopen_period", "Reopen", ButtonVariant::Secondary)?;
+                        button("reopen_period", "arrow-uturn-left", "Reopen", false)?;
                     }
                     if lock && lock_id == Some(period.id) {
-                        button("lock_period", "Lock", ButtonVariant::Danger)?;
+                        button("lock_period", "lock-closed", "Lock for good", true)?;
                     }
                 }
                 _ => {}

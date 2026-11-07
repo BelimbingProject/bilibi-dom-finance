@@ -12,7 +12,7 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     Alert, BackLink, Badge, BadgeKind, Button, Card, Choice, Combobox, CommitStates, CommitStatus,
     ConfirmDialog, EmptyState, Fact, Facts, Header, Html, InlineChoice, InlineEdit, InlineField,
-    PageVariant, SectionHeading, StatusKind,
+    PageVariant, SectionHeading, StatusKind, Toggle,
 };
 use serde_json::{json, Value};
 
@@ -150,6 +150,11 @@ impl Account {
         };
 
         let editable = can_manage;
+        // The ledger refuses to switch off an account that still has a
+        // balance (a debit or credit side), so the toggle says so up front.
+        let has_balance = balance
+            .as_deref()
+            .is_some_and(|b| b.ends_with(" debit") || b.ends_with(" credit"));
         // An account sits in an account group of its own type.
         let groups = view::by_name(
             chart
@@ -206,9 +211,26 @@ impl Account {
                 })?,
             },
             Fact {
-                title: "Status",
+                title: "Active",
                 id: "ledger-account-status",
-                value: bilibi_ui::active_badge(account.active),
+                // Switching it off asks first, because nothing can be posted to
+                // an inactive account; switching it on does not.
+                value: if can_manage {
+                    render(Toggle {
+                        on: account.active,
+                        label: "Active",
+                        id: "ledger-account-active",
+                        event: if account.active {
+                            "ask_deactivate"
+                        } else {
+                            "activate"
+                        },
+                        disabled: account.active && has_balance,
+                        ..Toggle::default()
+                    })?
+                } else {
+                    bilibi_ui::active_badge(account.active)
+                },
             },
             Fact {
                 title: "Retained earnings",
@@ -222,7 +244,13 @@ impl Account {
             Fact {
                 title: "Balance today",
                 id: "ledger-account-balance",
-                value: Html::text(balance.as_deref().unwrap_or("—")),
+                value: Html::text(&match balance.as_deref() {
+                    Some(b) if can_manage && account.active && has_balance => {
+                        format!("{b}. It can be switched off once this is zero.")
+                    }
+                    Some(b) => b.to_owned(),
+                    None => "—".to_owned(),
+                }),
             },
         ];
         let mut card = render(SectionHeading {
@@ -264,34 +292,18 @@ impl Account {
         }
 
         let mut actions = Html::EMPTY;
-        if can_manage {
-            if account.active {
-                actions.push(&render(Button {
-                    id: "ledger-account-deactivate",
-                    button_type: "button",
-                    event: "ask_deactivate",
-                    body: Html::text("Deactivate"),
-                    ..Button::default()
-                })?);
-            } else {
-                actions.push(&render(Button {
-                    id: "ledger-account-activate",
-                    button_type: "button",
-                    event: "activate",
-                    working: "Activating…",
-                    body: Html::text("Activate"),
-                    ..Button::default()
-                })?);
-            }
-            if account.account_type == "equity" && account.active && !account.retained_earnings {
-                actions.push(&render(Button {
-                    id: "ledger-account-designate",
-                    button_type: "button",
-                    event: "ask_designate",
-                    body: Html::text("Use for retained earnings"),
-                    ..Button::default()
-                })?);
-            }
+        if can_manage
+            && account.account_type == "equity"
+            && account.active
+            && !account.retained_earnings
+        {
+            actions.push(&render(Button {
+                id: "ledger-account-designate",
+                button_type: "button",
+                event: "ask_designate",
+                body: Html::text("Use for retained earnings"),
+                ..Button::default()
+            })?);
         }
         actions.push(&render(BackLink {
             href: &format!("{INDEX}?company={company}"),

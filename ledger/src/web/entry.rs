@@ -39,10 +39,13 @@ pub(super) struct Entry {
     lines: Option<ListColumns>,
     reverse: Option<Reverse>,
     late_review: Option<LateReview>,
+    /// The address asked for the reversal dialog (`?reverse=1`, a journal
+    /// row's reverse icon): it opens on the first view if the entry can be reversed.
+    ask_reverse: bool,
 }
 
 impl Entry {
-    pub(super) fn new(pages: Pages, id: i64) -> Self {
+    pub(super) fn new(pages: Pages, id: i64, ask_reverse: bool) -> Self {
         Self {
             pages,
             id,
@@ -50,6 +53,7 @@ impl Entry {
             lines: None,
             reverse: None,
             late_review: None,
+            ask_reverse,
         }
     }
 
@@ -424,6 +428,9 @@ impl Entry {
                     view::parse(value["records"].clone()).unwrap_or_default();
                 reversible = !years.iter().any(|y| y.closing_entry_id == Some(entry.id));
             }
+        }
+        if std::mem::take(&mut self.ask_reverse) && can_post && reversible {
+            self.open_reverse(scope).await?;
         }
         if can_post && reversible {
             actions.push(&render(Button {

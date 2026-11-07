@@ -157,6 +157,8 @@ pub(super) struct Accounts {
     pages: Pages,
     list: ListState,
     columns: ListColumns,
+    /// The columns of the every-company comparison.
+    compared_columns: ListColumns,
     template_columns: ListColumns,
     flash: Flash,
     draft: Option<Draft>,
@@ -165,21 +167,38 @@ pub(super) struct Accounts {
     publication: Option<publishing::Publication>,
 }
 
+/// The company filter and the toolbar on one row.
+#[derive(askama::Template)]
+#[template(
+    source = r#"<div id="ledger-accounts-filter-region" class="flex flex-wrap items-start gap-x-3">{{ company }}{{ toolbar }}</div>"#,
+    ext = "html"
+)]
+struct FilterRegion {
+    company: Html,
+    toolbar: Html,
+}
+
 impl Accounts {
     pub(super) fn new(pages: Pages, query: &HashMap<String, String>, framed: bool) -> Result<Self> {
-        let columns = vec![
+        let columns = || {
+            vec![
+                BuiltinColumn::new("code", "Code").sortable("code"),
+                BuiltinColumn::new("name", "Name").sortable("name"),
+                BuiltinColumn::new("kind", "Kind"),
+                BuiltinColumn::new("type", "Type").sortable("type"),
+                BuiltinColumn::new("group", "Group"),
+                BuiltinColumn::new("balance", "Balance").right(),
+                BuiltinColumn::new("total", "Group total").right(),
+                BuiltinColumn::new("status", "Status"),
+            ]
+        };
+        // One company's chart names its company in the header; only the
+        // comparison of every company shows whose row and currency each is.
+        let mut compared = vec![
             BuiltinColumn::new("company", "Company"),
             BuiltinColumn::new("currency", "Currency"),
-            BuiltinColumn::new("code", "Code").sortable("code"),
-            BuiltinColumn::new("name", "Name").sortable("name"),
-            BuiltinColumn::new("kind", "Kind"),
-            BuiltinColumn::new("type", "Type").sortable("type"),
-            BuiltinColumn::new("group", "Group"),
-            BuiltinColumn::new("balance", "Balance"),
-            BuiltinColumn::new("total", "Group total"),
-            BuiltinColumn::new("status", "Status"),
-            BuiltinColumn::new("retained", "Retained earnings"),
         ];
+        compared.extend(columns());
         let template_columns = vec![
             BuiltinColumn::new("code", "Code"),
             BuiltinColumn::new("name", "Name"),
@@ -191,7 +210,13 @@ impl Accounts {
         Ok(Self {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
-            columns: ListColumns::mount("ledger-accounts-table", columns)
+            columns: ListColumns::mount("ledger-accounts-table", columns())
+                .map_err(|_| Error::Internal)?
+                .with_record_fields([
+                    bilibi_ui::RecordField::new("company", "Company"),
+                    bilibi_ui::RecordField::new("currency", "Currency"),
+                ]),
+            compared_columns: ListColumns::mount("ledger-accounts-all-table", compared)
                 .map_err(|_| Error::Internal)?,
             template_columns: ListColumns::mount("ledger-template-table", template_columns)
                 .map_err(|_| Error::Internal)?,
@@ -260,14 +285,16 @@ impl Accounts {
                 .iter()
                 .map(|c| Choice::new(&c.name, c.id.to_string())),
         );
-        body.push(&render(Form {
+        // Sized as the toolbar's controls, and drawn in its row (`table`).
+        let company_filter = render(Form {
             id: "ledger-accounts-company-filter",
             event: "company_filter",
             change: true,
-            class: "mb-4 max-w-sm",
+            class: "ui-compact-controls mb-2 w-full sm:w-72",
             body: render(
                 Combobox::new("ledger-accounts-company", "company_filter[company]")
-                    .label("Company")
+                    .aria_label("Company")
+                    .placeholder("Company")
                     .wrapper_class("mb-0")
                     .value(if all && companies.len() > 1 {
                         "all".into()
@@ -277,8 +304,9 @@ impl Accounts {
                     .options(options),
             )?,
             actions: Html::EMPTY,
-        })?);
+        })?;
         if listed.is_empty() {
+            body.push(&company_filter);
             body.push(&render(
                 EmptyState::missing("No company available", "Select a company you can work in.")
                     .id("ledger-accounts-no-company"),
@@ -409,8 +437,14 @@ impl Accounts {
             });
         }
         let rows_shown = if charts.iter().any(|c| !c.accounts.is_empty()) {
-            self.table(&charts, &mut body)?
+            self.table(&charts, company_filter, all, &mut body)?
         } else {
+            if !listed.is_empty() {
+                // Nothing to list: the filter leads the page's empty states.
+                let mut first = company_filter;
+                first.push(&body);
+                body = first;
+            }
             0
         };
         if all {
@@ -453,7 +487,18 @@ impl Accounts {
         })
     }
 
-    fn table(&mut self, charts: &[Chart], body: &mut Html) -> Result<usize> {
+    fn table(
+        &mut self,
+        charts: &[Chart],
+        company_filter: Html,
+        all: bool,
+        body: &mut Html,
+    ) -> Result<usize> {
+        let columns = if all {
+            &mut self.compared_columns
+        } else {
+            &mut self.columns
+        };
         let search = self.list.search.trim().to_lowercase();
         let by_id: HashMap<i64, &view::Account> = charts
             .iter()
@@ -505,10 +550,10 @@ impl Accounts {
             .skip(start)
             .take(self.list.page_size as usize)
             .collect();
-        self.columns.load(&page, |(_, a)| a.id.to_string());
+        columns.load(&page, |(_, a)| a.id.to_string());
 
         let form = self.list.filters_form();
-        body.push(&render(FilterToolbar::new(
+        let mut toolbar = FilterToolbar::new(
             "ledger-accounts-filters",
             vec![
                 ToolbarControl::search(
@@ -555,7 +600,12 @@ impl Accounts {
                     ],
                 ),
             ],
-        ))?);
+        );
+        toolbar.class = "min-w-0 flex-1";
+        body.push(&render(FilterRegion {
+            company: company_filter,
+            toolbar: render(toolbar)?,
+        })?);
 
         let mut rows = Vec::new();
         for (chart, account) in &page {
@@ -597,7 +647,17 @@ impl Accounts {
                             body: Html::text(&account.code),
                         })?,
                     )
-                    .cell("name", Cell::text(&account.name))
+                    .slot("name", {
+                        let mut name = Html::text(&account.name);
+                        if account.retained_earnings {
+                            name.push(&Html::text(" "));
+                            name.push(&render(Badge::status(
+                                BadgeKind::Neutral,
+                                "Retained earnings",
+                            ))?);
+                        }
+                        name
+                    })
                     .cell(
                         "kind",
                         Cell::text(if account.is_group { "Group" } else { "Account" }),
@@ -613,26 +673,18 @@ impl Accounts {
                         } else {
                             bilibi_ui::active_badge(account.active)
                         },
-                    )
-                    .cell(
-                        "retained",
-                        Cell::text(if account.retained_earnings {
-                            "Yes"
-                        } else {
-                            "—"
-                        }),
                     );
                 row.dom_id = Some(format!("ledger-account-{}", account.id));
                 row
             });
         }
-        let mut table = FlexTable::new("ledger-accounts-table", self.columns.flex_columns(), rows)
+        let mut table = FlexTable::new(&columns.id, columns.flex_columns(), rows)
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Chart of accounts";
         table.framed = false;
-        table.zoom = self.columns.zoom;
-        table.suggestions = self.columns.flex_suggestions();
-        table.add_query = &self.columns.add_query;
+        table.zoom = columns.zoom;
+        table.suggestions = columns.flex_suggestions();
+        table.add_query = &columns.add_query;
         table.empty = Some(TableEmpty::Content(Html::text(
             "Nothing matches. Change the filters, or add an account.",
         )));
@@ -830,8 +882,13 @@ impl LiveState<Scope, Error> for Accounts {
                         self.list.next_sort(value["sort"].as_str().unwrap_or(""));
                     }
                     "grid" => {
+                        let columns = if self.list.filters["company"] == "all" {
+                            &mut self.compared_columns
+                        } else {
+                            &mut self.columns
+                        };
                         if let ColumnsOutcome::Sort(key) =
-                            self.columns.handle(&params::string_values(value))
+                            columns.handle(&params::string_values(value))
                         {
                             self.list.next_sort(&key);
                         }

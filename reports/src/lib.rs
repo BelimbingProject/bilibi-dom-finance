@@ -124,6 +124,7 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                directory: services.get(bilibi_finance_ledger::PEOPLE)?,
             }))))
         } }, Service { id: "finance/reports.section-pages", factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
@@ -131,6 +132,7 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                directory: services.get(bilibi_finance_ledger::PEOPLE)?,
             }))))
         } }, Service { id: "finance/reports.control-pages", factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(controls::Pages {

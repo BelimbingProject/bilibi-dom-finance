@@ -359,7 +359,7 @@ async fn main() -> Outcome<()> {
     let single = update(
         &mut latest,
         &manager,
-        LiveInput::Event(&json!({"type":"compare","report[compare]":"false"})),
+        LiveInput::Event(&json!({"type":"compare","compare":"false"})),
     )
     .await?;
     assert_eq!(single.query["compare"], "none");
@@ -481,7 +481,9 @@ async fn pagination(
     assert_eq!(second.html.matches("<tr id=\"activity-entry-").count(), 1);
     assert!(second.html.contains("1.01"));
     assert!(!second.html.contains("id=\"activity-next\""));
-    assert!(first.html.contains("by user 1"));
+    // Who posted each entry is named, not numbered.
+    assert!(first.html.contains("by Ada Manager"));
+    assert!(!first.html.contains("by user 1"));
     // Exercise escaping through the shared activity cells as well.
     let mut own = mount(services, scope, Some(cash), &q).await?;
     let html = update(&mut own, scope, LiveInput::Refresh).await?.html;

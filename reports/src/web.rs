@@ -16,8 +16,8 @@ use bilibi_ui::{
         self, LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest, Subscription,
     },
-    params, Field, FlashMap, Html, InputKind, ListColumns, ListSpec, ListState, StatusKind, Tab,
-    Tabs, NO_FLASH,
+    params, FlashMap, Html, ListColumns, ListSpec, ListState, StatusKind, Tab, Tabs, Toggle,
+    NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -44,6 +44,7 @@ pub(crate) struct Pages {
     pub contracts: Arc<bilibi_agent_api::page::PageContracts>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 struct State {
@@ -59,6 +60,8 @@ struct State {
     browser_zone: Option<String>,
     timezone_request: String,
     loaded: Option<crate::Result<figures::Report>>,
+    /// Who posted each entry of the account entries page.
+    names: bilibi_finance_ledger::People,
     columns: HashMap<&'static str, ListColumns>,
     posting: Option<crate::PostingSubscription>,
     bridge: Option<JoinHandle<()>>,
@@ -130,6 +133,7 @@ impl State {
             browser_zone: None,
             timezone_request: Timestamp::now().to_string(),
             loaded: None,
+            names: Default::default(),
             columns: HashMap::new(),
             posting: None,
             bridge: None,
@@ -206,10 +210,25 @@ impl State {
                 )),
             };
             match self.account_id {
-                Some(id) => reports
-                    .account_activity(scope, company, id, &query)
-                    .await
-                    .map(figures::Report::Activity),
+                Some(id) => match reports.account_activity(scope, company, id, &query).await {
+                    Ok(activity) => {
+                        let client = self.pages.reports.db.get().await?;
+                        self.names = bilibi_finance_ledger::People::read(
+                            &self.pages.directory,
+                            &**client,
+                            scope,
+                            activity.entries.iter().flat_map(|own| {
+                                [
+                                    Some(own.entry.posted_by_user_id),
+                                    own.entry.posted_by_impersonator_id,
+                                ]
+                            }),
+                        )
+                        .await;
+                        Ok(figures::Report::Activity(activity))
+                    }
+                    Err(error) => Err(error),
+                },
                 None => Err(ReportsError::AccountNotFound),
             }
         } else {
@@ -330,8 +349,8 @@ impl State {
         }
         match kind {
             "compare" => {
-                let compare = params::form_values(value, "report");
-                if compare.get("compare").is_some_and(|v| v == "true") {
+                // The toggle carries the state it switches to.
+                if value["compare"].as_str() == Some("true") {
                     self.query.remove("compare");
                 } else {
                     self.query.insert("compare".into(), "none".into());
@@ -367,7 +386,7 @@ impl State {
     fn title(&self) -> Option<String> {
         match &self.loaded {
             Some(Ok(figures::Report::Activity(a))) => {
-                Some(format!("{} {}", a.account.code, a.account.name))
+                Some(format!("{} · {}", a.account.name, a.account.code))
             }
             _ => None,
         }
@@ -410,6 +429,7 @@ impl State {
                 &self.list,
                 &self.query,
                 &self.display,
+                &self.names,
                 self.framed,
             )?);
         }
@@ -436,13 +456,21 @@ impl State {
             } else {
                 Some(Html::render(&self.filter).map_err(|_| Error::Internal)?)
             },
-            compare: (!self.activity && self.view() != "overview").then(|| {
-                Field::in_form("report", "compare")
-                    .id("report-compare-input")
-                    .kind(InputKind::Checkbox)
-                    .label("Compare with the previous period")
-                    .checked(self.compare())
-            }),
+            compare: (!self.activity && self.view() != "overview")
+                .then(|| {
+                    let on = self.compare();
+                    Html::render(&Toggle {
+                        on,
+                        label: "Compare with the previous period",
+                        id: "report-compare-input",
+                        event: "compare",
+                        name: "compare",
+                        value: if on { "false" } else { "true" },
+                        ..Toggle::default()
+                    })
+                })
+                .transpose()
+                .map_err(|_| Error::Internal)?,
             timezone_request: &self.timezone_request,
         }
         .render()
@@ -628,7 +656,7 @@ struct PageView<'a> {
     before: Vec<Html>,
     after: Vec<Html>,
     filter: Option<Html>,
-    compare: Option<Field>,
+    compare: Option<Html>,
     timezone_request: &'a str,
     flash: FlashMap<'a>,
 }

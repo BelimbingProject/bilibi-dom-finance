@@ -4,19 +4,21 @@
 //! reads each company through the same contracts an agent calls (`book.get`,
 //! `fiscal_year.list`), which prove the reach again, and it never switches the
 //! session's current company.
-use super::{event_type, no_company, render, shell, view, Company, Flash, Pages, Read};
+use super::{
+    event_type, filter_combobox, no_company, render, shell, view, Company, Flash, Pages, Read,
+};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Badge, BadgeKind, BuiltinColumn, Card, Cell, Choice, Filter, FilterToolbar, FlexRow,
-    FlexTable, Header, Html, ListColumns, ListSpec, ListState, PageVariant, RecordLink, TableEmpty,
-    ToolbarControl,
+    params, AddToItem, AddToMenu, Badge, BadgeKind, BuiltinColumn, Card, Cell, Choice, Filter,
+    FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton, ListColumns, ListSpec, ListState,
+    PageVariant, RecordLink, TableEmpty, ToolbarControl,
 };
 use jiff::civil::Date;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, LazyLock},
 };
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -118,28 +120,6 @@ struct CompanyCell<'a> {
     current: bool,
 }
 
-/// The way into one company's fiscal years from its row. It filters the fiscal
-/// years page to the company; it does not switch the current company.
-#[derive(askama::Template)]
-#[template(
-    source = r#"<a id="ledger-books-open-{{ id }}" href="/finance/ledger/books/{{ id }}" aria-label="Open book of {{ name }}" class="text-link hover:underline">Open book</a>"#,
-    ext = "html"
-)]
-struct OpenLink<'a> {
-    id: i64,
-    name: &'a str,
-}
-
-#[derive(askama::Template)]
-#[template(
-    source = r#"<a id="ledger-books-years-{{ id }}" href="/finance/ledger/fiscal-years?company={{ id }}" aria-label="Fiscal years of {{ name }}" class="text-link hover:underline">Fiscal years</a>"#,
-    ext = "html"
-)]
-struct YearsLink<'a> {
-    id: i64,
-    name: &'a str,
-}
-
 /// Just the id of a row, for the column manager.
 struct Line(String);
 
@@ -165,6 +145,7 @@ impl Books {
         company: &Company,
         current: Option<i64>,
         today: Date,
+        currencies: &mut BTreeSet<String>,
     ) -> Result<Option<FlexRow>> {
         let can_open = self.pages.allowed(scope, crate::MANAGE_ACCOUNTS).await?;
         let book = match self.pages.book_in(scope, company.id).await? {
@@ -185,6 +166,9 @@ impl Books {
             Book::Open(b) => b.currency_code.as_str(),
             _ => "",
         };
+        if !currency.is_empty() {
+            currencies.insert(currency.to_owned());
+        }
         if (!self.list.search.is_empty()
             && !company
                 .name
@@ -317,26 +301,42 @@ impl Books {
                     .cell("open", dash());
             }
         }
-        // Years can be read only where the book is open.
-        if matches!(book, Book::Open(_)) {
-            row = row.slot(
-                "view",
-                render(YearsLink {
-                    id: company.id,
-                    name: &company.name,
-                })?,
-            );
-        } else if matches!(book, Book::NotOpen) && can_open {
-            row = row.slot(
-                "view",
-                render(OpenLink {
-                    id: company.id,
-                    name: &company.name,
-                })?,
-            );
-        } else {
-            row = row.cell("view", dash());
+        // Non-local actions holds only what leads to another kind of record (the
+        // company's fiscal years and chart); opening this company's own book
+        // is a plain icon button on the row. The row's name opens the book.
+        let link = |label: &str, href: String| AddToItem {
+            label: label.into(),
+            href,
+            disabled: None,
+        };
+        let items = match &book {
+            Book::Open(_) => vec![
+                link(
+                    "Fiscal years",
+                    format!("/finance/ledger/fiscal-years?company={}", company.id),
+                ),
+                link(
+                    "Chart of accounts",
+                    format!("/finance/ledger/accounts?company={}", company.id),
+                ),
+            ],
+            _ => Vec::new(),
+        };
+        let mut actions = Html::EMPTY;
+        if matches!(book, Book::NotOpen) && can_open {
+            let label = format!("Open the book of {}", company.name);
+            actions.push(&render(IconButton {
+                id: &format!("ledger-books-open-{}", company.id),
+                href: &format!("/finance/ledger/books/{}", company.id),
+                ..IconButton::new("book-open", &label)
+            })?);
         }
+        actions.push(&render(AddToMenu::new(
+            format!("ledger-books-{}-actions", company.id),
+            company.name.clone(),
+            items,
+        ))?);
+        row.actions = actions;
         Ok((self.filter("year") == "all" || self.filter("year") == year_state).then_some(row))
     }
 
@@ -345,7 +345,7 @@ impl Books {
         let today = self.pages.today(scope).await?;
         let current = Pages::company(scope);
         let form = self.list.filters_form();
-        let mut body = render(FilterToolbar::new(
+        let mut toolbar = FilterToolbar::new(
             "ledger-books-filters",
             vec![
                 ToolbarControl::search(
@@ -368,13 +368,6 @@ impl Books {
                         Choice::new("Could not be read", "unavailable"),
                     ],
                 ),
-                ToolbarControl::search(
-                    "ledger-books-currency",
-                    "currency",
-                    "Currency",
-                    &form["currency"],
-                    "Currency code",
-                ),
                 ToolbarControl::select(
                     "ledger-books-year",
                     "year",
@@ -391,14 +384,22 @@ impl Books {
                     ],
                 ),
             ],
-        ))?;
+        );
+        // The toolbar shares its row with the currency filter.
+        toolbar.class = "min-w-0 flex-1";
+        let toolbar = render(toolbar)?;
+        let mut body = Html::EMPTY;
+        let mut currencies = BTreeSet::new();
         let mut shown = 0;
         if companies.is_empty() {
             body.push(&no_company("ledger-books-no-company")?);
         } else {
             let mut rows = Vec::new();
             for company in &companies {
-                if let Some(row) = self.row(scope, company, current, today).await? {
+                if let Some(row) = self
+                    .row(scope, company, current, today, &mut currencies)
+                    .await?
+                {
                     rows.push(row);
                 }
             }
@@ -413,7 +414,6 @@ impl Books {
                             BuiltinColumn::new("currency", "Currency"),
                             BuiltinColumn::new("year", "Latest fiscal year"),
                             BuiltinColumn::new("open", "Earliest open period"),
-                            BuiltinColumn::new("view", "See"),
                         ],
                     )
                     .map_err(|_| Error::Internal)?,
@@ -422,7 +422,9 @@ impl Books {
             let columns = self.columns.as_mut().ok_or(Error::Internal)?;
             let lines: Vec<Line> = companies.iter().map(|c| Line(c.id.to_string())).collect();
             columns.load(&lines, |line| line.0.clone());
+            let actions = rows.iter().any(|row| !row.actions.is_empty());
             let mut table = FlexTable::new("ledger-books-table", columns.flex_columns(), rows);
+            table.actions = actions;
             table.caption = "Company books";
             table.framed = false;
             table.zoom = columns.zoom;
@@ -436,12 +438,33 @@ impl Books {
                 ..Card::default()
             })?);
         }
+        // The currencies of the books on this page, named as Core Currency
+        // names them, so the filter finds "ringgit" as well as "MYR".
+        let names = self.currency_names(scope).await?;
+        let filters = render(FilterRegion {
+            toolbar,
+            currency: filter_combobox(
+                "ledger-books-currency",
+                "currency",
+                "Currency",
+                self.filter("currency"),
+                "All currencies",
+                currencies
+                    .iter()
+                    .map(|code| {
+                        Choice::new(names.get(code).map_or(code.as_str(), String::as_str), code)
+                            .detail(code)
+                    })
+                    .collect(),
+            )?,
+        })?;
         let mut page = render(Header {
             title: Html::text("Company books"),
             subtitle: "Company books you can access",
             title_actions: bilibi_ui::Html::EMPTY,
             ..Header::default()
         })?;
+        page.push(&filters);
         page.push(&body);
         Ok(LiveBody {
             html: shell("ledger-books", PageVariant::List, &self.flash, page)?,
@@ -450,6 +473,52 @@ impl Books {
             ..LiveBody::default()
         })
     }
+}
+
+impl Books {
+    /// Currency names by code, from the list a book is opened from.
+    async fn currency_names(&self, scope: &Scope) -> Result<BTreeMap<String, String>> {
+        #[derive(Default, serde::Deserialize)]
+        struct Options {
+            #[serde(default)]
+            currencies: Vec<Listed>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            code: String,
+            name: String,
+        }
+        Ok(
+            match self
+                .pages
+                .read(
+                    scope,
+                    "finance.ledger.book.currencies",
+                    serde_json::json!({}),
+                )
+                .await?
+            {
+                Read::Found(value) => view::parse::<Options>(value)
+                    .unwrap_or_default()
+                    .currencies
+                    .into_iter()
+                    .map(|c| (c.code, c.name))
+                    .collect(),
+                _ => BTreeMap::new(),
+            },
+        )
+    }
+}
+
+/// The toolbar and the currency filter on one row.
+#[derive(askama::Template)]
+#[template(
+    source = r#"<div id="ledger-books-filter-region" class="flex flex-wrap items-start gap-x-3">{{ toolbar }}{{ currency }}</div>"#,
+    ext = "html"
+)]
+struct FilterRegion {
+    toolbar: Html,
+    currency: Html,
 }
 
 impl LiveState<Scope, Error> for Books {

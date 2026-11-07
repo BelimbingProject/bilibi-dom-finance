@@ -321,7 +321,7 @@ pub(crate) async fn validate_change(
                 format!(
                     "account {} has a balance of {}; it can be deactivated once its balance is zero",
                     current.code,
-                    balance.abs().shown(shown_units)
+                    balance.abs().display(shown_units)
                 ),
             ));
         }

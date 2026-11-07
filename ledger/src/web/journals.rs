@@ -1,8 +1,9 @@
 //! Journals: postings from every source and unposted manual journals.
 //! Approved manual journals appear as their posting; waiting journals post nothing.
 use super::{
-    dialog_actions, error_text, event_type, figure, journal_period::Window, no_company, render,
-    shell, source_label, unavailable, view, Failure, Flash, Pages, Read, Refusal,
+    dialog_actions, error_text, event_type, figure, filter_combobox, journal_period::Window,
+    no_company, render, shell, source_label, unavailable, view, Failure, Flash, Pages, Read,
+    Refusal,
 };
 use crate::SUBMIT_JOURNALS;
 use askama::Template;
@@ -14,8 +15,8 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Alert, Attrs, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Cell,
     Choice, ColumnsOutcome, Combobox, CreateButton, EmptyState, Field, Filter, FilterToolbar,
-    FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns, ListSpec, ListState, Modal,
-    ModalWidth, PageVariant, RecordLink, StatusKind, TableEmpty, ToolbarControl,
+    FlexRow, FlexTable, Form, Header, Html, IconButton, InputKind, ListColumns, ListSpec,
+    ListState, Modal, ModalWidth, PageVariant, RecordLink, StatusKind, TableEmpty, ToolbarControl,
 };
 use jiff::Timestamp;
 use rust_decimal::Decimal;
@@ -543,7 +544,6 @@ impl Journals {
     pub(super) fn new(pages: Pages, query: &HashMap<String, String>, framed: bool) -> Result<Self> {
         let columns = vec![
             BuiltinColumn::new("number", "Number"),
-            BuiltinColumn::new("request", "Request"),
             BuiltinColumn::new("date", "Date"),
             BuiltinColumn::new("description", "Description"),
             BuiltinColumn::new("source", "Source"),
@@ -564,8 +564,11 @@ impl Journals {
             timezone_request: Timestamp::now().to_string(),
             pages: pages.clone(),
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
+            // A request number matters only while a journal waits, so it is
+            // offered in the column picker rather than shown on every row.
             columns: ListColumns::mount("ledger-journals-table", columns)
-                .map_err(|_| Error::Internal)?,
+                .map_err(|_| Error::Internal)?
+                .with_record_fields([bilibi_ui::RecordField::new("request", "Request")]),
             flash: Flash::default(),
             loaded_keys: None,
             draft: None,
@@ -753,6 +756,8 @@ impl Journals {
             }
         };
         let records: Vec<ListRow> = view::parse(value["records"].clone()).unwrap_or_default();
+        let can_post = self.pages.allowed(scope, crate::POST_ENTRIES).await?;
+        let can_submit = self.pages.allowed(scope, SUBMIT_JOURNALS).await?;
         let mut sources = vec![
             Choice::new("All sources", ""),
             Choice::new("Manual", "manual"),
@@ -766,7 +771,9 @@ impl Journals {
             }
         }
         let form = self.list.filters_form();
-        let toolbar = render(FilterToolbar::new(
+        // The toolbar takes the first row; the account and the period, which
+        // it cannot hold yet, share the second at the same height.
+        let mut toolbar = FilterToolbar::new(
             "ledger-journals-filters",
             vec![
                 ToolbarControl::search(
@@ -823,32 +830,21 @@ impl Journals {
                     sources,
                 ),
             ],
-        ))?;
+        );
+        toolbar.class = "w-full";
+        let toolbar = render(toolbar)?;
         let chart = self.pages.chart(scope).await?.unwrap_or_default();
-        let mut account_options = vec![Choice::new("All accounts", "")];
-        account_options.extend(
+        let account = filter_combobox(
+            "ledger-journals-account",
+            "account",
+            "Account",
+            &form["account"],
+            "All accounts",
             view::by_name(chart.iter().filter(|a| !a.is_group))
                 .iter()
-                .map(|a| view::account_choice(a)),
-        );
-        let account = render(Form {
-            id: "ledger-journals-account-filter",
-            event: "filters",
-            change: true,
-            class: "mb-0 w-full sm:w-fit sm:min-w-36",
-            body: render(
-                Combobox::new(
-                    "ledger-journals-account",
-                    format!("{FILTERS_FORM}[account]"),
-                )
-                .label("Account")
-                .placeholder("All accounts")
-                .wrapper_class("mb-0")
-                .value(&form["account"])
-                .options(account_options),
-            )?,
-            actions: Html::EMPTY,
-        })?;
+                .map(|a| view::account_choice(a))
+                .collect(),
+        )?;
         let mut clear = Html::EMPTY;
         let period = if self.window.is_all() && !self.period.is_open() {
             let mut options = vec![Choice::new("All dates", ALL_DATES)];
@@ -991,10 +987,43 @@ impl Journals {
                         crate::MinorUnits::new(i64::from(units)),
                     ))?,
                 );
+            // The row's own verbs are local, so they are plain icon buttons
+            // with a tooltip, never Non-local actions: reverse a posted manual entry,
+            // or start a new journal from a rejected or withdrawn one. Each
+            // opens the dialog of the page that owns it.
+            let mut actions = Html::EMPTY;
+            if record.kind == "entry"
+                && record.source == "manual"
+                && record.status == "posted"
+                && can_post
+            {
+                let label = format!(
+                    "Reverse entry {}",
+                    record.number.map(|n| n.to_string()).unwrap_or_default()
+                );
+                actions.push(&render(IconButton {
+                    id: &format!("ledger-{key}-reverse"),
+                    href: &format!("{href}?reverse=1"),
+                    ..IconButton::new("arrow-uturn-left", &label)
+                })?);
+            }
+            if record.kind != "entry"
+                && matches!(record.status.as_str(), "rejected" | "withdrawn")
+                && can_submit
+            {
+                actions.push(&render(IconButton {
+                    id: &format!("ledger-{key}-copy"),
+                    href: &format!("{INDEX}?copy={}", record.id),
+                    ..IconButton::new("document-duplicate", "Copy to a new journal")
+                })?);
+            }
+            row.actions = actions;
             row.dom_id = Some(format!("ledger-{key}"));
             rows.push(row);
         }
+        let actions = rows.iter().any(|row| !row.actions.is_empty());
         let mut table = FlexTable::new("ledger-journals-table", self.columns.flex_columns(), rows);
+        table.actions = actions;
         table.caption = "Journals";
         table.framed = false;
         table.zoom = self.columns.zoom;
@@ -1437,7 +1466,7 @@ struct ListRow {
 
 #[derive(Template)]
 #[template(
-    source = r#"<div id="ledger-journals-period-region" data-hook="BrowserTimeZone" data-timezone-request="{{ timezone_request }}" class="flex flex-wrap items-start gap-3">{{ toolbar }}{{ account }}{{ period }}{{ clear }}</div>"#,
+    source = r#"<div id="ledger-journals-period-region" data-hook="BrowserTimeZone" data-timezone-request="{{ timezone_request }}" class="flex flex-wrap items-start gap-x-3">{{ toolbar }}{{ account }}{{ period }}{{ clear }}</div>"#,
     ext = "html"
 )]
 struct FilterRegion<'a> {

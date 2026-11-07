@@ -1,3 +1,3 @@
 {% import "flex_table.html" as flex %}
 {% call flex::instant(id=id, i=instant) %}{% endcall %}
-{% if !compact %}<span class="text-xs text-ink-muted">by user {{ user }}{% if let Some(impersonator) = impersonator %}, impersonated by user {{ impersonator }}{% endif %}</span>{% endif %}
+{% if !compact %}<span class="text-xs text-ink-muted">by {{ by }}</span>{% endif %}
