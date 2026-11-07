@@ -13,11 +13,10 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, AddToItem, AddToMenu, Alert, Attrs, Badge, BadgeKind, BuiltinColumn, Button,
-    ButtonVariant, Card, Cell, Choice, ColumnsOutcome, Combobox, CreateButton, EmptyState, Field,
-    Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns,
-    ListSpec, ListState, Modal, ModalWidth, PageVariant, RecordLink, StatusKind, TableEmpty,
-    ToolbarControl,
+    params, Alert, Attrs, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Cell,
+    Choice, ColumnsOutcome, Combobox, CreateButton, EmptyState, Field, Filter, FilterToolbar,
+    FlexRow, FlexTable, Form, Header, Html, IconButton, InputKind, ListColumns, ListSpec,
+    ListState, Modal, ModalWidth, PageVariant, RecordLink, StatusKind, TableEmpty, ToolbarControl,
 };
 use jiff::Timestamp;
 use rust_decimal::Decimal;
@@ -988,38 +987,37 @@ impl Journals {
                         crate::MinorUnits::new(i64::from(units)),
                     ))?,
                 );
-            // The row's own verbs, each opening the dialog of the page that
-            // owns it: reverse a posted manual entry, or start a new journal
-            // from a rejected or withdrawn one.
-            let mut items = Vec::new();
+            // The row's own verbs are local, so they are plain icon buttons
+            // with a tooltip, never Non-local actions: reverse a posted manual entry,
+            // or start a new journal from a rejected or withdrawn one. Each
+            // opens the dialog of the page that owns it.
+            let mut actions = Html::EMPTY;
             if record.kind == "entry"
                 && record.source == "manual"
                 && record.status == "posted"
                 && can_post
             {
-                items.push(AddToItem {
-                    label: "Reverse".into(),
-                    href: format!("{href}?reverse=1"),
-                    disabled: None,
-                });
+                let label = format!(
+                    "Reverse entry {}",
+                    record.number.map(|n| n.to_string()).unwrap_or_default()
+                );
+                actions.push(&render(IconButton {
+                    id: &format!("ledger-{key}-reverse"),
+                    href: &format!("{href}?reverse=1"),
+                    ..IconButton::new("arrow-uturn-left", &label)
+                })?);
             }
             if record.kind != "entry"
                 && matches!(record.status.as_str(), "rejected" | "withdrawn")
                 && can_submit
             {
-                items.push(AddToItem {
-                    label: "Copy to a new journal".into(),
-                    href: format!("{INDEX}?copy={}", record.id),
-                    disabled: None,
-                });
+                actions.push(&render(IconButton {
+                    id: &format!("ledger-{key}-copy"),
+                    href: &format!("{INDEX}?copy={}", record.id),
+                    ..IconButton::new("document-duplicate", "Copy to a new journal")
+                })?);
             }
-            row.actions = render(AddToMenu::new(
-                format!("ledger-{key}-actions"),
-                record
-                    .number
-                    .map_or_else(|| record.description.clone(), |n| format!("entry {n}")),
-                items,
-            ))?;
+            row.actions = actions;
             row.dom_id = Some(format!("ledger-{key}"));
             rows.push(row);
         }

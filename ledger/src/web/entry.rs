@@ -40,7 +40,7 @@ pub(super) struct Entry {
     reverse: Option<Reverse>,
     late_review: Option<LateReview>,
     /// The address asked for the reversal dialog (`?reverse=1`, a journal
-    /// row's Actions…): it opens on the first view if the entry can be reversed.
+    /// row's reverse icon): it opens on the first view if the entry can be reversed.
     ask_reverse: bool,
 }
 

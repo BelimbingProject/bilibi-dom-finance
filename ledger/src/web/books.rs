@@ -13,8 +13,8 @@ use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, AddToItem, AddToMenu, Badge, BadgeKind, BuiltinColumn, Card, Cell, Choice, Filter,
-    FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns, ListSpec, ListState, PageVariant,
-    RecordLink, TableEmpty, ToolbarControl,
+    FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton, ListColumns, ListSpec, ListState,
+    PageVariant, RecordLink, TableEmpty, ToolbarControl,
 };
 use jiff::civil::Date;
 use std::{
@@ -301,9 +301,9 @@ impl Books {
                     .cell("open", dash());
             }
         }
-        // What a person does with a company's book, from its row: open the
-        // book, or go on to its fiscal years and chart, which are read only
-        // where the book is open.
+        // Non-local actions holds only what leads to another kind of record (the
+        // company's fiscal years and chart); opening this company's own book
+        // is a plain icon button on the row. The row's name opens the book.
         let link = |label: &str, href: String| AddToItem {
             label: label.into(),
             href,
@@ -311,7 +311,6 @@ impl Books {
         };
         let items = match &book {
             Book::Open(_) => vec![
-                link("Book", format!("/finance/ledger/books/{}", company.id)),
                 link(
                     "Fiscal years",
                     format!("/finance/ledger/fiscal-years?company={}", company.id),
@@ -321,17 +320,23 @@ impl Books {
                     format!("/finance/ledger/accounts?company={}", company.id),
                 ),
             ],
-            Book::NotOpen if can_open => vec![link(
-                "Open book",
-                format!("/finance/ledger/books/{}", company.id),
-            )],
             _ => Vec::new(),
         };
-        row.actions = render(AddToMenu::new(
+        let mut actions = Html::EMPTY;
+        if matches!(book, Book::NotOpen) && can_open {
+            let label = format!("Open the book of {}", company.name);
+            actions.push(&render(IconButton {
+                id: &format!("ledger-books-open-{}", company.id),
+                href: &format!("/finance/ledger/books/{}", company.id),
+                ..IconButton::new("book-open", &label)
+            })?);
+        }
+        actions.push(&render(AddToMenu::new(
             format!("ledger-books-{}-actions", company.id),
             company.name.clone(),
             items,
-        ))?;
+        ))?);
+        row.actions = actions;
         Ok((self.filter("year") == "all" || self.filter("year") == year_state).then_some(row))
     }
 
