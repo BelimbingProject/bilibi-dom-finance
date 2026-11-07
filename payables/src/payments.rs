@@ -420,9 +420,10 @@ impl Payables {
             .await?
             .ok_or_else(|| invalid("allocations", "is not a document of this company"))?;
         let key = first_bill.party.key.clone();
+        let owner = vendors::of_key(c, s.tenant(), company, &key).await?;
         if let Some(vendor) = input.vendor_id {
             self.vendor_on(c, s, company, vendor).await?;
-            if vendors::of_key(c, s.tenant(), company, &key).await? != Some(vendor) {
+            if owner != Some(vendor) {
                 return Err(invalid(
                     "vendor_id",
                     "does not match the allocated bill's supplier",
@@ -434,12 +435,7 @@ impl Payables {
                 "is required; a bill group that belongs to no vendor may instead name its supplier_key",
             ));
         }
-        if input.vendor_id.is_none()
-            && !decided_request
-            && vendors::of_key(c, s.tenant(), company, &key)
-                .await?
-                .is_some()
-        {
+        if input.vendor_id.is_none() && !decided_request && owner.is_some() {
             return Err(invalid(
                 "vendor_id",
                 "is required for a linked vendor's bills",
