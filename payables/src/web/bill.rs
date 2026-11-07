@@ -1,7 +1,7 @@
 //! Bilimbi Payables.Web.BillLive. The reviewed hold belongs to the dialog,
 //! not to a subsequent refreshed document or a value supplied by the browser.
 //! The page is drawn in `bill/view.rs`; an address with `?do=void` or
-//! `?do=approve_exception` (the "Actions…" menu) opens that dialog.
+//! `?do=approve_exception` (its local icon buttons) opens that dialog.
 mod view;
 
 use super::{company, format as f, render, Pages, Written};

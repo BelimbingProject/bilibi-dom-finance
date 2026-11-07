@@ -1,7 +1,7 @@
 //! How a bill or debit note reads, as its twin the invoice does: the document
 //! on the left (supplier, dates, lines, totals, the three-way match) and a
 //! narrow summary on the right (status, amount due, its journal, who recorded,
-//! approved and posted it, files), with Back, one "Actions…" menu and the one
+//! approved and posted it, files), with Back, its local actions as icon buttons, one "Non-local actions" menu and the one
 //! primary verb for its state in the header
 //! (`bilibi_finance_ledger::DocumentLayout`, `RecordActions`).
 use super::{
@@ -153,7 +153,7 @@ impl Bill {
         }
     }
 
-    /// Back, the "Actions…" menu, then the one primary verb for this state:
+    /// Back, the local actions, the "Non-local actions" menu, then the one primary verb for this state:
     /// Approve a draft, Post an approved bill, Request payment while it is owed.
     fn header_actions(&self, d: &Document, can: &Can, back: Html) -> Result<Html> {
         let here = format!("{INDEX}/{}", d.id);
@@ -176,7 +176,8 @@ impl Bill {
                     primary = Some(event("payables-bill-approve", "approve", "Approve")?);
                 }
                 if can.create && can.approve && bill && super::super::bill_form::corrigible(d) {
-                    items.push(RecordAction::link(
+                    items.push(RecordAction::local(
+                        "pencil-square",
                         "Correct draft",
                         format!("{NEW_BILL}?correct={}", d.id),
                     ));
@@ -188,6 +189,7 @@ impl Bill {
                 }
                 if can.match_ && d.match_status.as_deref() == Some("held") {
                     items.push(RecordAction::here(
+                        "check-badge",
                         "Approve exceptions",
                         &here,
                         "approve_exception",
@@ -214,7 +216,7 @@ impl Bill {
             _ => {}
         }
         if can.approve && matches!(d.status.as_str(), "draft" | "approved" | "held") {
-            items.push(RecordAction::here("Void", &here, "void"));
+            items.push(RecordAction::here("no-symbol", "Void", &here, "void"));
         }
         RecordActions::render(
             back,

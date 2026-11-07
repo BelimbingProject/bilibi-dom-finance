@@ -71,7 +71,7 @@ impl Journals {
         };
         Ok(())
     }
-    /// Whether this person may propose a write-off (the record's "Actions…"
+    /// Whether this person may propose a write-off (the record's local
     /// menu offers "Write off" while the invoice is owed).
     pub(super) fn can_propose(&self) -> bool {
         self.can_submit
