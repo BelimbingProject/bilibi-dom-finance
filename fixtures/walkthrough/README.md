@@ -14,7 +14,7 @@ No fixture is a production seed. The module-specific binaries remain the detaile
 
 ## Running them in CI
 
-`scripts/domain-ci.sh` only compiles these binaries. The **Walkthroughs** workflow (`.github/workflows/walkthroughs.yml`) runs them through `scripts/run-walkthroughs.sh`, one empty disposable database each: every night against the Platform's `main`, and on a pull request that touches `fixtures/`, that script or the workflow, against the pinned revision. The script lists what runs (`WALKTHROUGHS`) and what is known to fail (`KNOWN_BROKEN`, run and reported but not failing the run, with the reason beside each; remove a line when it passes). To run it by hand from a mounted Platform checkout after `cargo build -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins`:
+`scripts/domain-ci.sh` only compiles these binaries. The **Walkthroughs** workflow (`.github/workflows/walkthroughs.yml`) runs them through `scripts/run-walkthroughs.sh`, one empty disposable database each: every night (and on a manual run) against the Platform's `main`, and on a pull request that touches `fixtures/`, that script or the workflow, against the pinned revision. The script lists what runs (`WALKTHROUGHS`) and what is known to fail (`KNOWN_BROKEN`, run and reported but not failing the run, with the reason beside each; remove a line when it passes). To run it by hand from a mounted Platform checkout after `cargo build -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins`:
 
 ```sh
 DATABASE_URL=postgres://user:password@localhost:5432/postgres scripts/run-walkthroughs.sh [name ...]

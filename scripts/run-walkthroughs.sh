@@ -36,7 +36,7 @@ mkdir -p "$logs"
 
 # name|binary|arguments|prepare|speed. prepare "seed" migrates and applies the
 # production seeds first, for a proof that starts from Core's seeded currency
-# list. speed "slow" runs only with WALKTHROUGH_SLOW=1 (the nightly run).
+# list. speed "slow" runs only with WALKTHROUGH_SLOW=1 (the nightly and manual runs, not a pull request).
 WALKTHROUGHS=(
   'fixture|bilibi-finance-walkthrough-fixture|'
   'approval-journals|approval-journals|'
@@ -118,6 +118,7 @@ for entry in "${WALKTHROUGHS[@]}"; do
   fi
   port=$(free_port)
   dir="$work/$name"
+  # shellcheck disable=SC2174 # $work is already private; only $dir needs the mode
   mkdir -m 700 -p "$dir"
   log="$logs/$name.log"
   started=$(date +%s)
@@ -132,6 +133,7 @@ for entry in "${WALKTHROUGHS[@]}"; do
     export AUDITOR_PACK_PROOF_DIR="$dir/pack" BAD_DEBT_STORAGE="$dir/bad-debt"
     export PARTY_CODE_STORAGE_ROOT="$dir/party" BILIBI_ATTACHMENTS_DEMO_ROOT="$dir/attachments"
     # Private storage roots refuse a folder others can read.
+    # shellcheck disable=SC2174 # the mode is wanted on the leaf folders only
     mkdir -p -m 700 "$dir"/{storage,nc3,nc4,pack,bad-debt,party,attachments}
     # shellcheck disable=SC2086
     exec "$target/$profile/$binary" $args
