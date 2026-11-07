@@ -1,6 +1,8 @@
 //! The shape every Finance document page shares (an invoice, a bill, a
 //! receipt, a payment), so the twins come out the same: the header leads with
-//! Back, one "Actions…" menu and the one primary verb for the record's state,
+//! Back, the record's own (local) actions as icon buttons, one "Non-local
+//! actions" menu for what opens another record or module, and the one primary
+//! verb for the record's state,
 //! and the body shows the document itself on the left with a narrow summary
 //! (status, amount due, payments, journal, files) on the right. Below `lg`
 //! the two stack, summary first (on a phone it leads). The grid is `dir="rtl"`
@@ -8,7 +10,7 @@
 //! both children are `dir="ltr"` so their content reads left to right.
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_ui::{AddToItem, AddToMenu, Html};
+use bilibi_ui::{AddToItem, AddToMenu, Html, IconButton};
 
 /// The document and its summary side by side at `lg`, summary first below it.
 #[derive(Template)]
@@ -33,38 +35,53 @@ impl DocumentLayout {
     }
 }
 
-/// One item of a record's "Actions…" menu. Every item is a link, so the
-/// keyboard, a phone and an agent reach it alike: one to another page, or to
-/// this page with `?do=<action>`, which opens that action's dialog
-/// ([`RecordActions::requested`]).
+/// One action on a record. A non-local action opens another record or module
+/// (New credit note, Record debit note, Add to…) and goes in the shared
+/// "Non-local actions" menu; a local action acts on this record itself (edit,
+/// void, reverse, print, discard) and is a plain icon button with its name as
+/// the tooltip, never in that menu. Every action is a link, so the keyboard,
+/// a phone and an agent reach it alike; one that opens this page's own dialog
+/// goes to this page with `?do=<action>` ([`RecordActions::requested`]).
 pub struct RecordAction {
     pub label: String,
     pub href: String,
+    /// The icon of a local action; `None` for a non-local one.
+    pub icon: Option<&'static str>,
 }
 
 impl RecordAction {
-    /// A link to another page (print, new credit note on another list).
+    /// A non-local action: a link to another record or module.
     pub fn link(label: &str, href: impl Into<String>) -> Self {
         Self {
             label: label.to_owned(),
             href: href.into(),
+            icon: None,
         }
     }
 
-    /// This page's own dialog for `action`, opened through `?do=`.
-    pub fn here(label: &str, path: &str, action: &str) -> Self {
+    /// A local action on this record that is a link of its own (print,
+    /// correct a draft), drawn as an icon button.
+    pub fn local(icon: &'static str, label: &str, href: impl Into<String>) -> Self {
         Self {
             label: label.to_owned(),
-            href: format!("{path}?{DO}={action}"),
+            href: href.into(),
+            icon: Some(icon),
         }
+    }
+
+    /// A local action that opens this page's own dialog through `?do=`,
+    /// drawn as an icon button.
+    pub fn here(icon: &'static str, label: &str, path: &str, action: &str) -> Self {
+        Self::local(icon, label, format!("{path}?{DO}={action}"))
     }
 }
 
 /// The query parameter that opens a record page's own dialog.
 pub const DO: &str = "do";
 
-/// A record header's actions: Back first, then the one "Actions…" menu, then
-/// the one primary verb at the end of the row.
+/// A record header's actions: Back first, the local actions as icon buttons,
+/// the one "Non-local actions" menu (only when there is a non-local action),
+/// then the one primary verb at the end of the row.
 pub struct RecordActions;
 
 impl RecordActions {
@@ -76,6 +93,20 @@ impl RecordActions {
         primary: Option<Html>,
     ) -> Result<Html> {
         let mut html = back;
+        let (local, items): (Vec<_>, Vec<_>) =
+            items.into_iter().partition(|item| item.icon.is_some());
+        for (i, item) in local.iter().enumerate() {
+            let id = format!("{menu_id}-local-{i}");
+            html.push(
+                &Html::render(&IconButton {
+                    id: &id,
+                    href: &item.href,
+                    title: &item.label,
+                    ..IconButton::new(item.icon.unwrap_or("manage"), &item.label)
+                })
+                .map_err(|_| Error::Internal)?,
+            );
+        }
         if !items.is_empty() {
             html.push(
                 &Html::render(&AddToMenu::new(
