@@ -12,9 +12,9 @@ use bilibi_module_registry::{
 };
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, Alert, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice, Combobox,
-    Fact, Facts, Field, FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns, Modal,
-    ModalWidth, PageVariant, StatusKind, Tab, Tabs,
+    page::*, params, Alert, BuiltinColumn, Button, ButtonVariant, Cell, Choice, Combobox,
+    CreateButton, EmptyState, Fact, Facts, Field, FlexRow, FlexTable, Form, Header, Html,
+    InputKind, ListColumns, Modal, ModalWidth, PageVariant, StatusKind, Tab, TableEmpty, Tabs,
 };
 use serde_json::{json, Value};
 use std::{
@@ -75,6 +75,25 @@ fn render(t: impl Template) -> Result<Html> {
 struct Actions {
     buttons: Html,
 }
+/// The header's "+ Schedule", opening the dialog.
+fn new_button(id: &str) -> Result<Html> {
+    render(CreateButton {
+        noun: "Schedule",
+        id,
+        event: "new_schedule",
+        button_type: "button",
+        ..CreateButton::default()
+    })
+}
+/// The opening entry a schedule was retained against, as a link.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="text-link hover:underline">Open the opening entry</a>"#,
+    ext = "html"
+)]
+struct EntryLink {
+    id: i64,
+}
 #[derive(Template)]
 #[template(
     source = r#"<div id="source-period-attachments-slot" class="mt-4" data-live-ignore><div id="source-period-attachments"></div></div>"#,
@@ -101,6 +120,8 @@ struct State {
     review: Option<Review>,
     records: Vec<Value>,
     columns: ListColumns,
+    /// The "+ Schedule" dialog is open.
+    adding: bool,
 }
 impl State {
     fn query(&self) -> HashMap<String, String> {
@@ -144,6 +165,7 @@ impl State {
             message: None,
             review: None,
             records: vec![],
+            adding: false,
             columns: ListColumns::mount(
                 "source-periods",
                 vec![
@@ -225,6 +247,11 @@ impl State {
         let mut body = render(Header {
             title: Html::text("Source-period schedules"),
             subtitle: "Retained evidence for the current company's conversion.",
+            actions: if self.id.is_none() {
+                new_button("source-period-new")?
+            } else {
+                Html::EMPTY
+            },
             ..Header::default()
         })?;
         if let Some(message) = &self.message {
@@ -258,8 +285,11 @@ impl State {
                         ..Fact::default()
                     },
                     Fact {
-                        title: "Opening entry ID",
-                        value: Html::text(&record["opening_entry_id"].to_string()),
+                        title: "Opening entry",
+                        value: match record["opening_entry_id"].as_i64() {
+                            Some(id) => render(EntryLink { id })?,
+                            None => Html::text("—"),
+                        },
                         ..Fact::default()
                     },
                 ],
@@ -376,6 +406,11 @@ impl State {
             let mut table = FlexTable::new("source-periods", self.columns.flex_columns(), rows);
             table.caption = "Source-period schedules";
             table.event = "grid";
+            table.empty = Some(TableEmpty::State(
+                EmptyState::missing("No schedules of this kind yet", "")
+                    .id("source-periods-empty")
+                    .action(new_button("source-period-new-empty")?),
+            ));
             body.push(&render(table)?);
             if let Some(next) = list["next"].as_i64() {
                 let href = format!("{PATH}?kind={}&after={next}", self.kind);
@@ -385,7 +420,18 @@ impl State {
                     ..Button::default()
                 })?);
             }
-            body.push(&self.form(scope, company).await?);
+            // The schedule is entered in a dialog, which the review replaces.
+            if self.adding && self.review.is_none() {
+                body.push(&render(Modal {
+                    id: "source-period-modal",
+                    title: "New source schedule",
+                    description: "Retain one row of a source report for the current company.",
+                    cancel_event: "close_schedule",
+                    width: ModalWidth::Wide,
+                    body: self.form(scope, company).await?,
+                    ..Modal::default()
+                })?);
+            }
         }
         if let Some(review) = &self.review {
             let mut content=render(Alert {body:Html::text(&format!("Review source {} for {} to {}. This retains evidence only and creates no postings or submissions.",review.facts["source_reference"].as_str().unwrap_or(""),review.facts["period_start"].as_str().unwrap_or(""),review.facts["period_end"].as_str().unwrap_or(""))),..Alert::default()})?;
@@ -516,12 +562,6 @@ impl State {
                 InputKind::Text,
                 "Name the system or archive.",
             ),
-            (
-                "accounting_timezone",
-                "Accounting time zone",
-                InputKind::Text,
-                "For example, Asia/Kuala_Lumpur.",
-            ),
             ("period_start", "Period starts", InputKind::Date, ""),
             ("period_end", "Period ends", InputKind::Date, ""),
             (
@@ -552,6 +592,34 @@ impl State {
                     .required(),
             )?);
         }
+        // A coded choice: search the IANA zones by city or region.
+        fields.push(&render(
+            Combobox::new(
+                "schedule-accounting_timezone",
+                "schedule[accounting_timezone]",
+            )
+            .label("Accounting time zone *")
+            .aria_label("Accounting time zone")
+            .placeholder("Search time zones")
+            .options(
+                bilibi_datetime::timezones()
+                    .into_iter()
+                    .map(|zone| Choice::new(zone.replace('_', " "), zone))
+                    .collect(),
+            )
+            .value(
+                self.values
+                    .get("accounting_timezone")
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+            .errors(
+                self.errors
+                    .get("accounting_timezone")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+        )?);
         if self.kind == "comparative" || self.kind == "movement" {
             let mut options = Vec::new();
             let mut input = json!({"company_id":company,"page_size":100});
@@ -635,24 +703,26 @@ impl State {
             )),
             ..Alert::default()
         })?);
-        let actions = render(Button {
+        let mut buttons = render(Button {
+            button_type: "button",
+            event: "close_schedule",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        buttons.push(&render(Button {
             button_type: "submit",
             event: "preview",
             variant: ButtonVariant::Primary,
             body: Html::text("Preview schedule"),
             ..Button::default()
-        })?;
-        render(Card {
-            id: "source-period-create",
-            body: render(Form {
-                id: "source-period-form",
-                event: "preview",
-                class: "mt-4",
-                body: fields,
-                actions,
-                ..Form::default()
-            })?,
-            ..Card::default()
+        })?);
+        render(Form {
+            id: "source-period-form",
+            event: "preview",
+            class: "mt-4",
+            body: fields,
+            actions: render(Actions { buttons })?,
+            ..Form::default()
         })
     }
 }
@@ -714,6 +784,7 @@ impl LiveState<Scope, Error> for State {
                             match self.pages.contracts.commit(&call, review.input).await {
                                 Ok(_) => {
                                     self.values.clear();
+                                    self.adding = false;
                                     self.message=Some("The source schedule was retained. Open it to attach its supporting report.".into());
                                 }
                                 Err(_) => {
@@ -724,6 +795,15 @@ impl LiveState<Scope, Error> for State {
                         }
                     }
                     "cancel_review" => self.review = None,
+                    "new_schedule" => {
+                        self.adding = true;
+                        self.message = None;
+                    }
+                    "close_schedule" => {
+                        self.adding = false;
+                        self.values.clear();
+                        self.errors.clear();
+                    }
                     "grid" => {
                         self.columns.handle(&params::string_values(value));
                     }

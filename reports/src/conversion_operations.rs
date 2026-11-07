@@ -20,8 +20,34 @@ fn refusal(e: ReportsError) -> bilibi_agent_api::Error {
             bilibi_agent_api::Error::NotFound
         }
         ReportsError::Failed(e) => e.into(),
+        // The ledger's own words beside each field, never "Invalid input".
+        ReportsError::Ledger(bilibi_finance_ledger::LedgerError::Invalid(fields))
+            if !fields.is_empty() =>
+        {
+            let mut errors = bilibi_agent_api::schema::FieldErrors::new();
+            for field in fields {
+                errors
+                    .entry(field.field.to_owned())
+                    .or_default()
+                    .push(sentence(&field.message));
+            }
+            bilibi_agent_api::Error::InvalidInput(errors)
+        }
         e => bilibi_agent_api::invalid("base", e.to_string()),
     }
+}
+/// A ledger refusal as a sentence: capital first letter, full stop.
+fn sentence(message: &str) -> String {
+    let mut text: String = message
+        .chars()
+        .take(1)
+        .flat_map(char::to_uppercase)
+        .chain(message.chars().skip(1))
+        .collect();
+    if !text.ends_with('.') {
+        text.push('.');
+    }
+    text
 }
 fn id(input: &Value, key: &str) -> bilibi_agent_api::Result<i64> {
     input[key]
