@@ -3,15 +3,17 @@
 //! Back, one "Actions…" menu and the one primary verb for the record's state,
 //! and the body shows the document itself on the left with a narrow summary
 //! (status, amount due, payments, journal, files) on the right. Below `lg`
-//! the two stack, document first; the header already carries the status.
+//! the two stack, summary first (on a phone it leads). The grid is `dir="rtl"`
+//! with the summary first in the markup, so it takes the right column at `lg`;
+//! both children are `dir="ltr"` so their content reads left to right.
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_ui::{AddToItem, AddToMenu, Html};
 
-/// The document and its summary side by side.
+/// The document and its summary side by side at `lg`, summary first below it.
 #[derive(Template)]
 #[template(
-    source = r#"<div id="{{ id }}" class="grid items-start gap-4 lg:grid-cols-3"><div id="{{ id }}-document" class="min-w-0 space-y-4 lg:col-span-2">{{ document|safe }}</div><aside id="{{ id }}-summary" aria-label="Summary" class="min-w-0 space-y-4">{{ summary|safe }}</aside></div>"#,
+    source = r#"<div id="{{ id }}" dir="rtl" class="grid items-start gap-4 lg:grid-cols-3"><aside id="{{ id }}-summary" dir="ltr" aria-label="Summary" class="min-w-0 space-y-4">{{ summary|safe }}</aside><div id="{{ id }}-document" dir="ltr" class="min-w-0 space-y-4 lg:col-span-2">{{ document|safe }}</div></div>"#,
     ext = "html"
 )]
 pub struct DocumentLayout {
