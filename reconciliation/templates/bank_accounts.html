@@ -1,26 +1,16 @@
-{# Bilimbi Finance.Reconciliation.Web.BankAccountsLive #}
+{# Bilimbi Finance.Reconciliation.Web.BankAccountsLive. A bank account is
+   added with its name and ledger account only; its bank's columns are mapped
+   on its first statement import (the bank account page). #}
 {% import "components.html" as ui %}
-{% import "forms.html" as form %}
 {% import "feedback.html" as feedback %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="bank-accounts") %}
-{% call ui::header(subtitle="", title_actions=title_actions) %}Bank accounts{% endcall %}
+{{ header|safe }}
 {% if let Some(table) = table %}
-{% call ui::card(id="bank-accounts-list", inner_class="p-0", role="region", labelledby="bank-accounts-heading") %}
-{% call ui::section_heading(id="bank-accounts-heading", title="Bank accounts", class="p-5 pb-0") %}{% endcall %}
+{% call ui::card(id="bank-accounts-list", inner_class="p-0") %}
 {{ table|safe }}
 {% endcall %}
 {% else %}{{ forbidden|safe }}{% endif %}
-{{ chart_forbidden|safe }}{{ manage_forbidden|safe }}
-{% if let Some(fields) = fields %}
-{% call ui::card(id="bank-account-form-card", inner_class="p-5 sm:p-6", role="region", labelledby="bank-account-form-heading") %}
-{% call ui::section_heading(id="bank-account-form-heading", title=heading, description="Name the columns of the bank's CSV export by their header text, or by position (1, 2, ...) when the file has no header row.") %}{% endcall %}
-<form id="bank-account-form" data-event="change" data-change data-submit-event="save_account" class="mt-4 grid gap-x-6 gap-y-2 md:grid-cols-2">
-{% for field in fields %}{% call form::input(field=field) %}{% endcall %}{% if loop.first && editing %}<div class="mb-4 text-sm"><span class="block font-medium text-ink">Ledger account</span><span id="bank-account-ledger-account-fixed">{{ ledger_fixed }}</span></div>{% endif %}{% endfor %}
-<div class="flex gap-2 md:col-span-2">
-{% call ui::button(id="bank-account-save", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary) %}{% if editing %}Save changes{% else %}Add bank account{% endif %}{% endcall %}
-{% if editing %}{% call ui::button(id="bank-account-cancel", event="cancel") %}Cancel{% endcall %}{% endif %}
-</div></form>
-{% endcall %}
-{% endif %}
+{{ notice|safe }}
+{{ dialog|safe }}
 {% endcall %}

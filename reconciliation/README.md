@@ -26,10 +26,12 @@ records; the schema is private.
 | Function | Capability | Does |
 | --- | --- | --- |
 | `list_bank_accounts`, `get_bank_account` | `finance.reconciliation.view` | The company's bank accounts, by name |
-| `create_bank_account` | `finance.reconciliation.bank-accounts.manage` | Adds one: `name`, `ledger_account_id`, `import_mapping`, optional `charges_account_id`, `interest_account_id`, `match_window_days`, `active`, `reason` |
+| `create_bank_account` | `finance.reconciliation.bank-accounts.manage` | Adds one: `name`, `ledger_account_id`, `import_mapping` (`null` leaves the columns to the first import), optional `charges_account_id`, `interest_account_id`, `match_window_days`, `active`, `reason` |
 | `update_bank_account` | `finance.reconciliation.bank-accounts.manage` | Changes everything but the ledger account, with an optional `reason`; a change that changes nothing records nothing |
 | `list_bank_account_changes` | `finance.reconciliation.view` | The change log: field, values before and after, actor, reason, time |
-| `import_statement` | `finance.reconciliation.statements.import` | Imports a CSV file's bytes as a numbered statement with its lines |
+| `import_statement` | `finance.reconciliation.statements.import` | Imports a CSV file's bytes as a numbered statement with its lines, through the account's mapping (`MappingNotSet` while it has none) |
+| `preview_statement` | `finance.reconciliation.statements.import` | How a file would import, storing nothing: its columns and first rows, and the first lines read through a given mapping, the account's own, or (none yet) one guessed from the file |
+| `import_statement_mapped` | `finance.reconciliation.statements.import`, and `.bank-accounts.manage` to replace a different mapping | Imports through the given mapping and keeps it with the account in the same transaction, logged with the file's name as the reason |
 | `list_statements`, `get_statement` | `finance.reconciliation.view` | Statements (without lines), and one with its lines in line order |
 | `evidence_page` | `finance.reconciliation.view` | One ID-ordered page (`limit` 1 to 500, `after`) of a dataset for the auditor's pack, one per table: `opening_bridge`, `opening_item`, `match_opening_item`, `bank_account`, `bank_account_change`, `statement`, `statement_line`, `match`, `match_line`, `match_entry`, `match_event`, `reconciliation_record`, `reconciliation_event`, `reconciliation_item`. Dates, times and amounts are text |
 | `mapping_choices` | none | The delimiters, date formats, amount signs and decimal separators a mapping is built from |
@@ -91,7 +93,9 @@ change in place, and every change is appended to
 `finance_reconciliation_bank_account_changes` with the field, the values
 before and after, the actor, the reason (trimmed, cut at 500 characters) and
 the database's time. A new account's first values are logged with no old
-value. A mapping is logged as JSON with its keys in order (Bilimbi logs an
+value. An account may be added without a mapping: its first import maps the
+columns (`import_statement_mapped`) and keeps them, so later files import in
+one step. A mapping is logged as JSON with its keys in order (Bilimbi logs an
 Elixir `inspect` of the map). A bank account is never deleted; deactivate it,
 and it imports and reconciles no more.
 
@@ -110,6 +114,14 @@ setting, a missing required column, both an amount and debit or credit columns,
 and a value that is not one of the choices, in Bilimbi's words. Amounts may
 carry thousands separators, parentheses, a leading or trailing minus, or a
 `CR` or `DR` marker.
+
+For an account whose columns are not mapped yet, `preview_statement` guesses
+a mapping from the file (`src/guess.rs`): the separator its lines share, the
+rows above the first row holding a date, the usual header words of a bank's
+export ("Date", "Description", "Withdrawal", "Deposit", "Balance", ...), then
+the values (the first column of dates, of numbers, the widest text), the first
+date format every date reads with, and a decimal comma when amounts end in
+one. It only proposes; the person sees the first lines read through it.
 
 ## Statements
 
@@ -304,13 +316,14 @@ no other writer can break them:
 
 A statement's `import_mapping` is NOT NULL here: a fresh Bilibi schema has no
 statement imported before the mapping was kept (Bilimbi's column is nullable
-for those).
+for those). A bank account's is nullable (`003-mapping-on-first-import`): an
+account added without one has its columns mapped on its first import.
 
 ## Bank account pages (NC3)
 
-`/finance/reconciliation` contributes the **Bank accounts** menu item and shows the company's accounts in a FlexTable. Its add/change form keeps the ledger mapping fixed after creation, selects active accounts of the appropriate type, and edits the bank's CSV mapping. Edit and activation events recheck `finance.reconciliation.bank-accounts.manage`; the facade checks it again in `Ledger::write`. Reads of the chart inside that write use `Ledger::list_accounts_on` on the handed transaction.
+`/finance/reconciliation` contributes the **Bank accounts** menu item and shows the company's accounts in a FlexTable. **+ Bank account** opens a dialog asking only the name and the ledger account (a combobox of postable asset accounts no bank account has yet), then lands on the new account's page to import its first statement. A row's own actions are icon buttons (match its statement lines, edit), its Active is a `Toggle`, and its Non-local actions menu holds only its ledger account in the Ledger. Edit opens a dialog for the name, the bank charges and interest accounts (comboboxes of postable expense and income accounts), the match window and a reason; the ledger account never changes. Every write event rechecks `finance.reconciliation.bank-accounts.manage`; the facade checks it again in `Ledger::write`. Reads of the chart inside that write use `Ledger::list_accounts_on` on the handed transaction.
 
-`/finance/reconciliation/accounts/{id}` shows statements newest first, their bank files through the authorized Attachments download route, and reconciliations newest first. After the opening journal is approved, the same page reviews and records the conversion bank bridge through `finance.reconciliation.opening.import`; its retained bank statement is attached through the shared Source documents panel. The live upload accepts one CSV/text file up to 5 MiB and consumes its bytes once in the import event. A successful import reports the dates, line count and skipped zero rows. The next reconciliation form suggests the latest statement's end date and closing balance while preserving an entered draft. Withheld controls name the missing permission; facade refusals preserve the live page and form, and are reported in the page's message only, as Bilimbi's open form carries no field errors. As on every page here, a message stays until the browser dismisses it (`clear-flash`). An upload refused in the browser reads the Platform's `UploadError` sentence ("The file is larger than this page accepts.", "That kind of file is not accepted.") rather than Bilimbi's "The file is larger than the import allows." and "Choose a CSV file.", because `UploadSpec` takes no per-page wording.
+`/finance/reconciliation/accounts/{id}` leads with Back, **Match statement lines** once a statement is in, **Reconcile** (a dialog for the statement end date and balance, prefilled from the latest statement) or the open reconciliation, and **Import statement** (`?do=import` opens it on load). It shows statements newest first with who imported them, their bank files through the authorized Attachments download route, and reconciliations newest first. The import dialog takes the file; an account whose columns are mapped imports it at once, and one with none yet, or whose file no longer reads with the saved columns (missing headers, unreadable rows, a balance that does not follow), goes on to a columns step: the file's first rows, which column is the date, description, reference, amount (one signed column, or money out and money in) and running balance, the date format, decimal mark, separator and rows above the first line, all guessed by `preview_statement`, and the first lines as they would import, read again on every change. Its Import statement is disabled while the choices do not read the file, and saves the columns with the account (`import_statement_mapped`). A toggle in the first step checks the saved columns before importing. After the opening journal is approved, the same page reviews and records the conversion bank bridge through `finance.reconciliation.opening.import`; its retained bank statement is attached through the shared Source documents panel. The live upload accepts one CSV/text file up to 5 MiB and consumes its bytes once in the import event. A successful import reports the dates, line count and skipped zero rows. Refusals are said in the open dialog's own alert, keeping what was entered. As on every page here, a message stays until the browser dismisses it (`clear-flash`). An upload refused in the browser reads the Platform's `UploadError` sentence ("The file is larger than this page accepts.", "That kind of file is not accepted.") rather than Bilimbi's "The file is larger than the import allows." and "Choose a CSV file.", because `UploadSpec` takes no per-page wording.
 
 The account page lists and opens reconciliations through the facade's `list_reconciliations` and `open_reconciliation` (see Reconciliations), which return `BankReconciliation` records with their typed `ReconciliationStatus`. Its matching link and the successful opening land on the NC4 pages below.
 
@@ -331,11 +344,11 @@ It proves the facade's import/skipped rows, duplicate-file refusal, original dow
 
 ## Matching and reconciliation pages (NC4)
 
-`/finance/reconciliation/accounts/{id}/matching` (Bilimbi `MatchingLive`) shows the account's statement lines with no standing match beside the ledger entries and opening items on its account with none (`unmatched_items`), each ordinary line's suggested entry with **Accept**, and the standing matches newest first with **Unmatch**. An opening item is matched in its reviewed dialog through `finance.reconciliation.opening.match`; its unmatch uses `finance.reconciliation.opening.unmatch`. Ticking ordinary lines and entries updates the selected counts and totals; **Match selected** sends the ticked ids and the note to `record_match`, and Accept matches a suggestion the page last read, never an id of the browser's choosing. Unmatch opens a dialog for the match the page shows and sends the reason to the appropriate contract or facade. Every one of these events asks `finance.reconciliation.matches.manage` again, and the contract or facade asks once more. A bank account out of reach redirects to `/finance/reconciliation` with the refusal, as Bilimbi does.
+`/finance/reconciliation/accounts/{id}/matching` (Bilimbi `MatchingLive`) shows the account's statement lines with no standing match beside the ledger entries and opening items on its account with none (`unmatched_items`), each ordinary line's suggested entry with **Accept**, and the standing matches newest first with an Unmatch icon button. Every ledger entry is a link to its journal. An opening item is matched in its reviewed dialog through `finance.reconciliation.opening.match`; its unmatch uses `finance.reconciliation.opening.unmatch`. Ticking ordinary lines and entries updates the selected counts and totals; **Match selected** sends the ticked ids and the note to `record_match`, and Accept matches a suggestion the page last read, never an id of the browser's choosing. Unmatch opens a dialog for the match the page shows and sends the reason to the appropriate contract or facade. Every one of these events asks `finance.reconciliation.matches.manage` again, and the contract or facade asks once more. A bank account out of reach redirects to `/finance/reconciliation` with the refusal, as Bilimbi does.
 
 The checkboxes sit in FlexTable rows and join the match form through `form="matching-form"`: a FlexTable carries forms of its own (the column add box), which cannot nest inside another form, and `live.js` reads a control's `form` owner, so the selection still raises the form's change event. They are Bilimbi's bare checkboxes, not `forms.html`'s, which posts `true` with a hidden `false` companion rather than an id.
 
-`/finance/reconciliation/reconciliations/{id}` (Bilimbi `ReconciliationLive`) shows the reconciliation's figures (balance per statement, per books, the unexplained difference with its badge), the items explaining the difference, and its history. While it is open, **Post as bank charge** (money out) and **Post as interest** (money in) post a statement line the books lack through `post_statement_line` (asking `finance.reconciliation.statement-lines.post` and `finance.ledger.entries.post`), **Finalise** is enabled once the difference is zero, and **Abandon** asks for a reason in a dialog. A finalised reconciliation shows the figures and items it was finalised with; an abandoned one only its statement balance and history.
+`/finance/reconciliation/reconciliations/{id}` (Bilimbi `ReconciliationLive`) shows the reconciliation's figures (balance per statement, per books, the unexplained difference with its badge), the items explaining the difference, and its history with people's names. Its header leads with Back; while it is open, **Match statement lines**, the Abandon icon button (a reason in a dialog) and **Finalise**, enabled once the difference is zero. An item's **Post as bank charge** (money out) and **Post as interest** (money in) icon buttons post a statement line the books lack through `post_statement_line` (asking `finance.reconciliation.statement-lines.post` and `finance.ledger.entries.post`). A finalised reconciliation shows the figures and items it was finalised with; an abandoned one only its statement balance and history.
 
 Both pages follow the ledger's posting notices while connected (`web::Follow`, over `Ledger::subscribe_postings`): every notice since the last read wakes the page once and it reads again through the facade; an open reconciliation follows the books, a finalised or abandoned one does not change. A page's message stays until the browser dismisses it or it times out (`clear-flash`), so a refresh from the page's own posting keeps its success message. Lists are FlexTables with ListColumns; Bilimbi enables no filter, sort or pager on these pages.
 

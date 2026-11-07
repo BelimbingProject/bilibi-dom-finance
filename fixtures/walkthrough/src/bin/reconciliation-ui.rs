@@ -183,7 +183,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "finance/reconciliation.pages",
     )?;
     let path = std::collections::HashMap::from([("id".into(), account.id.to_string())]);
-    let query = std::collections::HashMap::new();
+    // The upload control is in the Import statement dialog, which `?do=import`
+    // opens on load.
+    let query = std::collections::HashMap::from([("do".into(), "import".into())]);
     let mut mounted = pages
         .0
         .mount(bilibi_ui::page::PageRequest {

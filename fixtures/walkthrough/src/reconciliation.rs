@@ -317,7 +317,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             "mapping with an unknown date format",
             json!({"date": "Date", "description": "Details", "amount": "Amount", "date_format": "DD.MM.YY"}),
         ),
-        ("no mapping at all", Value::Null),
     ] {
         show(
             step,
@@ -934,6 +933,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             _ => format!("{:?} / {:?}", one.as_ref().err(), two.as_ref().err()),
         }
     );
+
+    crate::reconciliation_first_import::run(&reconciliation, &ledger, &manager, &staff).await?;
 
     println!("\n== Deactivated bank accounts import no more");
     show(

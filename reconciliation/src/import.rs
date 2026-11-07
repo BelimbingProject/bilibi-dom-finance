@@ -59,7 +59,8 @@ pub(crate) async fn prepare(
     client: &(impl GenericClient + Sync),
     tenant: i64,
     company_id: i64,
-    account: &BankAccount,
+    bank_account_id: i64,
+    mapping: &ImportMapping,
     units: MinorUnits,
     file: &NewFile,
 ) -> Result<Prepared, ReconciliationError> {
@@ -69,10 +70,10 @@ pub(crate) async fn prepare(
     }
     let sha256 = hash(&file.content);
     fresh_file(client, tenant, company_id, &sha256).await?;
-    let (lines, skipped) = read(&file.content, &account.import_mapping, units)?;
-    let lines = fingerprinted(ordered(lines, &account.import_mapping)?);
-    fresh_lines(client, tenant, company_id, account.id, &lines).await?;
-    check_cutover(client, tenant, company_id, account.id, &lines).await?;
+    let (lines, skipped) = read(&file.content, mapping, units)?;
+    let lines = fingerprinted(ordered(lines, mapping)?);
+    fresh_lines(client, tenant, company_id, bank_account_id, &lines).await?;
+    check_cutover(client, tenant, company_id, bank_account_id, &lines).await?;
     let dates = lines.iter().map(|line| line.date);
     Ok(Prepared {
         file: NewFile {
@@ -91,7 +92,7 @@ pub(crate) async fn prepare(
         skipped,
         start_date: dates.clone().min().expect("a statement has lines"),
         end_date: dates.max().expect("a statement has lines"),
-        mapping: account.import_mapping.clone(),
+        mapping: mapping.clone(),
         lines,
     })
 }
@@ -605,4 +606,110 @@ struct Columns {
     amounts: Vec<Decimal>,
     balances: Vec<Option<Decimal>>,
     fingerprints: Vec<String>,
+}
+
+/// How a statement file would import ([`crate::Reconciliation::preview_statement`]).
+#[derive(Debug)]
+pub struct StatementPreview {
+    /// The mapping the preview read the file through, every key present.
+    pub mapping: Value,
+    /// Whether that mapping is a guess from the file, not one a person chose.
+    pub guessed: bool,
+    /// The file's columns by the header row's text, or "Column 1", "Column
+    /// 2", ... when the mapping says the file has no header row.
+    pub columns: Vec<String>,
+    /// The first rows below the header, as the file has them.
+    pub rows: Vec<Vec<String>>,
+    /// The first lines the import would record, oldest first.
+    pub lines: Vec<PreviewLine>,
+    /// How many lines the import would record, and how many zero-amount rows
+    /// it would skip; both 0 with a refusal.
+    pub line_count: usize,
+    pub skipped_count: usize,
+    /// Why the mapping does not read the file, as the import would refuse it.
+    pub refusal: Option<ReconciliationError>,
+}
+
+/// One line as the import would record it: money in positive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviewLine {
+    pub date: Date,
+    pub description: String,
+    pub reference: Option<String>,
+    pub amount: Money,
+}
+
+/// The rows and lines shown before an import.
+const PREVIEW_ROWS: usize = 5;
+
+/// Reads `content` through `mapping` without storing or checking anything
+/// against the bank account's statements. The rows show even when the
+/// mapping is refused, read with its separator and header rows where those
+/// are valid.
+pub(crate) fn preview(
+    content: &[u8],
+    mapping: Value,
+    guessed: bool,
+    units: MinorUnits,
+) -> StatementPreview {
+    let parsed = ImportMapping::parse(&mapping);
+    let (delimiter, header_rows) = match &parsed {
+        Ok(parsed) => (parsed.delimiter.clone(), usize::from(parsed.header_rows)),
+        Err(_) => (
+            mapping["delimiter"]
+                .as_str()
+                .filter(|d| mapping::DELIMITERS.contains(d))
+                .unwrap_or(",")
+                .to_owned(),
+            mapping["header_rows"]
+                .as_u64()
+                .filter(|rows| *rows <= 20)
+                .map_or(1, |rows| rows as usize),
+        ),
+    };
+    let rows = csv::parse(content, &delimiter).unwrap_or_default();
+    let (header, data) = rows.split_at(header_rows.min(rows.len()));
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let columns = (0..width)
+        .map(|index| match header.last().and_then(|h| h.get(index)) {
+            Some(text) if header_rows > 0 => text.trim().to_owned(),
+            _ => format!("Column {}", index + 1),
+        })
+        .collect();
+    let mut preview = StatementPreview {
+        mapping,
+        guessed,
+        columns,
+        rows: data.iter().take(PREVIEW_ROWS).cloned().collect(),
+        lines: Vec::new(),
+        line_count: 0,
+        skipped_count: 0,
+        refusal: None,
+    };
+    let read = parsed
+        .map_err(|message| {
+            ReconciliationError::Invalid(vec![crate::FieldError::new("import_mapping", message)])
+        })
+        .and_then(|parsed| {
+            let (lines, skipped) = read(content, &parsed, units)?;
+            Ok((ordered(lines, &parsed)?, skipped))
+        });
+    match read {
+        Ok((lines, skipped)) => {
+            preview.line_count = lines.len();
+            preview.skipped_count = skipped;
+            preview.lines = lines
+                .into_iter()
+                .take(PREVIEW_ROWS)
+                .map(|line| PreviewLine {
+                    date: line.date,
+                    description: line.description,
+                    reference: line.reference,
+                    amount: line.amount,
+                })
+                .collect();
+        }
+        Err(refusal) => preview.refusal = Some(refusal),
+    }
+    preview
 }

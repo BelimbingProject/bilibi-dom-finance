@@ -1,29 +1,16 @@
 {# Bilimbi Finance.Reconciliation.Web.ImportLive #}
 {% import "components.html" as ui %}
-{% import "forms.html" as form %}
 {% import "feedback.html" as feedback %}
 {% import "workspace.html" as workspace %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="bank-account", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::back_link(id="bank-account-back", href="/finance/reconciliation", title="Bank accounts") %}{% endcall %}
 {{ refusal|safe }}
 {% if let Some(account) = account %}
 {% call workspace::announce(kind="finance/reconciliation/bank_account", record_id=account.id.to_string()) %}{% endcall %}
-{% call ui::header(title_actions=title_actions, actions=matching) %}{{ account.name }}{% endcall %}
+{{ header|safe }}
+<div class="space-y-4">
+{{ notice|safe }}
 {{ opening|safe }}
-{% call ui::card(id="statement-import", inner_class="p-5 sm:p-6", role="region", labelledby="statement-import-heading") %}
-{% call ui::section_heading(id="statement-import-heading", title="Import a statement", description=mapping) %}{% endcall %}
-{{ import_forbidden|safe }}
-{% if flash.error.contains("/system/settings") %}{% call ui::button(id="bank-import-storage-settings", href="/system/settings") %}File storage settings{% endcall %}{% endif %}
-{% if let Some(upload) = upload %}
-{# FileUpload owns preflight, progress and refusal rendering; like the
-   Design Library specimen, this form reports only the import submit. #}
-<form id="statement-import-form" data-event="import" class="mt-4 space-y-3">
-{{ upload|safe }}
-{% call ui::button(id="statement-import-submit", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Importing…") %}Import statement{% endcall %}
-</form>
-{% endif %}
-{% endcall %}
 {% call ui::card(id="statements", inner_class="p-0", role="region", labelledby="statements-heading") %}
 {% call ui::section_heading(id="statements-heading", title="Statements", count=statement_count, class="p-5 pb-0") %}{% endcall %}
 {{ statements|safe }}
@@ -31,15 +18,8 @@
 {% call ui::card(id="reconciliations", inner_class="p-0", role="region", labelledby="reconciliations-heading") %}
 {% call ui::section_heading(id="reconciliations-heading", title="Reconciliations", count=reconciliation_count, class="p-5 pb-0") %}{% endcall %}
 {{ reconciliations|safe }}
-<div class="p-5">{{ open_forbidden|safe }}
-{% if let Some(end_date) = end_date %}{% if let Some(balance) = balance %}
-<form id="reconciliation-open-form" data-event="reconciliation_change" data-change data-submit-event="open_reconciliation" class="grid gap-x-6 md:grid-cols-3 md:items-end">
-{% call form::input(field=end_date) %}{% endcall %}
-{% call form::input(field=balance) %}{% endcall %}
-<div class="mb-4">{% call ui::button(id="reconciliation-open", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary) %}Open reconciliation{% endcall %}</div>
-</form>
-{% endif %}{% endif %}
-</div>
 {% endcall %}
+</div>
+{{ dialog|safe }}
 {% endif %}
 {% endcall %}

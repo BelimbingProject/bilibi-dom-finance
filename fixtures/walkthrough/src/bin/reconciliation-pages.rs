@@ -349,15 +349,15 @@ async fn main() -> Outcome<()> {
         &body.html,
         &[
             "Clearing bank: matching",
-            "Statement lines not in the books",
-            "Ledger entries not on a statement",
+            "Unmatched statement lines",
+            "Unmatched ledger entries",
             "id=\"unmatched-lines-table\"",
             "id=\"unmatched-entries-table\"",
             "id=\"standing-matches-table\"",
-            "Entry 1 on 2026-10-01",
+            "Journal 1</a> on 2026-10-01",
             "-120.00",
             "Selected: <span id=\"selected-lines-count\">0</span>",
-            "No standing matches",
+            "No matches yet",
         ],
     )?;
     let receipt = line_id(&facade, &manager, account.id, "INV-301").await?;
@@ -569,8 +569,6 @@ async fn main() -> Outcome<()> {
         &body.html,
         &[
             "Reconciliation 1 as of 2026-10-31",
-            "id=\"reconciliation-status\"",
-            "through entry",
             "Balance per statement",
             "248.75 MYR",
             "Balance per books",
@@ -763,7 +761,7 @@ async fn main() -> Outcome<()> {
     shows(
         "manager opens it, the statement balance mistyped",
         &body.html,
-        &["not yet explained", "id=\"reconciliation-abandon\""],
+        &["Not explained yet", "id=\"reconciliation-abandon\""],
     )?;
     if !finalise_disabled(&body.html) {
         return Err("the finalise button is enabled with a difference".into());

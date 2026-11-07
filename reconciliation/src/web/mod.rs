@@ -2,7 +2,9 @@
 //! matching, and one reconciliation.
 mod account;
 mod format;
+mod import;
 mod index;
+mod index_dialogs;
 mod matching;
 mod opening;
 mod opening_match;
@@ -40,6 +42,8 @@ pub(crate) struct Pages {
     pub locales: Arc<Locales>,
     pub contracts: Arc<bilibi_agent_api::page::PageContracts>,
     pub plans: Arc<bilibi_agent_api::plans::Plans>,
+    pub parties: Arc<bilibi_tenancy::PartyProofs>,
+    pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 // Menu group (a bookkeeper's section of the Finance menu); its pages sit under it.
@@ -114,6 +118,30 @@ impl Pages {
             Err(e) => Err(e),
         }
     }
+    /// The current company's name, as a page names what it changes.
+    async fn company_name(&self, scope: &Scope) -> Result<String> {
+        let client = self.db.get().await?;
+        Ok(self
+            .parties
+            .organisation_name(
+                &**client,
+                scope,
+                scope.current_company().ok_or(Error::NotFound)?,
+            )
+            .await
+            .ok()
+            .flatten()
+            .map_or_else(|| "the current company".into(), |o| o.name))
+    }
+    /// The names of the people a page mentions ("Ana Lim", never "user 5").
+    async fn people(
+        &self,
+        scope: &Scope,
+        ids: impl IntoIterator<Item = Option<i64>>,
+    ) -> Result<bilibi_finance_ledger::People> {
+        let client = self.db.get().await?;
+        Ok(bilibi_finance_ledger::People::read(&self.directory, &**client, scope, ids).await)
+    }
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let client = self.db.get().await?;
         let locale = self.locales.resolve(&**client, scope, None).await?.locale;
@@ -171,6 +199,32 @@ impl Pages {
         })
     }
 }
+/// A dialog's buttons at the end of its row: Cancel, then the one primary
+/// verb (`apps/base/ui/templates/ui_feedback_specimen/modal_templates.html`).
+fn dialog_row(buttons: Html) -> Result<Html> {
+    render(DialogRow { buttons })
+}
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex w-full flex-wrap justify-end gap-2">{{ buttons|safe }}</div>"#,
+    ext = "html"
+)]
+struct DialogRow {
+    buttons: Html,
+}
+/// A date or amount kept on one line, so a narrow column never breaks
+/// "2026-10-01" or "1,137.50" in two.
+fn nowrap(text: &str) -> Result<Html> {
+    render(Nowrap { text })
+}
+#[derive(Template)]
+#[template(
+    source = r#"<span class="whitespace-nowrap">{{ text }}</span>"#,
+    ext = "html"
+)]
+struct Nowrap<'a> {
+    text: &'a str,
+}
 fn path_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
     request
         .path
@@ -183,7 +237,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "index" => Some("Bank accounts"),
-            "account" => Some("Bank statements"),
+            "account" => Some("Bank account"),
             "matching" => Some("Matching"),
             "reconciliation" => Some("Reconciliation"),
             _ => None,

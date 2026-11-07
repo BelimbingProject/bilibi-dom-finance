@@ -17,8 +17,9 @@ use bilibi_datetime::{Format, Precision};
 use bilibi_finance_ledger::{MinorUnits, POST_ENTRIES};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, Badge, BadgeKind, BuiltinColumn, Cell, EmptyState, Fact, Facts, Field,
-    FlashMap, FlexRow, FlexTable, Html, Instant, ListColumns, RowMode, StatusKind, TableEmpty,
+    page::*, params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell,
+    EmptyState, Fact, Facts, Field, FlashMap, FlexRow, FlexTable, Header, Html, IconButton,
+    IconKind, Instant, ListColumns, RowMode, StatusKind, TableEmpty,
 };
 
 pub(super) struct Detail {
@@ -42,41 +43,18 @@ pub(super) struct Detail {
 #[template(path = "reconciliation.html")]
 struct View<'a> {
     flash: FlashMap<'a>,
-    back: String,
-    back_title: String,
+    back: Html,
     refusal: Html,
     record: Option<RecordView>,
 }
 struct RecordView {
     id: i64,
-    title: String,
-    title_actions: Html,
-    subtitle: Html,
-    actions: Html,
+    header: Html,
     figures: Html,
     controls: Html,
     items: Option<(Option<usize>, Html)>,
     events: Html,
     abandon: Option<Field>,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"<span id="reconciliation-status">{{ status|safe }}</span>{% if let Some(through) = through %}<span id="reconciliation-through" class="ml-2">{{ through }}</span>{% endif %}"#,
-    ext = "html"
-)]
-struct Subtitle {
-    status: Html,
-    through: Option<String>,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"<a id="reconciliation-matching" href="{{ href }}">Match statement lines</a>"#,
-    ext = "html"
-)]
-struct Actions {
-    href: String,
 }
 
 #[derive(Template)]
@@ -91,25 +69,11 @@ struct Figure {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% if open %}<div class="mt-4 flex flex-wrap gap-2">{% if finalise %}{% call ui::button(id="reconciliation-finalise", button_type="button", variant=bilibi_ui::ButtonVariant::Primary, event="finalise", disabled=unexplained, working="Finalising…") %}Finalise{% endcall %}{% endif %}{% if abandon %}{% call ui::button(id="reconciliation-abandon", button_type="button", event="abandoning") %}Abandon{% endcall %}{% endif %}</div>{% endif %}{% if let Some(forbidden) = forbidden %}<div class="mt-4">{{ forbidden|safe }}</div>{% endif %}"#,
+    source = r#"{% if let Some(forbidden) = forbidden %}<div class="mt-4">{{ forbidden|safe }}</div>{% endif %}"#,
     ext = "html"
 )]
 struct Controls {
-    open: bool,
-    finalise: bool,
-    abandon: bool,
-    unexplained: bool,
     forbidden: Option<Html>,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}<span class="whitespace-nowrap">{% if let Some(line) = charge %}{% call ui::button(id="item-{}-post-charge"|format(line), button_type="button", event="post_charge", name="line", value=line.to_string(), working="Posting…") %}Post as bank charge{% endcall %}{% endif %}{% if let Some(line) = interest %}{% call ui::button(id="item-{}-post-interest"|format(line), button_type="button", event="post_interest", name="line", value=line.to_string(), working="Posting…") %}Post as interest{% endcall %}{% endif %}</span>"#,
-    ext = "html"
-)]
-struct Post {
-    charge: Option<i64>,
-    interest: Option<i64>,
 }
 
 #[derive(Template)]
@@ -128,6 +92,15 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Entry => "In the books, not on the statement",
         ItemKind::Timing => "Matched, cleared after the statement date",
         ItemKind::OpeningItem => "Opening item not yet cleared",
+    }
+}
+
+/// A reconciliation's status as a page names it.
+pub(super) fn status_label(status: ReconciliationStatus) -> &'static str {
+    match status {
+        ReconciliationStatus::Open => "Open",
+        ReconciliationStatus::Finalised => "Finalised",
+        ReconciliationStatus::Abandoned => "Abandoned",
     }
 }
 
@@ -357,16 +330,33 @@ impl Detail {
     }
 
     async fn body(&self, scope: &Scope) -> Result<String> {
+        let (back_href, back_title) = self.account.as_ref().map_or_else(
+            || {
+                (
+                    "/finance/reconciliation".to_owned(),
+                    "Bank accounts".to_owned(),
+                )
+            },
+            |a| {
+                (
+                    format!("/finance/reconciliation/accounts/{}", a.id),
+                    a.name.clone(),
+                )
+            },
+        );
+        let back = render(BackLink {
+            href: &back_href,
+            id: "reconciliation-back",
+            title: &back_title,
+            ..BackLink::default()
+        })?;
         let mut view = View {
             flash: flash_map(&self.flash),
-            back: self.account.as_ref().map_or_else(
-                || "/finance/reconciliation".into(),
-                |a| format!("/finance/reconciliation/accounts/{}", a.id),
-            ),
-            back_title: self
-                .account
-                .as_ref()
-                .map_or_else(|| "Bank accounts".into(), |a| a.name.clone()),
+            back: if self.report.is_none() {
+                back.clone()
+            } else {
+                Html::EMPTY
+            },
             refusal: match &self.refusal {
                 Some(reason) => render(
                     EmptyState::missing("Reconciliation unavailable", reason)
@@ -389,19 +379,8 @@ impl Detail {
                 ReconciliationStatus::Finalised => BadgeKind::Success,
                 ReconciliationStatus::Abandoned => BadgeKind::Neutral,
             },
-            report.status.as_str(),
+            status_label(report.status),
         )?;
-        let subtitle = render(Subtitle {
-            status,
-            through: figures.map(|f| {
-                format!(
-                    "through entry {}, statement {}, match event {}",
-                    f.through_entry_number,
-                    f.through_statement_number,
-                    f.through_match_event_number
-                )
-            }),
-        })?;
 
         let mut facts = vec![Fact {
             title: "Balance per statement",
@@ -433,9 +412,9 @@ impl Detail {
                 value: render(Figure {
                     text: f.difference.display(MinorUnits::new(i64::from(units))),
                     badge: Some(if explained {
-                        badge(BadgeKind::Success, "explained")?
+                        badge(BadgeKind::Success, "Explained")?
                     } else {
-                        badge(BadgeKind::Warning, "not yet explained")?
+                        badge(BadgeKind::Warning, "Not explained yet")?
                     }),
                 })?,
             });
@@ -444,11 +423,8 @@ impl Detail {
             id: "reconciliation-facts",
             items: facts,
         })?;
+        let unexplained = figures.is_none_or(|f| !f.difference.is_zero());
         let controls = render(Controls {
-            open,
-            finalise: self.can_finalise,
-            abandon: self.can_abandon,
-            unexplained: figures.is_none_or(|f| !f.difference.is_zero()),
             forbidden: if open && !self.can_finalise {
                 Some(render(
                     EmptyState::forbidden("finalise reconciliations")
@@ -468,6 +444,7 @@ impl Detail {
                     let mut row = FlexRow::new((index + 1).to_string())
                         .cell("kind", Cell::text(kind_label(item.kind)))
                         .cell("date", Cell::date(&date, &date))
+                        .slot("date", super::nowrap(&date)?)
                         .cell("description", Cell::text(&item.description))
                         .slot(
                             "description",
@@ -488,10 +465,39 @@ impl Detail {
                         let line = item.statement_line_id;
                         let negative =
                             item.amount.amount().is_sign_negative() && !item.amount.is_zero();
-                        row.actions = render(Post {
-                            charge: line.filter(|_| negative),
-                            interest: line.filter(|_| item.amount.is_positive()),
-                        })?;
+                        // Local actions on the line: plain icon buttons.
+                        let mut actions = Html::EMPTY;
+                        for (line, event, icon, label) in [
+                            (
+                                line.filter(|_| negative),
+                                "post_charge",
+                                "receipt-percent",
+                                "Post as bank charge",
+                            ),
+                            (
+                                line.filter(|_| item.amount.is_positive()),
+                                "post_interest",
+                                "banknotes",
+                                "Post as interest",
+                            ),
+                        ] {
+                            if let Some(line) = line {
+                                let label = format!("{label}: {}", item.description);
+                                let kind = if event == "post_charge" {
+                                    "charge"
+                                } else {
+                                    "interest"
+                                };
+                                actions.push(&render(IconButton {
+                                    id: &format!("item-{line}-post-{kind}"),
+                                    event,
+                                    name: "line",
+                                    value: &line.to_string(),
+                                    ..IconButton::new(icon, &label)
+                                })?);
+                            }
+                        }
+                        row.actions = actions;
                     }
                     rows.push(row);
                 }
@@ -512,6 +518,16 @@ impl Detail {
         };
 
         let display = self.pages.display(scope).await?;
+        let people = self
+            .pages
+            .people(
+                scope,
+                report
+                    .events
+                    .iter()
+                    .flat_map(|e| [Some(e.recorded_by_user_id), e.recorded_by_impersonator_id]),
+            )
+            .await?;
         let mut rows = vec![];
         for e in &report.events {
             let time = display.render(e.recorded_at, Format::DateTime, Precision::Second);
@@ -523,10 +539,7 @@ impl Detail {
                 time.mode.as_str(),
             );
             instant.precision = "second";
-            let by = match e.recorded_by_impersonator_id {
-                Some(i) => format!("user {} (impersonated by {i})", e.recorded_by_user_id),
-                None => format!("user {}", e.recorded_by_user_id),
-            };
+            let by = people.who(Some(e.recorded_by_user_id), e.recorded_by_impersonator_id);
             let mut row = FlexRow::new(e.event_number.to_string())
                 .cell("event", Cell::text(event_label(&e.action)))
                 .cell("by", Cell::text(by))
@@ -547,13 +560,47 @@ impl Detail {
             "Reconciliation {} as of {}",
             report.reconciliation_number, report.end_date
         );
+        // Back, this account's matching, the local Abandon, then Finalise.
+        let mut actions = back;
+        if open {
+            actions.push(&render(Button {
+                id: "reconciliation-matching",
+                href: &format!("/finance/reconciliation/accounts/{}/matching", account.id),
+                body: Html::text("Match statement lines"),
+                ..Button::default()
+            })?);
+            if self.can_abandon {
+                actions.push(&render(IconButton {
+                    id: "reconciliation-abandon",
+                    kind: IconKind::Danger,
+                    event: "abandoning",
+                    ..IconButton::new("x-circle", "Abandon this reconciliation")
+                })?);
+            }
+            if self.can_finalise {
+                actions.push(&render(Button {
+                    id: "reconciliation-finalise",
+                    button_type: "button",
+                    variant: ButtonVariant::Primary,
+                    event: "finalise",
+                    disabled: unexplained,
+                    working: "Finalising…",
+                    body: Html::text("Finalise"),
+                    ..Button::default()
+                })?);
+            }
+        }
         view.record = Some(RecordView {
             id: report.id,
-            title_actions: bilibi_ui::Html::EMPTY,
-            title,
-            subtitle,
-            actions: render(Actions {
-                href: format!("/finance/reconciliation/accounts/{}/matching", account.id),
+            header: render(Header {
+                title: Html::text(&title),
+                subtitle: if open && unexplained {
+                    "Finalise once the difference is explained: match or post what is left."
+                } else {
+                    ""
+                },
+                title_actions: status,
+                actions,
             })?,
             figures: figures_html,
             controls,
