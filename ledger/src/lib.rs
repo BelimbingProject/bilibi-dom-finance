@@ -1962,12 +1962,12 @@ impl Ledger {
     /// acquire a second pool slot.
     pub async fn list_entries_on(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn bilibi_agent_api::OperationClient,
         scope: &Scope,
         company_id: i64,
         query: &EntryQuery,
     ) -> Result<Vec<Entry>> {
-        authorize(client, scope, company_id, VIEW).await?;
+        agent_operations::authorize_on(client, scope, company_id, VIEW).await?;
         entries::list(client, scope.tenant(), company_id, query).await
     }
 

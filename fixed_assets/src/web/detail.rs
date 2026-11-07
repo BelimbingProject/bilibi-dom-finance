@@ -1,10 +1,12 @@
 //! Bilimbi Finance.FixedAssets.Web.AssetLive, including immutable history.
-use super::{
-    input::{self, Draft},
-    *,
-};
-use crate::{AssetDetail, DISPOSE, REVERSE, VOID};
-use bilibi_ui::{ConfirmDialog, FlashMap, InputKind};
+//! The header offers the one next step the asset's state allows (sell or
+//! write off, reverse the disposal, or void a reversed acquisition); each
+//! opens its dialog, also from the register row's icon button (`?act=`).
+mod lifecycle;
+use super::{categories, input::Draft, *};
+use crate::{AssetDetail, EventAction, DISPOSE, REVERSE, VOID};
+use bilibi_ui::{BackLink, Card, ConfirmDialog, Fact, Facts, FlashMap, InputKind, SectionHeading};
+use lifecycle::{event_name, Act, Standing};
 
 pub(super) struct Detail {
     pages: Pages,
@@ -13,51 +15,29 @@ pub(super) struct Detail {
     charges: ListColumns,
     events: ListColumns,
     evidence: super::source_evidence::EvidenceView,
-    dispose: Draft,
-    reverse: Draft,
-    void: Draft,
+    /// The open dialog and its draft.
+    dialog: Option<(Act, Draft)>,
     pending_void: Option<(Draft, serde_json::Value)>,
     flash: Option<(StatusKind, String)>,
 }
 #[derive(Template)]
 #[template(path = "detail.html")]
 struct View<'a> {
-    title_actions: Html,
-    register_link: Html,
-    detail: Option<&'a AssetDetail>,
+    title: String,
+    subtitle: String,
+    actions: Html,
+    record: Option<i64>,
     unavailable: Html,
     flash: FlashMap<'a>,
-    assumptions: Html,
-    schedule: Html,
-    charges: Html,
-    events: Html,
-    dispose: Html,
-    void: Html,
-    reverse: Html,
-    confirm: Html,
+    sections: Vec<Html>,
+    dialogs: Html,
 }
-/// Bilimbi's plain header link back to the register.
-#[derive(Template)]
-#[template(
-    source = r#"<a href="/finance/fixed-assets/register">Register</a>"#,
-    ext = "html"
-)]
-struct RegisterLink;
-#[derive(Template)]
-#[template(path = "assumptions.html")]
-struct AssumptionsView<'a> {
-    detail: &'a AssetDetail,
-    cost: String,
-    residual: String,
-    method: &'static str,
-    heading: String,
-    actor: String,
-    recorded: Html,
-}
+
 impl Detail {
     pub(super) fn new(
         pages: &Pages,
         path: &HashMap<String, String>,
+        query: &HashMap<String, String>,
         _framed: bool,
     ) -> Result<Self> {
         let asset_id = params::positive_integer(path.get("id").map(String::as_str))
@@ -71,7 +51,7 @@ impl Detail {
                 "asset-schedule",
                 &[
                     ("month", "Month"),
-                    ("amount", "Scheduled depreciation"),
+                    ("amount", "Depreciation"),
                     ("accumulated", "Accumulated"),
                     ("carrying", "Carrying value"),
                 ],
@@ -79,129 +59,34 @@ impl Detail {
             charges: cols(
                 "asset-charges",
                 &[
-                    ("run", "Run"),
                     ("month", "Month"),
-                    ("amount", "Posted depreciation"),
-                    ("entry", "Entry"),
-                    ("actor", "By"),
-                    ("recorded", "Recorded"),
-                    ("reversal", "Reversal"),
+                    ("amount", "Depreciation"),
+                    ("entry", "Journal entry"),
+                    ("actor", "Posted by"),
+                    ("recorded", "Posted"),
+                    ("reversal", "Reversed"),
                 ],
             )?,
             events: cols(
                 "asset-events",
                 &[
-                    ("action", "Event"),
-                    ("effective", "Effective"),
+                    ("action", "Change"),
+                    ("effective", "Date"),
+                    ("entry", "Journal entry"),
                     ("reason", "Reason"),
                     ("actor", "By"),
                     ("recorded", "Recorded"),
                 ],
             )?,
-            dispose: Draft::default(),
-            reverse: Draft::default(),
-            void: Draft::default(),
+            dialog: query
+                .get("act")
+                .and_then(|a| Act::parse(a))
+                .map(|a| (a, Draft::default())),
             pending_void: None,
             flash: None,
         })
     }
-    async fn form(
-        &self,
-        s: &Scope,
-        op: &str,
-        accounts: &[(i64, String, String, bool, String)],
-    ) -> Result<Html> {
-        let (d, cap, title, reason) = match op {
-            "dispose" => (
-                &self.dispose,
-                DISPOSE,
-                "Disposal unavailable",
-                "Ask your company administrator for asset disposal permission.",
-            ),
-            "reverse" => (
-                &self.reverse,
-                REVERSE,
-                "Reversal unavailable",
-                "Ask your company administrator for asset reversal permission.",
-            ),
-            _ => (
-                &self.void,
-                VOID,
-                "Void unavailable",
-                "Ask your company administrator for asset void permission.",
-            ),
-        };
-        if !self.pages.allowed(s, cap).await? {
-            return withheld(&format!("asset-{op}-withheld"), title, reason);
-        }
-        let (date_id, date_label, reason_id, verb) = match op {
-            "dispose" => (
-                "asset_effective_date",
-                "Disposal date",
-                "asset_reason",
-                "Post disposal",
-            ),
-            "reverse" => (
-                "asset-reversal-date",
-                "Reversal date",
-                "asset-reversal-reason",
-                "Post reversal",
-            ),
-            _ => (
-                "asset-void-date",
-                "Void date",
-                "asset-void-reason",
-                "Void acquisition",
-            ),
-        };
-        let prefix = if op == "dispose" {
-            "asset".into()
-        } else {
-            format!("asset-{op}")
-        };
-        let mut fields = vec![d
-            .field("effective_date", date_label, InputKind::Date, true, &prefix)
-            .id(date_id)];
-        if op == "dispose" {
-            fields.extend([
-                d.field(
-                    "proceeds",
-                    "Proceeds (zero for a write-off)",
-                    InputKind::Text,
-                    true,
-                    &prefix,
-                ),
-                d.field(
-                    "settlement_account_id",
-                    "Proceeds account (for a sale)",
-                    InputKind::Select,
-                    false,
-                    &prefix,
-                )
-                .options(
-                    std::iter::once(bilibi_ui::Choice::new("Choose an account", ""))
-                        .chain(
-                            accounts.iter().filter(|a| a.3 && a.2 == "asset").map(|a| {
-                                bilibi_ui::Choice::new(&a.1, a.0.to_string()).detail(&a.4)
-                            }),
-                        )
-                        .collect(),
-                ),
-            ]);
-        }
-        fields.push(
-            d.field("reason", "Reason", InputKind::Text, true, &prefix)
-                .id(reason_id),
-        );
-        render(Operation {
-            form_dom: &format!("asset-{op}-form"),
-            event_name: op,
-            button_dom: &format!("asset-{op}"),
-            verb,
-            fields,
-            help: "",
-        })
-    }
+
     async fn body(&mut self, s: &Scope) -> Result<String> {
         let (units, accounts) = self.pages.account_context(s).await?;
         let display = self.pages.display(s).await?;
@@ -218,186 +103,268 @@ impl Detail {
             }
             None => Err(FixedAssetsError::CompanyNotFound),
         };
-        let (detail, unavailable) = match read {
-            Ok(d) => (Some(d), Html::EMPTY),
-            Err(e) => (
-                None,
-                render(
-                    EmptyState::missing("Asset unavailable", refusal(e)).id("asset-unavailable"),
-                )?,
-            ),
+        let back = render(BackLink {
+            href: "/finance/fixed-assets/register",
+            id: "asset-back",
+            title: "Back to fixed assets",
+            ..BackLink::default()
+        })?;
+        let d = match read {
+            Ok(d) => d,
+            Err(e) => {
+                return View {
+                    title: "Fixed asset".into(),
+                    subtitle: String::new(),
+                    actions: back,
+                    record: None,
+                    unavailable: render(
+                        EmptyState::missing("Asset unavailable", refusal(e))
+                            .id("asset-unavailable"),
+                    )?,
+                    flash: flash_map(&self.flash),
+                    sections: vec![],
+                    dialogs: Html::EMPTY,
+                }
+                .render()
+                .map_err(|_| Error::Internal);
+            }
         };
-        let (mut assumptions, mut schedule, mut charges, mut events) =
-            (Html::EMPTY, Html::EMPTY, Html::EMPTY, Html::EMPTY);
-        if let Some(d) = &detail {
-            assumptions = render(AssumptionsView {
-                detail: d,
-                cost: d.asset.cost.display(units),
-                residual: d.asset.residual_value.display(units),
-                heading: format!("#{} {}", d.asset.asset_number, d.asset.description),
-                method: input::method(d.asset.assumptions.method),
-                actor: actor(
-                    d.asset.recorded_by_user_id,
-                    d.asset.recorded_by_impersonator_id,
+        let standing = Standing::of(&d, self.source_reversed(s, &d).await);
+        let next = standing.next();
+        // An action the state does not allow, or this person may not take, is
+        // not offered: a dialog the address asked for closes.
+        let allowed = match next {
+            Some(act) => self.pages.allowed(s, act.cap()).await?,
+            None => false,
+        };
+        if self
+            .dialog
+            .as_ref()
+            .is_some_and(|(act, _)| Some(*act) != next || !allowed)
+        {
+            self.dialog = None;
+        }
+        let mut actions = back;
+        if let (Some(act), true) = (next, allowed) {
+            actions.push(&header_button(
+                &format!("asset-{}", act.key()),
+                &format!("open_{}", act.key()),
+                act.verb(),
+                true,
+            )?);
+        }
+        let people = self
+            .pages
+            .people(
+                s,
+                std::iter::once(d.asset.recorded_by_user_id)
+                    .chain(d.asset.recorded_by_impersonator_id)
+                    .chain(d.charges.iter().flat_map(|c| {
+                        std::iter::once(c.recorded_by_user_id).chain(c.recorded_by_impersonator_id)
+                    }))
+                    .chain(d.events.iter().flat_map(|e| {
+                        std::iter::once(e.recorded_by_user_id).chain(e.recorded_by_impersonator_id)
+                    })),
+            )
+            .await?;
+        let mut sections = vec![self.facts(s, &d, &standing, units, &people).await?];
+        if standing.voided {
+            sections.push(render(bilibi_ui::Alert {
+                id: "asset-voided",
+                kind: StatusKind::Info,
+                body: Html::text(
+                    "Acquisition voided: this asset is left out of depreciation runs and the ledger check.",
                 ),
-                recorded: render(Recorded {
-                    cell: time_cell(&display, &d.asset.recorded_at)?,
+                ..Default::default()
+            })?);
+        }
+        if let Some(opening) = &d.opening {
+            let fact = |title, value: String| Fact {
+                title,
+                value: Html::text(&value),
+                ..Default::default()
+            };
+            sections.push(render(Card {
+                id: "asset-opening",
+                title: "Opening register",
+                body: render(Facts {
+                    id: "asset-opening-facts",
+                    items: vec![
+                        fact(
+                            "Source reference",
+                            opening["source_reference"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_owned(),
+                        ),
+                        fact(
+                            "Source asset",
+                            opening["source_id"].as_str().unwrap_or("").to_owned(),
+                        ),
+                        fact(
+                            "Conversion date",
+                            opening["opening_date"].as_str().unwrap_or("").to_owned(),
+                        ),
+                        fact(
+                            "Source accumulated depreciation",
+                            d.asset.opening_accumulated.display(units),
+                        ),
+                        fact(
+                            "Source carrying value",
+                            (d.asset.cost - d.asset.opening_accumulated).display(units),
+                        ),
+                        fact(
+                            "Prospective depreciation",
+                            crate::opening::CONVENTION.into(),
+                        ),
+                    ],
                 })?,
-            })?;
-            if let Some(opening) = &d.opening {
-                let fact = |title, value: String| bilibi_ui::Fact {
-                    title,
-                    value: Html::text(&value),
-                    ..Default::default()
-                };
-                assumptions.push(&render(bilibi_ui::Card {
-                    id: "asset-opening",
-                    title: "Opening register",
-                    body: render(bilibi_ui::Facts {
-                        id: "asset-opening-facts",
-                        items: vec![
-                            fact(
-                                "Source reference",
-                                opening["source_reference"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_owned(),
-                            ),
-                            fact(
-                                "Source asset",
-                                opening["source_id"].as_str().unwrap_or("").to_owned(),
-                            ),
-                            fact(
-                                "Conversion date",
-                                opening["opening_date"].as_str().unwrap_or("").to_owned(),
-                            ),
-                            fact(
-                                "Source accumulated depreciation",
-                                d.asset.opening_accumulated.display(units),
-                            ),
-                            fact(
-                                "Source carrying value",
-                                (d.asset.cost - d.asset.opening_accumulated).display(units),
-                            ),
-                            fact(
-                                "Prospective depreciation",
-                                crate::opening::CONVENTION.into(),
-                            ),
-                        ],
-                    })?,
-                    ..Default::default()
-                })?);
-            }
-            if let Some(opening) = &d.opening {
-                assumptions.push(&self.evidence.render(
-                    opening["source_id"].as_str().unwrap_or(""),
-                    &opening["source_evidence"],
-                    units.ok_or(Error::Internal)?,
-                )?);
-            }
-            let rows = d
-                .schedule
-                .iter()
-                .map(|r| {
-                    FlexRow::new(r.period.to_string())
-                        .cell("month", Cell::text(r.period.to_string()))
-                        .cell("amount", Cell::text(r.amount.display(units)))
-                        .cell("accumulated", Cell::text(r.accumulated.display(units)))
-                        .cell("carrying", Cell::text(r.carrying_value.display(units)))
-                })
-                .collect();
-            schedule = table(
-                "asset-schedule",
-                &self.schedule,
-                rows,
-                "Projected schedule",
-                "schedule_grid",
-                "",
-            )?;
-            let mut rows = Vec::new();
-            for r in &d.charges {
-                let reversal = r
-                    .reversal
-                    .as_ref()
-                    .map(|e| {
-                        format!(
-                            "Entry {} on {}: {}",
-                            e.entry_number
-                                .map(|n| n.to_string())
-                                .unwrap_or_else(|| "—".into()),
-                            e.effective_date,
-                            e.reason
-                        )
-                    })
-                    .unwrap_or_else(|| "—".into());
-                rows.push(
-                    FlexRow::new(r.run_id.to_string())
-                        .cell("run", Cell::text(r.run_id.to_string()))
-                        .cell("month", Cell::text(r.period.to_string()))
-                        .cell("amount", Cell::text(r.amount.display(units)))
-                        .cell(
-                            "entry",
-                            Cell::text(
-                                r.entry_number
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_else(|| "—".into()),
-                            ),
-                        )
-                        .cell(
-                            "actor",
-                            Cell::text(actor(r.recorded_by_user_id, r.recorded_by_impersonator_id)),
-                        )
-                        .cell("recorded", time_cell(&display, &r.recorded_at)?)
-                        .cell("reversal", Cell::text(reversal)),
-                );
-            }
-            charges = table(
-                "asset-charges",
-                &self.charges,
-                rows,
-                "Posted charges",
-                "charges_grid",
-                "No depreciation charges posted.",
-            )?;
+                ..Default::default()
+            })?);
+            sections.push(self.evidence.render(
+                opening["source_id"].as_str().unwrap_or(""),
+                &opening["source_evidence"],
+                units.ok_or(Error::Internal)?,
+            )?);
+        }
+        let rows = d
+            .schedule
+            .iter()
+            .map(|r| {
+                FlexRow::new(r.period.to_string())
+                    .cell("month", Cell::text(month(r.period)))
+                    .cell("amount", Cell::text(r.amount.display(units)))
+                    .cell("accumulated", Cell::text(r.accumulated.display(units)))
+                    .cell("carrying", Cell::text(r.carrying_value.display(units)))
+            })
+            .collect();
+        let mut schedule = render(SectionHeading {
+            title: "Projected depreciation",
+            id: "asset-schedule-heading",
+            description: "Assumes the asset stays in use. Depreciation runs post it.",
+            ..Default::default()
+        })?;
+        schedule.push(&table(
+            "asset-schedule",
+            &self.schedule,
+            rows,
+            "Projected depreciation",
+            "schedule_grid",
+            "",
+        )?);
+        sections.push(schedule);
+        let mut rows = Vec::new();
+        for r in &d.charges {
+            let reversal = match &r.reversal {
+                Some(e) => {
+                    let mut html = Html::text(&format!("{} ", e.effective_date));
+                    if e.entry_id.is_some() {
+                        html.push(&entry_link(e.entry_id, e.entry_number)?);
+                    }
+                    html.push(&Html::text(&format!(": {}", e.reason)));
+                    html
+                }
+                None => Html::text("—"),
+            };
+            rows.push(
+                FlexRow::new(r.run_id.to_string())
+                    .cell("month", Cell::text(month(r.period)))
+                    .cell("amount", Cell::text(r.amount.display(units)))
+                    .slot("entry", entry_link(r.entry_id, r.entry_number)?)
+                    .cell(
+                        "actor",
+                        Cell::text(
+                            people.name(r.recorded_by_user_id, r.recorded_by_impersonator_id),
+                        ),
+                    )
+                    .cell("recorded", time_cell(&display, &r.recorded_at)?)
+                    .slot("reversal", reversal),
+            );
+        }
+        let mut charges = render(SectionHeading {
+            title: "Posted depreciation",
+            id: "asset-charges-heading",
+            ..Default::default()
+        })?;
+        charges.push(&table(
+            "asset-charges",
+            &self.charges,
+            rows,
+            "Posted depreciation",
+            "charges_grid",
+            "No depreciation posted yet.",
+        )?);
+        sections.push(charges);
+        if !d.events.is_empty() {
             let mut rows = Vec::new();
             for e in &d.events {
-                let action = match e.action {
-                    crate::EventAction::Disposed => "disposed",
-                    crate::EventAction::DisposalReversed => "disposal_reversed",
-                    crate::EventAction::AcquisitionVoided => "acquisition_voided",
-                    crate::EventAction::RunReversed => "run_reversed",
-                };
                 rows.push(
                     FlexRow::new(e.id.to_string())
-                        .cell("action", Cell::text(action))
+                        .cell("action", Cell::text(event_name(e.action)))
                         .cell("effective", Cell::text(e.effective_date.to_string()))
+                        .slot("entry", entry_link(e.entry_id, e.entry_number)?)
                         .cell("reason", Cell::text(e.reason.clone()))
-                        .cell("actor", Cell::text(e.recorded_by_user_id.to_string()))
+                        .cell(
+                            "actor",
+                            Cell::text(
+                                people.name(e.recorded_by_user_id, e.recorded_by_impersonator_id),
+                            ),
+                        )
                         .cell("recorded", time_cell(&display, &e.recorded_at)?),
                 );
             }
-            events = table(
+            let mut events = render(SectionHeading {
+                title: "History",
+                id: "asset-events-heading",
+                ..Default::default()
+            })?;
+            events.push(&table(
                 "asset-events",
                 &self.events,
                 rows,
-                "Asset events",
+                "History",
                 "events_grid",
-                "No disposal or void events.",
-            )?;
+                "",
+            )?);
+            sections.push(events);
         }
-        let visible = detail.is_some();
-        let title_actions = Html::EMPTY;
-        View {title_actions,register_link:render(RegisterLink)?,detail:detail.as_ref(),unavailable,flash:flash_map(&self.flash),assumptions,schedule,charges,events,dispose:if visible {self.form(s,"dispose",&accounts).await?}else{Html::EMPTY},void:if detail.as_ref().is_some_and(|d|!d.voided){self.form(s,"void",&accounts).await?}else{Html::EMPTY},reverse:if visible{self.form(s,"reverse",&accounts).await?}else{Html::EMPTY},confirm:if self.pending_void.is_some(){render(ConfirmDialog {id:"asset-void-confirm",consequence:"Void acquisition",detail:"Depreciation already posted for this asset is reversed; other assets keep theirs. This cannot be undone.",confirm:"Void acquisition",working:"Recording…",confirm_event:"confirm_void",cancel_event:"cancel_void"})?}else{Html::EMPTY}}.render().map_err(|_|Error::Internal)
+        let title = d.asset.description.clone();
+        let mut dialogs = self.dialog(&accounts, &d.asset.description)?;
+        if self.pending_void.is_some() {
+            dialogs.push(&render(ConfirmDialog {
+                id: "asset-void-confirm",
+                consequence: "Void this acquisition?",
+                detail: "Depreciation already posted for this asset is reversed; other assets keep theirs. This cannot be undone.",
+                confirm: "Void acquisition",
+                working: "Voiding…",
+                confirm_event: "confirm_void",
+                cancel_event: "cancel_void",
+            })?);
+        }
+        View {
+            title,
+            subtitle: format!("Fixed asset {} · {}", d.asset.asset_number, d.revision.name),
+            actions,
+            record: Some(d.asset.id),
+            unavailable: Html::EMPTY,
+            flash: flash_map(&self.flash),
+            sections,
+            dialogs,
+        }
+        .render()
+        .map_err(|_| Error::Internal)
     }
+
     fn input(&self, s: &Scope, d: &Draft) -> crate::Result<serde_json::Value> {
         let mut input = d.event_values();
         input["company_id"] = company(s).ok_or(FixedAssetsError::CompanyNotFound)?.into();
         input["asset_id"] = self.asset_id.into();
         Ok(input)
     }
-    async fn perform(&self, s: &Scope, credential: &str, op: &str, d: &Draft) -> crate::Result<()> {
+
+    async fn perform(&self, s: &Scope, credential: &str, act: Act, d: &Draft) -> crate::Result<()> {
         let mut input = self.input(s, d)?;
-        let key = if op == "dispose" {
+        let (event, key) = if act == Act::Dispose {
             input["proceeds"] = serde_json::json!(d.value("proceeds"));
             let account = d.value("settlement_account_id").trim();
             if !account.is_empty() {
@@ -405,13 +372,25 @@ impl Detail {
                     .parse::<i64>()
                     .map_or_else(|_| serde_json::json!(account), |id| serde_json::json!(id));
             }
-            "finance.fixed_assets.asset.dispose"
+            ("dispose", "finance.fixed_assets.asset.dispose")
         } else {
-            "finance.fixed_assets.disposal.reverse"
+            ("reverse_disposal", "finance.fixed_assets.disposal.reverse")
         };
-        self.pages.submit(s, credential, op, key, input).await?;
+        self.pages.submit(s, credential, event, key, input).await?;
         Ok(())
     }
+
+    /// A refusal on the dialog's fields, or in its alert when it has none.
+    fn refuse(&mut self, mut draft: Draft, e: FixedAssetsError, act: Act) {
+        draft.refused(&e);
+        if draft.errors.is_empty() {
+            draft
+                .errors
+                .push(bilibi_finance_ledger::FieldError::new("base", refusal(e)));
+        }
+        self.dialog = Some((act, draft));
+    }
+
     async fn event(&mut self, s: &Scope, credential: &str, v: &serde_json::Value) -> Result<()> {
         let event = v["type"].as_str().unwrap_or("");
         match event {
@@ -435,25 +414,37 @@ impl Detail {
                 self.events.handle(&params::string_values(v));
                 return Ok(());
             }
-            "cancel_void" => {
-                self.pending_void = None;
+            "close_dialog" => {
+                self.dialog = None;
                 return Ok(());
             }
-            "dispose" | "reverse" | "void" | "confirm_void" => {}
+            "cancel_void" => {
+                if let Some((draft, _)) = self.pending_void.take() {
+                    self.dialog = Some((Act::Void, draft));
+                }
+                return Ok(());
+            }
+            "open_dispose" | "open_reverse" | "open_void" => {
+                let act = Act::parse(&event[5..]).ok_or(Error::Invalid)?;
+                self.dialog = Some((act, Draft::default()));
+                return Ok(());
+            }
+            "dispose" | "reverse_disposal" | "void" | "confirm_void" => {}
             _ => return Err(Error::Invalid),
         }
-        let cap = match event {
-            "dispose" => DISPOSE,
-            "reverse" => REVERSE,
-            _ => VOID,
+        let act = match event {
+            "dispose" => Act::Dispose,
+            "reverse_disposal" => Act::Reverse,
+            _ => Act::Void,
         };
-        if !self.pages.allowed(s, cap).await? {
+        if !self.pages.allowed(s, act.cap()).await? {
             self.pending_void = None;
+            self.dialog = None;
             self.flash = Some((StatusKind::Error, DENIED.into()));
             return Ok(());
         }
         if event == "confirm_void" {
-            let Some((mut draft, input)) = self.pending_void.take() else {
+            let Some((draft, input)) = self.pending_void.take() else {
                 return Ok(());
             };
             match self
@@ -471,17 +462,16 @@ impl Detail {
                 .await
                 .map_err(contract_error)
             {
-                Ok(_) => self.flash = Some((StatusKind::Success, "Acquisition voided.".into())),
-                Err(e) => {
-                    draft.refused(&e);
-                    self.flash = Some((StatusKind::Error, refusal(e)));
+                Ok(_) => {
+                    self.dialog = None;
+                    self.flash = Some((StatusKind::Success, "Acquisition voided.".into()));
                 }
+                Err(e) => self.refuse(draft, e, Act::Void),
             }
-            self.void = draft;
             return Ok(());
         }
-        let mut draft = Draft::posted(v);
-        if event == "void" {
+        let draft = Draft::posted(v);
+        if act == Act::Void {
             let review=async{
                 let input=self.input(s,&draft)?;
                 let result=self.pages.contracts.preview(&self.pages.call(s,credential,"void","finance.fixed_assets.acquisition.void"),input.clone()).await.map_err(contract_error)?;
@@ -492,27 +482,27 @@ impl Detail {
                 Ok(input)
             }.await;
             match review {
-                Ok(input) => self.pending_void = Some((draft.clone(), input)),
-                Err(e) => {
-                    draft.refused(&e);
-                    self.flash = Some((StatusKind::Error, refusal(e)));
+                Ok(input) => {
+                    self.dialog = None;
+                    self.pending_void = Some((draft, input));
                 }
+                Err(e) => self.refuse(draft, e, Act::Void),
             }
-            self.void = draft;
             return Ok(());
         }
-        match self.perform(s, credential, event, &draft).await {
-            Ok(()) => self.flash = Some((StatusKind::Success, "Recorded in the ledger.".into())),
-            Err(e) => {
-                draft.refused(&e);
-                self.flash = Some((StatusKind::Error, refusal(e)));
+        match self.perform(s, credential, act, &draft).await {
+            Ok(()) => {
+                self.dialog = None;
+                self.flash = Some((
+                    StatusKind::Success,
+                    match act {
+                        Act::Dispose => "Disposal posted.",
+                        _ => "Disposal reversed.",
+                    }
+                    .into(),
+                ));
             }
-        }
-
-        match event {
-            "dispose" => self.dispose = draft,
-            "reverse" => self.reverse = draft,
-            _ => self.void = draft,
+            Err(e) => self.refuse(draft, e, act),
         }
         Ok(())
     }
@@ -538,16 +528,23 @@ impl LiveState<Scope, Error> for Detail {
                         if id != self.asset_id {
                             self.asset_id = id;
                             self.pending_void = None;
-                            self.dispose = Draft::default();
-                            self.reverse = Draft::default();
-                            self.void = Draft::default();
+                            self.dialog = None;
                         }
+                    }
+                    if let Some(act) = p.get("act").and_then(|a| Act::parse(a)) {
+                        self.dialog = Some((act, Draft::default()));
                     }
                 }
                 LiveInput::Refresh => {}
             }
+            let mut query = HashMap::new();
+            let html = self.body(r.scope).await?;
+            if let Some((act, _)) = &self.dialog {
+                query.insert("act".to_owned(), act.key().to_owned());
+            }
             Ok(LiveBody {
-                html: self.body(r.scope).await?,
+                html,
+                query,
                 ..Default::default()
             })
         })

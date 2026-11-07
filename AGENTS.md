@@ -256,6 +256,12 @@ they govern this code and are not copied here.
 - Register assets through `FixedAssets`, never by posting or claiming their
   acquisition entry: ordinary acquisitions freeze one whole source debit and its revision; opening registers use `import_opening_register` against approved aggregate balances, preserving source accumulation and prospective remaining life;
   projected schedules are not posted depreciation (see `fixed_assets/README.md`).
+  A page offers the source debit as a choice from `finance.fixed_assets.acquisition.sources`
+  (the bill or journal line, name first), never a typed record or line number.
+- Name a person a page shows (recorded by, posted by, history "By") through the
+  Platform's principal directory (`People` in `fixed_assets/src/web/mod.rs`),
+  never "User #5": it resolves only what the reader may see and keeps "User 5"
+  for anyone it cannot name.
 - A customer or supplier permanently links at creation to a Core Company or
   Person through Base Records (`record_kind`/`record_id`). Finance owns no party
   code or copied identity fields: use `PartyLinks` (`ledger/src/party_links.rs`)

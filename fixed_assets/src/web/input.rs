@@ -98,13 +98,6 @@ impl Draft {
                 )
             })
     }
-    pub fn optional_id(&self, key: &'static str) -> crate::Result<Option<i64>> {
-        if self.value(key).trim().is_empty() {
-            Ok(None)
-        } else {
-            self.id(key).map(Some)
-        }
-    }
     pub fn date(&self, key: &'static str) -> crate::Result<Date> {
         self.value(key).parse().map_err(|_| {
             crate::invalid(
@@ -132,18 +125,6 @@ impl Draft {
             return Err(crate::invalid(key, "can't be blank"));
         }
         Money::parse(self.value(key), units).map_err(|e| crate::invalid(key, e.to_string()))
-    }
-    /// An acquisition's source record and line, both reported together and
-    /// before any other field, as Bilimbi checks them first.
-    pub fn source(&self, id: &'static str, line: &'static str) -> crate::Result<(i64, i32)> {
-        let mut c = Collect::default();
-        let id = c.take(self.id(id))?;
-        let line = c.take(
-            self.id(line)
-                .and_then(|n| i32::try_from(n).map_err(|_| crate::invalid(line, "is invalid"))),
-        )?;
-        c.finish()?;
-        Ok((got(id)?, got(line)?))
     }
     pub fn revision(&self) -> crate::Result<RevisionInput> {
         let mut c = Collect::default();
