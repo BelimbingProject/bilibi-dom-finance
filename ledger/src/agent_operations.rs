@@ -370,7 +370,7 @@ impl Write {
                     return Err(LedgerError::BookAlreadyOpen);
                 }
                 let code = shaped_code(input)?;
-                let chosen = currency::choose_for(client, tx, scope, &code, input)
+                let chosen = currency::choose(client, scope, &code)
                     .await?
                     .map_err(|refused| LedgerError::Invalid(vec![refused]))?;
                 let units = match input["minor_units"].as_i64() {
@@ -901,9 +901,6 @@ impl WriteHandler for Write {
                     // This transaction's own review chose the places (given, or the standard).
                     let minor_units = review["changes"]["after"]["minor_units"].as_i64();
                     let minor_units = minor_units.ok_or(Error::Internal)?;
-                    currency::enable_reviewed(tx, scope, &code, &review)
-                        .await?
-                        .map_err(|refused| invalid(LedgerError::Invalid(vec![refused])))?;
                     let book = Ledger::open_book_on(
                         tx,
                         scope,
@@ -1447,7 +1444,7 @@ fn output() -> Value {
 fn book_schema() -> Value {
     schema(
         &["currency_code"],
-        json!({"currency_code":{"type":"string","maxLength":3,"description":"A currency from finance.ledger.book.currencies, by its three-letter code. Permanent."},"enable_currency":{"type":"boolean","description":"Also enable the currency for the tenant when it is not enabled yet, in the same write. Needs admin.currency.manage (book.currencies says can_enable); the review shows changes.after.currency.enables_currency."},"minor_units":{"type":"integer","minimum":0,"maximum":4,"description":"Decimal places. Omit to use the currency's ISO 4217 standard, which the review shows; a different value is allowed and flagged as nonstandard. Required when the currency list is unavailable. Permanent."},"separation_required":boolean(),"approval_reason":string(500)}),
+        json!({"currency_code":{"type":"string","maxLength":3,"description":"A currency from finance.ledger.book.currencies, by its three-letter code. Permanent."},"minor_units":{"type":"integer","minimum":0,"maximum":4,"description":"Decimal places. Omit to use the currency's ISO 4217 standard, which the review shows; a different value is allowed and flagged as nonstandard. Required when the currency list is unavailable. Permanent."},"separation_required":boolean(),"approval_reason":string(500)}),
     )
 }
 fn account_schema() -> Value {
@@ -1683,7 +1680,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/ledger.operations",P
     operations:&[
         Operation {key:"finance.ledger.book.get",title:"Read the book",summary:"Read currency, its name and standard decimal places, minor units and bookkeeping controls; book is null before opening.",keywords:&[],capability:VIEW,input:target_schema,output,handler:Handler::Read(&Read::Book),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.opening_balances.get",title:"Read opening-balance progress",summary:"Read the latest opening submission, its approval status, posted entry and reversal. opening is null before submission; this does not measure a complete accounting conversion.",keywords:&["conversion"],capability:VIEW,input:target_schema,output,handler:Handler::Read(&Read::OpeningProgress),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.ledger.book.currencies",title:"Choose the book's currency",summary:"Currencies a book may open in (ISO 4217 places, enabled state) matching a code or name, and the proposal: the company's base currency, else the tenant's. can_enable: the person may pick one not enabled (book.open enable_currency). reference is none_enabled when nothing is enabled and the person may not enable one (no book can open), unavailable when the list was never installed (a code is accepted unchecked).",keywords:&[],capability:VIEW,input:currencies_schema,output,handler:Handler::Read(&Read::Currencies),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.ledger.book.currencies",title:"Choose the book's currency",summary:"Currencies a book may open in (every current ISO 4217 currency, with its places and whether the tenant has used it; used ones first) matching a code or name, and the proposal: the company's base currency, else the tenant's. Opening the book marks its currency used. reference is unavailable when the list was never installed (a code is accepted unchecked).",keywords:&[],capability:VIEW,input:currencies_schema,output,handler:Handler::Read(&Read::Currencies),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.journal.get",title:"Read a journal",summary:"Read lines, submission, decision, the approved entry identifier and whether it is the book's opening balances journal.",keywords:&[],capability:VIEW,input:journal_schema,output,handler:Handler::Read(&Read::Journal),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.account.list",title:"List accounts",summary:"Read the chart by code with a bounded cursor page: accounts, and account groups marked is_group.",keywords:&[],capability:VIEW,input:accounts_schema,output,handler:Handler::Read(&Read::Accounts),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.chart_balance.get",title:"Read the chart with balances",summary:"Read every account with its own balance and every account group with the total of the accounts under it, as of a date and counted through a pinned entry number. A group never has a balance of its own.",keywords:&[],capability:VIEW,input:trial_balance_schema,output,handler:Handler::Read(&Read::ChartBalances),channels:Channels::Every,step_up:&[]},

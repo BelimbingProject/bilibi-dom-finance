@@ -10,9 +10,10 @@
 //! walkthrough password. Pass `empty` to stop before the book is opened, or
 //! `bare` to open it with an empty chart (the starter charts are offered).
 //! Run `bilibi-web migrate` and `seed-production` first for Core's currency
-//! list. `empty` and `book-proof` also turn off every currency of tenant 2, so the
-//! Book page shows a book with no enabled currency; `book-proof` then opens it
-//! through the Book page's own `LiveState` and stops with the `bare` state.
+//! list. `empty` and `book-proof` also clear tenant 2's used currencies, so the
+//! Book page offers every current one with none used yet; `book-proof` then
+//! opens it through the Book page's own `LiveState` and stops with the `bare`
+//! state.
 //! Pass `opening` for the chart and open periods with no posted entries.
 //! After seeding it drives the Journals page's period control through
 //! its real `LiveState` and prints one proof line.
@@ -89,14 +90,14 @@ async fn main() -> Outcome<()> {
     let book_proof = std::env::args().any(|arg| arg == "book-proof");
     if unopened && (book_proof || std::env::args().any(|arg| arg == "empty")) {
         // Disposable identity-level fixture state: the tenant has the ISO list
-        // but has enabled no currency yet.
+        // but has used no currency yet.
         db.get()
             .await?
-            .execute("DELETE FROM currency_tenant_enabled WHERE tenant_id=2", &[])
+            .execute("DELETE FROM currency_tenant_used WHERE tenant_id=2", &[])
             .await?;
     }
     if unopened && book_proof {
-        book_page_proof(&db, services, &manager, &reviewer).await?;
+        book_page_proof(&db, services, &manager).await?;
     } else if unopened && std::env::args().any(|arg| arg == "bare") {
         // An adopter who has opened the book and nothing else: the chart is
         // empty, so the starter charts are offered.
@@ -434,9 +435,7 @@ async fn book_page_proof(
     db: &bilibi_database::Db,
     services: &Services,
     manager: &Scope,
-    reviewer: &Scope,
 ) -> Outcome<()> {
-    let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     // A page write carries the person's session, as the browser's does.
     let login = services
         .get::<bilibi_core::user::UserService>("core/user.accounts")?
@@ -464,12 +463,12 @@ async fn book_page_proof(
                 .expect("the book page mounts"),
         )
     };
-    let enabled = || async {
+    let used = || async {
         Ok::<i64, Box<dyn std::error::Error>>(
             db.get()
                 .await?
                 .query_one(
-                    "SELECT count(*) FROM currency_tenant_enabled WHERE tenant_id=2 AND code='MYR'",
+                    "SELECT count(*) FROM currency_tenant_used WHERE tenant_id=2 AND code='MYR'",
                     &[],
                 )
                 .await?
@@ -477,39 +476,10 @@ async fn book_page_proof(
         )
     };
 
-    grants
-        .set_direct(reviewer, 5, bilibi_currency::MANAGE, Some(false))
-        .await?;
-    let mut state = mount().await?;
-    let asked = update(&mut state, manager, LiveInput::Refresh).await?;
-    has(&asked, "ledger-book-back");
-    has(&asked, "ledger-book-none-enabled");
-    has(&asked, "Ask an administrator");
-    for gone in [
-        "Open Currencies",
-        "ledger-book-currency-code",
-        "Proposed starter chart",
-        "awaiting accountant review",
-        "ledger-book-chart",
-    ] {
-        lacks(&asked, gone);
-    }
-
-    // The contract an agent calls answers the same: nothing to choose, and
-    // asking to enable is refused without enabling anything.
+    // The tenant has used no currency and the manager manages no currency:
+    // the contract an agent calls still offers every current one.
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
-    let open_book = match registry
-        .operations
-        .get("finance.ledger.book.open")
-        .ok_or(Error::NotFound)?
-        .definition
-        .handler
-    {
-        bilibi_agent_api::Handler::SafeWrite(handler) => handler,
-        _ => return Err(Error::Invalid.into()),
-    };
-    let input = json!({"company_id":COMPANY,"currency_code":"MYR","enable_currency":true});
-    let mut client = db.get().await?;
+    let client = db.get().await?;
     let currencies = registry
         .call(
             &**client,
@@ -518,62 +488,42 @@ async fn book_page_proof(
             &json!({"company_id":COMPANY}),
         )
         .await?;
-    assert_eq!(currencies["result"]["reference"], "none_enabled");
-    assert_eq!(currencies["result"]["can_enable"], false);
-    let tx = services
-        .get::<bilibi_database::MutationBoundary>("base/database.mutations")?
-        .begin(
-            &mut client,
-            manager.mutation_context("finance.walkthrough.book.enable"),
-        )
-        .await?;
-    let refused = match open_book.preview(tx.sql(), manager, &input).await {
-        Ok(_) => return Err("enable_currency previewed without currency manage".into()),
-        Err(refused) => format!("{refused:?}"),
-    };
-    assert!(
-        refused.contains("no currency is enabled yet"),
-        "enable_currency without currency manage: {refused}"
-    );
-    drop(tx);
     drop(client);
-    assert_eq!(enabled().await?, 0, "a refused enable changed the tenant");
+    assert_eq!(currencies["result"]["reference"], "iso4217");
+    assert!(
+        currencies["result"]["currencies"]
+            .as_array()
+            .is_some_and(|listed| listed
+                .iter()
+                .any(|c| c["code"] == "MYR" && c["used"] == false)),
+        "every current currency should be offered: {currencies}"
+    );
 
-    grants
-        .set_direct(reviewer, 5, bilibi_currency::MANAGE, Some(true))
-        .await?;
-    let mut client = db.get().await?;
-    let tx = services
-        .get::<bilibi_database::MutationBoundary>("base/database.mutations")?
-        .begin(
-            &mut client,
-            manager.mutation_context("finance.walkthrough.book.enable"),
-        )
-        .await?;
-    let reviewed = open_book.preview(tx.sql(), manager, &input).await?;
-    let reviewed = format!("{}", reviewed.envelope("finance.ledger.book.open"));
-    assert!(
-        reviewed.contains("\"enables_currency\":true"),
-        "the review should say MYR is enabled: {reviewed}"
-    );
-    drop(tx);
-    drop(client);
     let mut state = mount().await?;
     let offered = update(&mut state, manager, LiveInput::Refresh).await?;
+    has(&offered, "ledger-book-back");
     has(&offered, "ledger-book-currency-code");
     has(&offered, "MYR Malaysian");
-    lacks(&offered, "ledger-book-none-enabled");
+    for gone in [
+        "ledger-book-none-enabled",
+        "Ask an administrator",
+        "Proposed starter chart",
+        "awaiting accountant review",
+        "ledger-book-chart",
+    ] {
+        lacks(&offered, gone);
+    }
     // Choosing a currency brings its standard decimal places (MYR: 2).
     let cleared = json!({"type":"validate","book[currency_code]":"","book[minor_units]":"0","book[approver]":"someone_else"});
     act(&mut state, manager, &login.token, &cleared).await?;
     let chosen = json!({"type":"validate","book[currency_code]":"MYR","book[minor_units]":"0","book[approver]":"someone_else"});
     let chosen = act(&mut state, manager, &login.token, &chosen).await?;
-    has(&chosen, "opening the book also enables it");
+    lacks(&chosen, "also enables");
     let review = json!({"type":"review_open"});
     let review = act(&mut state, manager, &login.token, &review).await?;
     has(&review, "ledger-book-confirm");
-    has(&review, "This also enables MYR");
-    assert_eq!(enabled().await?, 0, "the review enabled MYR");
+    lacks(&review, "also enables");
+    assert_eq!(used().await?, 0, "the review marked MYR used");
     let open = json!({"type":"open_book"});
     let opened = act(&mut state, manager, &login.token, &open).await?;
     assert_eq!(
@@ -593,7 +543,7 @@ async fn book_page_proof(
         (book.currency_code.as_str(), book.minor_units.get()),
         ("MYR", 2)
     );
-    assert_eq!(enabled().await?, 1, "opening the book should enable MYR");
+    assert_eq!(used().await?, 1, "opening the book should mark MYR used");
     let mut opened_page = mount().await?;
     let seen = update(&mut opened_page, manager, LiveInput::Refresh).await?;
     has(&seen, "ledger-book-controls-change");
@@ -614,7 +564,7 @@ async fn book_page_proof(
     has(&read, "ledger-book-controls");
     lacks(&read, "ledger-book-controls-change");
     println!(
-        "Book page and book.open: without currency manage the page asks an administrator and enable_currency is refused; with it MYR is reviewed as enabled, opens the book, enables MYR in the same write, keeps its 2 decimal places and lands on Chart of accounts"
+        "Book page and book.open: with no currency used yet and no currency manage, every current currency is offered; MYR is reviewed with no enable step, opens the book, is marked used in the same write, keeps its 2 decimal places and lands on Chart of accounts"
     );
     Ok(())
 }
