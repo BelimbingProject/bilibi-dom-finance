@@ -143,7 +143,7 @@ fn output() -> Value {
             "company_id":{"type":"integer"},"as_of":{"type":"string","format":"date"},"currency_code":{"type":"string"},"minor_units":{"type":"integer"},
             "through_entry_number":{"type":"integer"},"through_asset_number":{"type":"integer"},"through_event_number":{"type":"integer"},"through_category_revision_id":{"type":"integer"},
             "rows":{"type":"array","items":{"type":"object"},"description":"Frozen asset and category revision, posted accumulation, carrying value, disposal state and full projected schedule."},
-            "reconciliation":{"type":"array","items":{"type":"object","properties":{"account_id":{"type":"integer"},"kind":{"type":"string","enum":["Balance","Activity"]},"ledger_balance":{"type":"string"},"register_balance":{"type":"string"},"difference":{"type":"string"}}}}
+            "reconciliation":{"type":"array","items":{"type":"object","properties":{"account_id":{"type":"integer"},"kind":{"type":"string","enum":["Balance","Activity"]},"ledger_balance":{"type":"string"},"register_balance":{"type":"string"},"difference":{"type":"string"},"other_postings":{"type":"string","description":"Activity rows only: postings on this depreciation, gain or loss account that Fixed assets did not make (sales on a shared income account, a manual journal). Not a difference."}}}}
         }}
     }})
 }

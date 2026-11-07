@@ -461,6 +461,40 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .depreciation_schedule_report(&s, COMPANY, date(2026, 1, 31), &historical.pins())
         .await?;
     assert_eq!(snapshot(&historical), snapshot(&reproduced));
+    // A gain or depreciation account the company also uses elsewhere (sales,
+    // a manual journal) ties out: only this module's postings are compared,
+    // and the rest is shown beside the row instead of as a difference.
+    l.post_entry(
+        &s,
+        COMPANY,
+        &NewEntry {
+            entry_date: date(2026, 3, 31),
+            description: "NX2 unrelated postings on shared accounts".into(),
+            reference: None,
+            lines: vec![
+                NewLine::debit(accounts[5], m("75")),
+                NewLine::credit(accounts[3], m("75")),
+                NewLine::debit(accounts[2], m("20")),
+                NewLine::credit(accounts[5], m("20")),
+            ],
+        },
+        &PostOptions::default(),
+    )
+    .await?;
+    let shared = report(&f, &s, date(2026, 12, 31)).await?;
+    tied(&shared);
+    let other = |id| {
+        shared
+            .reconciliation
+            .iter()
+            .find(|r| r.account_id == id)
+            .unwrap()
+            .other_postings
+    };
+    assert_eq!(other(accounts[3]), Money::ZERO - m("75"));
+    assert_eq!(other(accounts[2]), m("20"));
+    assert_eq!(other(accounts[0]), Money::ZERO);
+    println!("Shared gain and expense accounts tie out; their other postings are shown apart");
     // Closing entries zero expense in the ledger, but register reconciliation
     // reads activity without either a closing entry or its later reversal.
     let before_close = report(&f, &s, date(2026, 12, 31)).await?;

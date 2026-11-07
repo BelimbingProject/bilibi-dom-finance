@@ -654,8 +654,8 @@ impl Index {
                     .reconciliation
                     .iter()
                     .map(|r| {
-                        format!(
-                            "{}: ledger {}, register {}, difference {}.",
+                        let mut line = format!(
+                            "{}: ledger {}, register {}, difference {}",
                             accounts
                                 .iter()
                                 .find(|a| a.0 == r.account_id)
@@ -664,7 +664,15 @@ impl Index {
                             r.ledger_balance.display(units),
                             r.register_balance.display(units),
                             r.difference.display(units)
-                        )
+                        );
+                        if !r.other_postings.is_zero() {
+                            line.push_str(&format!(
+                                "; other postings {}",
+                                r.other_postings.display(units)
+                            ));
+                        }
+                        line.push('.');
+                        line
                     })
                     .collect(),
             })?
