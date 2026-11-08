@@ -4,9 +4,11 @@
 //! correct it before anything is kept: the guess only proposes.
 //!
 //! Shared by the Finance pages that read a person's table: the opening
-//! balances grid reads a pasted trial balance with it, and Reconciliation's
+//! balances grid reads a pasted trial balance with it, Reports' source-period
+//! dialog a pasted source schedule, and Reconciliation's
 //! statement import can adopt it for the same header words and amounts.
-//! Nothing here knows an account, a currency or a particular export's layout.
+//! Nothing here knows a chart, a currency or a particular export's layout:
+//! [`pick`] takes each entry's code and name from its caller.
 use crate::opening_csv;
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
@@ -233,6 +235,110 @@ fn is_currency_symbol(c: char) -> bool {
             | '₽'
             | '¢'
     )
+}
+
+/// Why a pasted cell names none of a list's entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// The cell is blank.
+    Blank,
+    /// More than one entry has the name the cell holds.
+    Ambiguous,
+    /// No entry has the code or name the cell holds.
+    Unknown,
+}
+
+/// The entry a pasted cell names: its code, else its name (when only one
+/// entry has it), else a code at the start of the cell ("1000 Cash",
+/// "1000: Cash"), all ignoring case. Every page that reads an account from a
+/// person's table finds it this way, so a cell names the same account on each;
+/// the caller still decides whether that account may take the row.
+pub fn pick<'a, T>(
+    cell: &str,
+    entries: &'a [T],
+    code: impl Fn(&T) -> &str,
+    name: impl Fn(&T) -> &str,
+) -> Result<&'a T, Pick> {
+    let cell = cell.trim();
+    if cell.is_empty() {
+        return Err(Pick::Blank);
+    }
+    let by_code = |text: &str| entries.iter().find(|e| code(e).eq_ignore_ascii_case(text));
+    let named: Vec<&T> = entries
+        .iter()
+        .filter(|e| name(e).trim().eq_ignore_ascii_case(cell))
+        .collect();
+    let leading = cell
+        .split(|c: char| c.is_whitespace() || c == ':')
+        .next()
+        .filter(|text| *text != cell)
+        .and_then(by_code);
+    match (by_code(cell), named.as_slice(), leading) {
+        (Some(entry), _, _) => Ok(entry),
+        (None, [entry], _) => Ok(entry),
+        (None, [_, _, ..], _) => Err(Pick::Ambiguous),
+        (None, [], Some(entry)) => Ok(entry),
+        (None, [], None) => Err(Pick::Unknown),
+    }
+}
+
+/// The order of day and month in a date written with its year last
+/// ("15/05/2026", "05/15/2026"). A date written year first ("2026-05-15")
+/// reads the same in either order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DateOrder {
+    DayFirst,
+    MonthFirst,
+}
+
+/// A pasted date: year first (`2026-05-15`, `2026/5/15`), or day and month
+/// before a four-digit year in `order`, separated by `/`, `-` or `.`.
+/// Anything else, a two-digit year or a day the month does not have, is
+/// `None`: the page shows the row as left out rather than guessing.
+pub fn date(cell: &str, order: DateOrder) -> Option<jiff::civil::Date> {
+    let parts: Vec<&str> = cell.trim().split(['/', '-', '.']).collect();
+    let [a, b, c] = parts.as_slice() else {
+        return None;
+    };
+    let number = |text: &str| {
+        (!text.is_empty() && text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit()))
+            .then(|| text.parse::<i16>().ok())
+            .flatten()
+    };
+    let (year, month, day) = if a.len() == 4 {
+        (number(a)?, number(b)?, number(c)?)
+    } else if c.len() == 4 {
+        match order {
+            DateOrder::DayFirst => (number(c)?, number(b)?, number(a)?),
+            DateOrder::MonthFirst => (number(c)?, number(a)?, number(b)?),
+        }
+    } else {
+        return None;
+    };
+    jiff::civil::Date::new(year, i8::try_from(month).ok()?, i8::try_from(day).ok()?).ok()
+}
+
+/// The first guess at a column's date order: month first only when some
+/// cell's second part cannot be a month and none's first part is above 12;
+/// day first otherwise. The page shows the dates read, so the person can
+/// correct a guess that the cells could not settle.
+pub fn date_order<'a>(cells: impl IntoIterator<Item = &'a str>) -> DateOrder {
+    let (mut day_first, mut month_first) = (false, false);
+    for cell in cells {
+        let parts: Vec<&str> = cell.trim().split(['/', '-', '.']).collect();
+        if let [a, b, c] = parts.as_slice() {
+            if c.len() == 4 {
+                let over = |text: &str| text.parse::<u8>().is_ok_and(|n| n > 12);
+                day_first |= over(a);
+                month_first |= over(b);
+            }
+        }
+    }
+    if month_first && !day_first {
+        DateOrder::MonthFirst
+    } else {
+        DateOrder::DayFirst
+    }
 }
 
 /// A tab when the text has one (a spreadsheet's copy); otherwise the

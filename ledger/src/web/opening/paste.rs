@@ -528,34 +528,20 @@ impl Paste {
     }
 }
 
-/// The account a pasted cell names: its code, else its name (when only one
-/// account has it), else a code at the start of the cell ("1000 Cash",
-/// "1000 - Cash"). Only an account that takes postings is filled.
+/// The account a pasted cell names ([`columns::pick`]). Only an account
+/// that takes postings is filled.
 fn find<'a>(
     cell: &str,
     accounts: &'a [view::Account],
 ) -> std::result::Result<&'a view::Account, String> {
-    let cell = cell.trim();
-    if cell.is_empty() {
-        return Err("it names no account".into());
-    }
-    let by_code = |code: &str| accounts.iter().find(|a| a.code.eq_ignore_ascii_case(code));
-    let named: Vec<&view::Account> = accounts
-        .iter()
-        .filter(|a| a.name.trim().eq_ignore_ascii_case(cell))
-        .collect();
-    let leading = cell
-        .split(|c: char| c.is_whitespace() || c == ':')
-        .next()
-        .filter(|code| *code != cell)
-        .and_then(by_code);
-    let account = match (by_code(cell), named.as_slice(), leading) {
-        (Some(a), _, _) => a,
-        (None, [a], _) => a,
-        (None, [_, _, ..], _) => return Err("more than one account has this name".into()),
-        (None, [], Some(a)) => a,
-        (None, [], None) => return Err("no account has this code or name".into()),
-    };
+    let account = columns::pick(cell, accounts, |a| &a.code, |a| &a.name).map_err(|why| {
+        match why {
+            columns::Pick::Blank => "it names no account",
+            columns::Pick::Ambiguous => "more than one account has this name",
+            columns::Pick::Unknown => "no account has this code or name",
+        }
+        .to_owned()
+    })?;
     if account.is_group {
         return Err(format!(
             "{} is an account group, which takes no balance",

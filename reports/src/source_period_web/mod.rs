@@ -24,6 +24,7 @@ use std::{
 
 mod bridge;
 mod form;
+mod paste;
 
 pub(crate) const PAGES: &str = "finance/reports.source-period-pages";
 const PATH: &str = "/finance/reports/source-periods";
@@ -125,6 +126,17 @@ struct State {
     columns: ListColumns,
     /// The "+ Schedule" dialog is open.
     adding: bool,
+    /// The rows pasted into the dialog, and how they are read.
+    paste_text: String,
+    paste: Option<paste::Paste>,
+    /// The book's decimal places and currency and the chart, read once per dialog.
+    chart: Option<(
+        bilibi_finance_ledger::MinorUnits,
+        String,
+        Vec<paste::Account>,
+    )>,
+    /// What the dialog refuses that has no field of its own.
+    dialog_message: Option<String>,
 }
 impl State {
     fn query(&self) -> HashMap<String, String> {
@@ -169,6 +181,10 @@ impl State {
             review: None,
             records: vec![],
             adding: false,
+            paste_text: String::new(),
+            paste: None,
+            chart: None,
+            dialog_message: None,
             columns: ListColumns::mount(
                 "source-periods",
                 vec![
@@ -431,7 +447,7 @@ impl State {
                 body.push(&render(Modal {
                     id: "source-period-modal",
                     title: "New source schedule",
-                    description: "Retain one row of a source report for the current company.",
+                    description: "Retain a source report's rows for the current company.",
                     cancel_event: "close_schedule",
                     width: ModalWidth::Wide,
                     body: self.form(scope, company).await?,
@@ -464,35 +480,33 @@ impl LiveState<Scope, Error> for State {
         Box::pin(async move {
             if let LiveInput::Event(value) = r.input {
                 match value["type"].as_str().unwrap_or("") {
+                    "schedule_change" => self.take_details(value)?,
+                    "paste_headed" => {
+                        if let Some(paste) = &mut self.paste {
+                            paste.set_headed(value["on"].as_str() == Some("true"));
+                        }
+                    }
+                    "paste_columns" => {
+                        if let Some(paste) = &mut self.paste {
+                            paste.choose(
+                                &params::form_values_checked(value, paste::FORM, 64)
+                                    .map_err(Error::refused)?,
+                            );
+                        }
+                    }
                     "preview" => {
                         self.review = None;
                         self.errors.clear();
                         self.message = None;
-                        self.values = params::form_values_checked(value, "schedule", 1024)
-                            .map_err(Error::refused)?;
-                        let get = |key: &str| self.values.get(key).cloned().unwrap_or_default();
+                        self.dialog_message = None;
                         let company = Self::company(r.scope)?;
-                        let book = self
-                            .read(
-                                r.scope,
-                                "finance.ledger.book.get",
-                                json!({"company_id":company}),
-                            )
-                            .await?;
-                        let mut row = json!({"source_id":get("source_id"),"amount":get("amount")});
-                        if self.kind == "comparative" || self.kind == "movement" {
-                            row["account_id"] = get("account_id")
-                                .parse::<i64>()
-                                .ok()
-                                .map(Value::from)
-                                .unwrap_or(Value::Null);
-                            row["side"] = json!(get("side"));
-                        } else {
-                            for key in ["authority", "reference", "event_date"] {
-                                row[key] = json!(get(key));
+                        let (input, numbers) = match self.schedule(r.scope, company).await? {
+                            Ok(schedule) => schedule,
+                            Err(why) => {
+                                self.dialog_message = Some(why);
+                                return self.body(r.scope).await;
                             }
-                        }
-                        let input = json!({"company_id":company,"kind":self.kind,"source_reference":get("source_reference"),"source_system":get("source_system"),"currency_code":book["book"]["currency_code"],"accounting_timezone":get("accounting_timezone"),"period_start":get("period_start"),"period_end":get("period_end"),"rows":[row]});
+                        };
                         let call = Call {
                             scope: r.scope,
                             credential: r.credential,
@@ -500,9 +514,58 @@ impl LiveState<Scope, Error> for State {
                             event: "preview",
                             contract: IMPORT,
                         };
-                        match self.pages.contracts.preview(&call,input.clone()).await {
-                            Ok(answer) => { let result=&answer["results"][0]; if result["valid"]==true {self.review=Some(Review {input,facts:result["preview"]["result"]["changes"].clone()});} else {self.errors=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_default();self.message=Some("Check the fields and preview again.".into());} },
-                            Err(_) => self.message=Some("The schedule could not be reviewed. Check your access and try again.".into()),
+                        match self.pages.contracts.preview(&call, input.clone()).await {
+                            Ok(answer) => {
+                                let result = &answer["results"][0];
+                                if result["valid"] == true {
+                                    self.review = Some(Review {
+                                        input,
+                                        facts: result["preview"]["result"]["changes"].clone(),
+                                    });
+                                } else {
+                                    let fields: BTreeMap<String, Vec<String>> =
+                                        serde_json::from_value(result["error"]["fields"].clone())
+                                            .unwrap_or_default();
+                                    // A row's refusal names the pasted row it came from.
+                                    let mut rows = Vec::new();
+                                    for (path, messages) in fields {
+                                        let pasted = path
+                                            .strip_prefix("rows.")
+                                            .and_then(|rest| rest.split('.').next())
+                                            .and_then(|i| i.parse::<usize>().ok())
+                                            .and_then(|i| numbers.get(i));
+                                        match pasted {
+                                            Some(number) => rows.push(format!(
+                                                "Row {number}: {}",
+                                                messages.join(" ")
+                                            )),
+                                            None => {
+                                                self.errors.insert(path, messages);
+                                            }
+                                        }
+                                    }
+                                    let other: Vec<String> = self
+                                        .errors
+                                        .iter()
+                                        .filter(|(k, _)| {
+                                            !["source_reference", "source_system", "period_start", "period_end", "accounting_timezone"].contains(&k.as_str())
+                                        })
+                                        .flat_map(|(_, m)| m.clone())
+                                        .collect();
+                                    rows.extend(other);
+                                    self.dialog_message = Some(if rows.is_empty() {
+                                        "Check the fields marked above and preview again.".into()
+                                    } else {
+                                        rows.join(" ")
+                                    });
+                                }
+                            }
+                            Err(_) => {
+                                self.dialog_message = Some(
+                                    "The schedule could not be reviewed. Check your access and try again."
+                                        .into(),
+                                )
+                            }
                         }
                     }
                     "do_confirm" => {
@@ -517,11 +580,13 @@ impl LiveState<Scope, Error> for State {
                             match self.pages.contracts.commit(&call, review.input).await {
                                 Ok(_) => {
                                     self.values.clear();
+                                    self.paste_text.clear();
+                                    self.paste = None;
                                     self.adding = false;
                                     self.message=Some("The source schedule was retained. Open it to attach its supporting report.".into());
                                 }
                                 Err(_) => {
-                                    self.message =
+                                    self.dialog_message =
                                         Some("The schedule changed. Preview it again.".into())
                                 }
                             }
@@ -536,6 +601,9 @@ impl LiveState<Scope, Error> for State {
                         self.adding = false;
                         self.values.clear();
                         self.errors.clear();
+                        self.paste_text.clear();
+                        self.paste = None;
+                        self.dialog_message = None;
                     }
                     "grid" => {
                         self.columns.handle(&params::string_values(value));
