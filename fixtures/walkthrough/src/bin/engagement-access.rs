@@ -690,20 +690,8 @@ async fn main() -> Outcome<()> {
     ar.get_document(&sales, COMPANY, draft.id)
         .await
         .map_err(|e| format!("sales get_document: {e:?}"))?;
-    // An invoice draft also reads the customer relationship in Core Company, which
-    // asks for Core's own tenant-wide `admin.company.view`; the role cannot hold
-    // it (Core keys are not company-scoped), so it is granted on its own.
-    assert!(ar
-        .create_draft(
-            &sales,
-            COMPANY,
-            &json!({"kind":"invoice","series_id":series.id,"customer_id":customer.id})
-        )
-        .await
-        .is_err());
-    grants
-        .set_direct(&admin, SALES, "admin.company.view", Some(true))
-        .await?;
+    // An invoice draft asks only the customer's status, so the role prepares
+    // one without Core's tenant-wide `admin.company.view`.
     let mine = ar
         .create_draft(
             &sales,

@@ -332,7 +332,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         )
         .await,
         "customer_id",
-        "is a pending company; activate it in Companies before invoicing",
+        "This company is pending, so it cannot be invoiced",
     );
     let companies = services.get::<bilibi_company::CompanyService>(bilibi_company::SERVICE)?;
     companies
@@ -353,7 +353,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         )
         .await,
         "customer_id",
-        "is a suspended company; reactivate it in Companies before invoicing",
+        "This company is suspended, so it cannot be invoiced",
     );
     companies
         .reactivate_company(&manager, 12, Some("Walkthrough: customer reactivated"))
@@ -576,7 +576,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     field(
         ar.update_draft(&manager, 1, draft.id, &json!({})).await,
         "customer_id",
-        "is an inactive customer",
+        "This customer is inactive, so it cannot be invoiced",
     );
     ar.update_customer(&manager, 1, customer.id, &json!({"active":true}))
         .await?;

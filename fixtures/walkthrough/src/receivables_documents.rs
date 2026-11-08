@@ -181,8 +181,10 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .await?;
     ar.update_customer(&admin, 1, customer.id, &json!({"payment_terms_days":15}))
         .await?;
-    // The issuer freezes the company's facts under their own Companies view:
-    // without it, or with a fact restricted for them, the issue is refused.
+    // Issuing asks only the customer's status, not Companies, but the issuer
+    // copies the company's facts onto the invoice under their own Companies
+    // view: without it, or with a fact restricted for them, the issue is
+    // refused with what to do.
     grants
         .set_direct(&admin, admin.user(), bilibi_company::VIEW, Some(false))
         .await?;
@@ -198,7 +200,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     field(
         ar.issue_document(&admin, 1, draft.id).await,
         "customer_id",
-        "needs Companies view permission to check the customer relationship",
+        "needs Companies view permission to copy the company's tax ID onto the document",
     );
     grants
         .set_direct(&admin, admin.user(), bilibi_company::VIEW, None)
@@ -213,7 +215,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     field(
         ar.issue_document(&admin, 1, draft.id).await,
         "customer_id",
-        "the company's tax ID is restricted for you, so it cannot be frozen on the document",
+        "the company's tax ID is restricted for you, so it cannot be copied onto the document; ask an administrator to lift the restriction",
     );
     assert_eq!(
         ar.get_customer(&admin, 1, customer.id)
@@ -606,7 +608,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         ar.create_draft(&admin, 1, &invoice(Some("2026-09-10"), "1"))
             .await,
         "customer_id",
-        "is a suspended company; reactivate it in Companies before invoicing",
+        "This company is suspended, so it cannot be invoiced",
     );
     let paid = ar.record_payment(&admin, 1, &valid).await?;
     assert_eq!(paid.payment_number, 2);
@@ -1272,24 +1274,31 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         let missing:i64=raw.query_one(&format!("SELECT count(*) FROM {table} r WHERE r.tenant_id=1 AND r.company_id=1 AND NOT EXISTS (SELECT 1 FROM base_audit_mutations a WHERE a.tenant_id=r.tenant_id AND a.auditable_type=$1 AND a.auditable_id=r.id::text)"),&[&format!("finance.receivables.{kind}")]).await?.get(0);
         assert_eq!(missing, 0, "unaudited {table}");
     }
+    let waiting = ar
+        .create_draft(&admin, 1, &invoice(Some("2026-10-08"), "1"))
+        .await?;
+    // An archived invoicing company keeps its records readable and refuses
+    // every write, issuing included.
     raw.batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
         .await?;
     let refused = ar.record_payment(&admin, 1, &valid).await;
+    let not_issued = ar.issue_document(&admin, 1, waiting.id).await;
     let readable = ar.get_payment(&admin, 1, paid.id).await;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
     assert!(matches!(refused, Err(R::CompanyArchived)));
+    assert!(
+        matches!(not_issued, Err(R::CompanyArchived)),
+        "{not_issued:?}"
+    );
     assert!(readable.is_ok());
-    let waiting = ar
-        .create_draft(&admin, 1, &invoice(Some("2026-10-08"), "1"))
-        .await?;
     companies
         .archive_company(&admin, party.id, Some("Walkthrough: customer archived"))
         .await?;
     field(
         ar.issue_document(&admin, 1, waiting.id).await,
         "customer_id",
-        "is an archived company",
+        "This company is archived, so it cannot be invoiced",
     );
     ar.reverse_payment(
         &admin,

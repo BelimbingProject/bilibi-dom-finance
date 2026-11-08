@@ -226,74 +226,15 @@ async fn main() -> Outcome<()> {
 
     let invoice = |date: &str| json!({"kind":"invoice","series_id":series.id,"customer_id":customer.id,"issue_date":date,"lines":[{"description":"Professional services","quantity":"1","unit_price":"100"}]});
     let draft = ar.create_draft(&manager, 1, &invoice("2026-08-31")).await?;
+    // Ending the customer relationship in Companies does not stop invoicing:
+    // only the customer's and its company's status decide, so the draft below
+    // still issues.
     companies
         .unlink_relationship(&manager, current.id, current.version)
         .await?;
-    // A reverse-direction link and out-of-date intervals are not current
-    // customer relationships from the invoicing company.
-    for (from, to) in [
-        (Some("2030-01-01"), None),
-        (Some("2025-01-01"), Some("2026-01-01")),
-    ] {
-        let saved = companies
-            .assign_relationship(
-                &manager,
-                &bilibi_party::RelationshipInput {
-                    source_organisation_id: source,
-                    target: owner,
-                    role_id: role.id,
-                    dates: EffectiveDates::new(from.map(day), to.map(day))?,
-                },
-            )
-            .await?;
-        assert!(
-            matches!(saved, bilibi_company::TypeOutcome::Saved(_)),
-            "{saved:?}"
-        );
-    }
-    let saved = companies
-        .assign_relationship(
-            &manager,
-            &bilibi_party::RelationshipInput {
-                source_organisation_id: OrganisationId::new(company)?,
-                target: PartyId::Organisation(source),
-                role_id: role.id,
-                dates: EffectiveDates::new(None, None)?,
-            },
-        )
-        .await?;
-    assert!(
-        matches!(saved, bilibi_company::TypeOutcome::Saved(_)),
-        "{saved:?}"
-    );
-    refused(
-        ar.create_draft(&manager, 1, &invoice("2026-08-31")).await,
-        "customer_id",
-        "no current customer relationship",
-    );
-    refused(
-        ar.issue_document(&manager, 1, draft.id).await,
-        "customer_id",
-        "no current customer relationship",
-    );
-    let relation = companies
-        .assign_relationship(
-            &manager,
-            &bilibi_party::RelationshipInput {
-                source_organisation_id: source,
-                target: owner,
-                role_id: role.id,
-                dates: EffectiveDates::new(Some(day("2026-01-02")), None)?,
-            },
-        )
-        .await?;
-    assert!(
-        matches!(relation, bilibi_company::TypeOutcome::Saved(_)),
-        "{relation:?}"
-    );
-    println!(
-        "PASS: both new invoice and issue recheck the directed current relationship on the write connection"
-    );
+    let unrelated = ar.create_draft(&manager, 1, &invoice("2026-08-31")).await?;
+    ar.discard_draft(&manager, 1, unrelated.id).await?;
+    println!("PASS: a new invoice needs no current customer relationship; status alone decides");
 
     // Billing intervals, kind priority, primary fallback, complete frozen facts.
     // Malaysia and Kuala Lumpur come from the Platform's bundled reference geography.

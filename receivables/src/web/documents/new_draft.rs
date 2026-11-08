@@ -117,7 +117,7 @@ impl Documents {
             }
             Some((_, false)) => self.flash.set(
                 StatusKind::Error,
-                format!("{name} is an inactive customer. Make it active on its customer page to invoice it."),
+                format!("{name} is inactive, so it cannot be invoiced. Make it active on its customer page first."),
             ),
             None => self.flash.set(
                 StatusKind::Error,
