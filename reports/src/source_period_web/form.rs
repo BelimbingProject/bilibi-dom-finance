@@ -56,6 +56,10 @@ impl State {
             fact("Conversion date", text("conversion_date")),
             fact("Rows", rows.len().to_string()),
         ];
+        if let Some(replaced) = facts["replaces"]["source_reference"].as_str() {
+            items.push(fact("Replaces", replaced.to_owned()));
+            items.push(fact("Reason", text("reason")));
+        }
         if accounts {
             items.push(fact("Debits", total(Some("debit"))));
             items.push(fact("Credits", total(Some("credit"))));
@@ -119,9 +123,13 @@ impl State {
         })?;
         buttons.push(&render(Button {
             button_type: "button",
-            event: "do_confirm",
+            event: review.confirm,
             variant: ButtonVariant::Primary,
-            body: Html::text("Retain schedule"),
+            body: Html::text(if self.replacing.is_some() {
+                "Retain correction"
+            } else {
+                "Retain schedule"
+            }),
             ..Button::default()
         })?);
         content.push(&render(Footer {
@@ -129,7 +137,11 @@ impl State {
         })?);
         render(Modal {
             id: "source-period-review-modal",
-            title: "Review source schedule",
+            title: if self.replacing.is_some() {
+                "Review correction"
+            } else {
+                "Review source schedule"
+            },
             description: "Retain this source schedule for the current company.",
             cancel_event: "cancel_review",
             width: ModalWidth::Wide,
@@ -339,6 +351,20 @@ impl State {
                     .unwrap_or_default(),
             ),
         )?);
+        if self.replacing.is_some() {
+            fields.push(&render(
+                Field::in_form("schedule", "reason")
+                    .id("schedule-reason")
+                    .label("Why it is corrected")
+                    .kind(InputKind::Textarea)
+                    .value(self.values.get("reason").cloned().unwrap_or_default())
+                    .hint("For example, a wrong amount or account in the source export. The auditor reads this.")
+                    .errors(self.errors.get("reason").cloned().unwrap_or_default())
+                    .attr("rows", "2")
+                    .attr("data-debounce", "400")
+                    .required(),
+            )?);
+        }
         let hint = if self.kind == "comparative" || self.kind == "movement" {
             format!("Copy the source report's rows, with or without its heading row: each account with its debit and credit, or one amount, in {currency}. You then check which column is which.")
         } else {
@@ -385,7 +411,11 @@ impl State {
         buttons.push(&render(Button {
             id: "source-period-preview",
             button_type: "button",
-            event: "preview",
+            event: if self.replacing.is_some() {
+                "preview_correction"
+            } else {
+                "preview"
+            },
             variant: ButtonVariant::Primary,
             body: Html::text("Preview schedule"),
             ..Button::default()
@@ -414,9 +444,9 @@ struct Inset {
     alert: Html,
 }
 
-/// The dialog's actions, below the column step.
+/// A dialog's actions, with the dialog's gap above them.
 #[derive(Template)]
 #[template(source = r#"<div class="mt-6">{{ actions|safe }}</div>"#, ext = "html")]
-struct Footer {
-    actions: Html,
+pub(super) struct Footer {
+    pub actions: Html,
 }

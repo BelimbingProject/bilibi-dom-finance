@@ -101,6 +101,7 @@ inventory::submit! {
             ("finance-reports-002-source-period", include_str!("../migrations/002-source-period.sql")),
             ("finance-reports-002-conversion-signoffs", include_str!("../migrations/002-conversion-signoffs.sql")),
             ("finance-reports-003-conversion-signoff-attestation", include_str!("../migrations/003-conversion-signoff-attestation.sql")),
+            ("finance-reports-004-source-period-corrections", include_str!("../migrations/004-source-period-corrections.sql")),
         ],
         services: &[Service { id: SERVICE, factory: |services| { let reports = Arc::new(Reports {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -829,7 +830,7 @@ impl Reports {
         issued::DATASETS
             .iter()
             .copied()
-            .chain(["source_period"])
+            .chain(["source_period", "source_period_correction"])
             .collect()
     }
 
@@ -862,11 +863,10 @@ impl Reports {
         after: Option<i64>,
     ) -> Result<EvidencePage> {
         authorize(client, scope, company_id, VIEW).await?;
-        if dataset == "source_period" {
+        if matches!(dataset, "source_period" | "source_period_correction") {
             authorize(client, scope, company_id, bilibi_finance_sst::VIEW).await?;
             authorize(client, scope, company_id, bilibi_finance_payroll::VIEW).await?;
-            return source_period::evidence_page(client, scope.tenant(), company_id, limit, after)
-                .await;
+            return source_period::evidence(client, scope, company_id, dataset, limit, after).await;
         }
         issued::page_options(dataset, limit, after, None)?;
         if dataset == "conversion_signoff" {
