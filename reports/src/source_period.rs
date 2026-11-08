@@ -1,7 +1,9 @@
 //! Retained conversion evidence. These records are source summaries, never
 //! ledger entries, tax returns, submissions, payroll runs or remittances.
 mod bridge;
+mod corrections;
 pub(crate) use bridge::BRIDGE;
+pub(crate) use corrections::{REPLACE, WITHDRAW};
 
 use crate::{Reports, MODULE, VIEW};
 use bilibi_agent_api::{
@@ -295,6 +297,17 @@ async fn fence(
         .await?;
     Ok(())
 }
+/// Keeps one reviewed schedule; its id. The import and a replacement share it.
+async fn insert(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    user: i64,
+    impersonator: Option<i64>,
+    record: &Value,
+) -> bilibi_database::Result<i64> {
+    let row = sql.query_one("INSERT INTO finance_reports_source_periods(tenant_id,company_id,kind,source_reference,source_system,currency_code,accounting_timezone,conversion_date,opening_entry_id,period_start,period_end,facts,recorded_by_user_id,recorded_by_impersonator_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text::date,$9,$10::text::date,$11::text::date,$12,$13,$14) RETURNING id", &[&tenant, &record["company_id"].as_i64(), &record["kind"].as_str(), &record["source_reference"].as_str(), &record["source_system"].as_str(), &record["currency_code"].as_str(), &record["accounting_timezone"].as_str(), &record["conversion_date"].as_str(), &record["opening_entry_id"].as_i64(), &record["period_start"].as_str(), &record["period_end"].as_str(), &record["rows"], &user, &impersonator]).await?;
+    Ok(row.get(0))
+}
 struct Import;
 impl WriteHandler for Import {
     fn owner(&self) -> &'static str {
@@ -331,12 +344,20 @@ impl WriteHandler for Import {
             let user = scope.user();
             let impersonator = scope.impersonator().map(|i| i.user());
             let record = result.clone();
-            let id = tx.mutate(move |sql| Box::pin(async move {
-                let row = sql.query_one("INSERT INTO finance_reports_source_periods(tenant_id,company_id,kind,source_reference,source_system,currency_code,accounting_timezone,conversion_date,opening_entry_id,period_start,period_end,facts,recorded_by_user_id,recorded_by_impersonator_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text::date,$9,$10::text::date,$11::text::date,$12,$13,$14) RETURNING id", &[&tenant, &record["company_id"].as_i64(), &record["kind"].as_str(), &record["source_reference"].as_str(), &record["source_system"].as_str(), &record["currency_code"].as_str(), &record["accounting_timezone"].as_str(), &record["conversion_date"].as_str(), &record["opening_entry_id"].as_i64(), &record["period_start"].as_str(), &record["period_end"].as_str(), &record["rows"], &user, &impersonator]).await?;
-                let id = row.get(0);
-                let change = Change { kind: "finance.reports.source_period".into(), id, old: Value::Null, new: record };
-                Ok((id, vec![change]))
-            })).await?;
+            let id = tx
+                .mutate(move |sql| {
+                    Box::pin(async move {
+                        let id = insert(sql, tenant, user, impersonator, &record).await?;
+                        let change = Change {
+                            kind: "finance.reports.source_period".into(),
+                            id,
+                            old: Value::Null,
+                            new: record,
+                        };
+                        Ok((id, vec![change]))
+                    })
+                })
+                .await?;
             Ok(json!({"id":id,"record":result}).into())
         })
     }
@@ -362,8 +383,14 @@ impl ReadHandler for List {
             if after < 0 {
                 return Err(bilibi_agent_api::invalid("after", "Choose a valid cursor."));
             }
-            let rows = client.query("SELECT id,source_reference,source_system,currency_code,accounting_timezone,conversion_date::text,opening_entry_id,period_start::text,period_end::text,facts,recorded_by_user_id,recorded_by_impersonator_id,to_char(recorded_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM finance_reports_source_periods WHERE tenant_id=$1 AND company_id=$2 AND kind=$3 AND id>$4 AND ($5::bigint IS NULL OR id=$5) ORDER BY id LIMIT 100", &[&scope.tenant(), &company, &kind, &after, &id]).await?;
-            let records: Vec<Value> = rows.iter().map(|r| json!({"id":r.get::<_,i64>(0),"kind":kind,"source_reference":r.get::<_,String>(1),"source_system":r.get::<_,String>(2),"currency_code":r.get::<_,String>(3),"accounting_timezone":r.get::<_,String>(4),"conversion_date":r.get::<_,String>(5),"opening_entry_id":r.get::<_,i64>(6),"period_start":r.get::<_,String>(7),"period_end":r.get::<_,String>(8),"rows":r.get::<_,Value>(9),"recorded_by_user_id":r.get::<_,i64>(10),"recorded_by_impersonator_id":r.get::<_,Option<i64>>(11),"recorded_at":r.get::<_,String>(12)})).collect();
+            // A schedule's correction (withdrawn, or replaced by a later one)
+            // and the schedule it replaces, so a reader never takes a
+            // corrected schedule for the current one.
+            let rows = client.query("SELECT s.id,s.source_reference,s.source_system,s.currency_code,s.accounting_timezone,s.conversion_date::text,s.opening_entry_id,s.period_start::text,s.period_end::text,s.facts,s.recorded_by_user_id,s.recorded_by_impersonator_id,to_char(s.recorded_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+                (SELECT json_build_object('replacement_id',c.replacement_id,'replacement_reference',p.source_reference,'reason',c.reason,'recorded_by_user_id',c.recorded_by_user_id,'recorded_by_impersonator_id',c.recorded_by_impersonator_id,'recorded_at',to_char(c.recorded_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM finance_reports_source_period_corrections c LEFT JOIN finance_reports_source_periods p ON p.id=c.replacement_id WHERE c.tenant_id=s.tenant_id AND c.company_id=s.company_id AND c.schedule_id=s.id), \
+                (SELECT json_build_object('id',c.schedule_id,'source_reference',o.source_reference,'reason',c.reason) FROM finance_reports_source_period_corrections c JOIN finance_reports_source_periods o ON o.id=c.schedule_id WHERE c.tenant_id=s.tenant_id AND c.company_id=s.company_id AND c.replacement_id=s.id) \
+                FROM finance_reports_source_periods s WHERE s.tenant_id=$1 AND s.company_id=$2 AND s.kind=$3 AND s.id>$4 AND ($5::bigint IS NULL OR s.id=$5) ORDER BY s.id LIMIT 100", &[&scope.tenant(), &company, &kind, &after, &id]).await?;
+            let records: Vec<Value> = rows.iter().map(|r| json!({"id":r.get::<_,i64>(0),"kind":kind,"source_reference":r.get::<_,String>(1),"source_system":r.get::<_,String>(2),"currency_code":r.get::<_,String>(3),"accounting_timezone":r.get::<_,String>(4),"conversion_date":r.get::<_,String>(5),"opening_entry_id":r.get::<_,i64>(6),"period_start":r.get::<_,String>(7),"period_end":r.get::<_,String>(8),"rows":r.get::<_,Value>(9),"recorded_by_user_id":r.get::<_,i64>(10),"recorded_by_impersonator_id":r.get::<_,Option<i64>>(11),"recorded_at":r.get::<_,String>(12),"correction":r.get::<_,Option<Value>>(13),"replaces":r.get::<_,Option<Value>>(14)})).collect();
             let next = (records.len() == 100)
                 .then(|| records.last().and_then(|v| v["id"].as_i64()))
                 .flatten();
@@ -493,7 +520,25 @@ source!(
     &[VIEW, bilibi_finance_payroll::VIEW]
 );
 
-pub(crate) async fn evidence_page(
+/// One page of the schedules (`source_period`) or their corrections
+/// (`source_period_correction`) dataset.
+pub(crate) async fn evidence(
+    client: &(impl tokio_postgres::GenericClient + Sync),
+    scope: &Scope,
+    company: i64,
+    dataset: &str,
+    limit: Option<i64>,
+    after: Option<i64>,
+) -> crate::Result<crate::EvidencePage> {
+    let tenant = scope.tenant();
+    if dataset == "source_period_correction" {
+        correction_evidence_page(client, tenant, company, limit, after).await
+    } else {
+        evidence_page(client, tenant, company, limit, after).await
+    }
+}
+
+async fn evidence_page(
     client: &(impl tokio_postgres::GenericClient + Sync),
     tenant: i64,
     company: i64,
@@ -529,6 +574,46 @@ pub(crate) async fn evidence_page(
             "period_start",
             "period_end",
             "facts",
+            "recorded_by_user_id",
+            "recorded_by_impersonator_id",
+            "recorded_at",
+        ],
+        rows,
+        next,
+    })
+}
+
+/// The corrections dataset: one row per withdrawn or replaced schedule, ID
+/// ordered, with a frozen field list.
+async fn correction_evidence_page(
+    client: &(impl tokio_postgres::GenericClient + Sync),
+    tenant: i64,
+    company: i64,
+    limit: Option<i64>,
+    after: Option<i64>,
+) -> crate::Result<crate::EvidencePage> {
+    let limit = limit.unwrap_or(500);
+    let after = after.unwrap_or(0);
+    if !(1..=500).contains(&limit) || after < 0 {
+        return Err(crate::ReportsError::InvalidOption);
+    }
+    let row = client.query_one("SELECT COALESCE(json_agg(t ORDER BY t.id),'[]'::json) FROM (SELECT id,tenant_id,company_id,schedule_id,replacement_id,reason,recorded_by_user_id,recorded_by_impersonator_id,to_char(recorded_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS recorded_at FROM finance_reports_source_period_corrections WHERE tenant_id=$1 AND company_id=$2 AND id>$3 ORDER BY id LIMIT $4) t", &[&tenant, &company, &after, &limit]).await.map_err(Error::from)?;
+    let rows = row
+        .get::<_, Value>(0)
+        .as_array()
+        .cloned()
+        .ok_or(Error::Internal)?;
+    let next = (rows.len() as i64 == limit)
+        .then(|| rows.last().and_then(|r| r["id"].as_i64()))
+        .flatten();
+    Ok(crate::EvidencePage {
+        fields: vec![
+            "id",
+            "tenant_id",
+            "company_id",
+            "schedule_id",
+            "replacement_id",
+            "reason",
             "recorded_by_user_id",
             "recorded_by_impersonator_id",
             "recorded_at",

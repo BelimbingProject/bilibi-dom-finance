@@ -353,19 +353,27 @@ impl Reports {
             );
         }
         if coverage == Coverage::All {
-            let mut writer = files.csv_writer("reports-source-period.csv")?;
-            let mut after = None;
-            loop {
-                let page = self
-                    .evidence_page_on(tx, scope, company, "source_period", None, after)
-                    .await?;
-                writer.page(&page.fields, &page.rows)?;
-                match page.next {
-                    Some(next) => after = Some(next),
-                    None => break,
+            for (dataset, file) in [
+                ("source_period", "reports-source-period.csv"),
+                (
+                    "source_period_correction",
+                    "reports-source-period-correction.csv",
+                ),
+            ] {
+                let mut writer = files.csv_writer(file)?;
+                let mut after = None;
+                loop {
+                    let page = self
+                        .evidence_page_on(tx, scope, company, dataset, None, after)
+                        .await?;
+                    writer.page(&page.fields, &page.rows)?;
+                    match page.next {
+                        Some(next) => after = Some(next),
+                        None => break,
+                    }
                 }
+                files.finish_csv(file, writer);
             }
-            files.finish_csv("reports-source-period.csv", writer);
         }
         // Reports reads its own issued evidence through the same facade contract.
         let mut issued = files.csv_writer("issued-reports.csv")?;
@@ -407,7 +415,7 @@ impl Reports {
             "captured_at":snapshot.get::<_,String>(1), "timezone":"Etc/UTC", "database_snapshot":snapshot.get::<_,String>(0),
             "through_entry_number":through, "balance_pins":balance_pins,
             "coverage": if coverage == Coverage::All { "all-finance" } else { "ledger-and-reports" },
-            "excluded_sources": if coverage == Coverage::All { Vec::<&str>::new() } else { vec!["receivables", "payables", "reconciliation", "einvoice", "payroll", "sst", "fixed_assets", "attachments", "reports.source_period", "conversion reports and sign-offs"] },
+            "excluded_sources": if coverage == Coverage::All { Vec::<&str>::new() } else { vec!["receivables", "payables", "reconciliation", "einvoice", "payroll", "sst", "fixed_assets", "attachments", "reports.source_period", "reports.source_period_correction", "conversion reports and sign-offs"] },
             "coverage_notice": if coverage == Coverage::All {
                 "All Finance source datasets are included."
             } else {

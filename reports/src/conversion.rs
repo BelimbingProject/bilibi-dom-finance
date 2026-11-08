@@ -319,7 +319,11 @@ impl Reports {
             self.sources.payroll,
             bilibi_finance_payroll::Payroll::evidence_datasets()
         );
-        retain!("reports", self, ["source_period"]);
+        retain!(
+            "reports",
+            self,
+            ["source_period", "source_period_correction"]
+        );
         let mut register_coverage = serde_json::Map::new();
         let mut pending_sources = Vec::new();
         for module in ["receivables", "payables", "fixed_assets"] {

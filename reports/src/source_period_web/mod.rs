@@ -12,8 +12,8 @@ use bilibi_module_registry::{
 };
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, Alert, BuiltinColumn, Button, ButtonVariant, Cell, Choice, Combobox,
-    CreateButton, EmptyState, Fact, Facts, Field, FlexRow, FlexTable, Form, Header, Html,
+    page::*, params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice,
+    Combobox, CreateButton, EmptyState, Fact, Facts, Field, FlexRow, FlexTable, Form, Header, Html,
     InputKind, ListColumns, Modal, ModalWidth, PageVariant, StatusKind, Tab, TableEmpty, Tabs,
 };
 use serde_json::{json, Value};
@@ -23,6 +23,8 @@ use std::{
 };
 
 mod bridge;
+mod correct;
+mod detail;
 mod form;
 mod paste;
 
@@ -67,7 +69,7 @@ bilibi_menu::contribute!(
     .requires(bilibi_menu::Requirement::Capability(VIEW))
     .order(65)
 );
-inventory::submit! { Contribution::new(PAGE_WRITES,PAGES,Provenance {module:MODULE,source:file!(),line:line!()}, &PageWrites {service:PAGES,contracts:&[("preview",IMPORT),("do_confirm",IMPORT)],pending:Pending::None}) }
+inventory::submit! { Contribution::new(PAGE_WRITES,PAGES,Provenance {module:MODULE,source:file!(),line:line!()}, &PageWrites {service:PAGES,contracts:&[("preview",IMPORT),("do_confirm",IMPORT),("preview_correction",crate::source_period::REPLACE),("do_correct",crate::source_period::REPLACE),("preview_withdraw",crate::source_period::WITHDRAW),("do_withdraw",crate::source_period::WITHDRAW)],pending:Pending::None}) }
 fn render(t: impl Template) -> Result<Html> {
     Html::render(&t).map_err(|_| Error::Internal)
 }
@@ -111,6 +113,9 @@ pub(crate) struct Pages {
 struct Review {
     input: Value,
     facts: Value,
+    /// The contract the confirmation commits and the live event that does.
+    contract: &'static str,
+    confirm: &'static str,
 }
 struct State {
     pages: Pages,
@@ -137,6 +142,11 @@ struct State {
     )>,
     /// What the dialog refuses that has no field of its own.
     dialog_message: Option<String>,
+    /// The "+ Schedule" dialog corrects this retained schedule (id and
+    /// source reference) instead of adding a new one.
+    replacing: Option<(i64, String)>,
+    /// The withdraw dialog is open.
+    withdrawing: bool,
 }
 impl State {
     fn query(&self) -> HashMap<String, String> {
@@ -185,12 +195,15 @@ impl State {
             paste: None,
             chart: None,
             dialog_message: None,
+            replacing: None,
+            withdrawing: false,
             columns: ListColumns::mount(
                 "source-periods",
                 vec![
                     BuiltinColumn::new("source", "Source reference"),
                     BuiltinColumn::new("period", "Period"),
                     BuiltinColumn::new("system", "Source system"),
+                    BuiltinColumn::new("status", "Status"),
                 ],
             )
             .map_err(|_| Error::Internal)?,
@@ -269,11 +282,11 @@ impl State {
             actions: if self.id.is_none() {
                 new_button("source-period-new")?
             } else {
-                Html::EMPTY
+                self.detail_actions()?
             },
             ..Header::default()
         })?;
-        if let Some(message) = &self.message {
+        if let Some(message) = self.message.as_ref().filter(|_| self.id.is_none()) {
             body.push(&render(Alert {
                 id: "source-period-message",
                 kind: StatusKind::Info,
@@ -282,103 +295,7 @@ impl State {
             })?);
         }
         if self.id.is_some() {
-            let record = self.records.first().ok_or(Error::NotFound)?;
-            let label = record["source_reference"].as_str().unwrap_or("");
-            body.push(&render(Alert {id:"source-period-detail",body:Html::text(&format!("Source {label}; {} to {}; {}. These are retained source facts, not postings or submissions.",record["period_start"].as_str().unwrap_or(""),record["period_end"].as_str().unwrap_or(""),record["currency_code"].as_str().unwrap_or(""))),..Alert::default()})?);
-            body.push(&render(Facts {
-                id: "source-period-facts",
-                items: vec![
-                    Fact {
-                        title: "Source system",
-                        value: Html::text(record["source_system"].as_str().unwrap_or("")),
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "Accounting time zone",
-                        value: Html::text(record["accounting_timezone"].as_str().unwrap_or("")),
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "Conversion date",
-                        value: Html::text(record["conversion_date"].as_str().unwrap_or("")),
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "Opening entry",
-                        value: match record["opening_entry_id"].as_i64() {
-                            Some(id) => render(EntryLink { id })?,
-                            None => Html::text("—"),
-                        },
-                        ..Fact::default()
-                    },
-                ],
-            })?);
-            let book = self
-                .read(
-                    scope,
-                    "finance.ledger.book.get",
-                    json!({"company_id":company}),
-                )
-                .await?;
-            let units = book["book"]["minor_units"]
-                .as_i64()
-                .and_then(bilibi_finance_ledger::MinorUnits::new)
-                .ok_or(Error::Internal)?;
-            let statutory = self.kind == "sst" || self.kind == "payroll";
-            let mut detail_columns = vec![
-                BuiltinColumn::new("source", "Source ID"),
-                BuiltinColumn::new("item", "Account or reference"),
-                BuiltinColumn::new("side", "Side or authority"),
-            ];
-            if statutory {
-                detail_columns.extend([
-                    BuiltinColumn::new("event_date", "Event date"),
-                    BuiltinColumn::new("status", "Status"),
-                ]);
-            }
-            detail_columns.push(BuiltinColumn::new("amount", "Amount").right());
-            let columns = ListColumns::mount("source-period-detail-rows", detail_columns)
-                .map_err(|_| Error::Internal)?;
-            let rows = record["rows"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|r| {
-                    let amount = r["amount"]
-                        .as_str()
-                        .and_then(|v| bilibi_finance_ledger::Money::parse(v, units).ok())
-                        .map(|v| v.display(units))
-                        .unwrap_or_default();
-                    let item = r["account_name"]
-                        .as_str()
-                        .map(|name| {
-                            format!("{} · {}", name, r["account_code"].as_str().unwrap_or(""))
-                        })
-                        .unwrap_or_else(|| r["reference"].as_str().unwrap_or("").to_owned());
-                    let side = r["side"]
-                        .as_str()
-                        .or_else(|| r["authority"].as_str())
-                        .unwrap_or("");
-                    let mut row = FlexRow::new(r["source_id"].as_str().unwrap_or(""))
-                        .cell("source", Cell::text(r["source_id"].as_str().unwrap_or("")))
-                        .cell("item", Cell::text(item))
-                        .cell("side", Cell::text(side));
-                    if statutory {
-                        row = row
-                            .cell(
-                                "event_date",
-                                Cell::text(r["event_date"].as_str().unwrap_or("")),
-                            )
-                            .cell("status", Cell::text(r["status"].as_str().unwrap_or("")));
-                    }
-                    row.cell("amount", Cell::text(amount))
-                })
-                .collect();
-            let mut table =
-                FlexTable::new("source-period-detail-rows", columns.flex_columns(), rows);
-            table.caption = "Retained source rows";
-            body.push(&render(table)?);
-            body.push(&render(AttachmentSlot)?);
+            body.push(&self.detail(scope, company).await?);
         } else {
             let tabs = KINDS
                 .iter()
@@ -406,7 +323,7 @@ impl State {
                         body: Html::text(reference),
                     })
                     .unwrap_or(Html::EMPTY);
-                    FlexRow::new(id.to_string())
+                    let row = FlexRow::new(id.to_string())
                         .slot("source", link)
                         .cell(
                             "period",
@@ -419,7 +336,27 @@ impl State {
                         .cell(
                             "system",
                             Cell::text(r["source_system"].as_str().unwrap_or("")),
-                        )
+                        );
+                    // A corrected schedule stays listed as evidence, marked.
+                    let (kind, status) = match r["correction"]["replacement_id"].as_i64() {
+                        Some(_) => (
+                            BadgeKind::Warning,
+                            format!(
+                                "Replaced by {}",
+                                r["correction"]["replacement_reference"]
+                                    .as_str()
+                                    .unwrap_or("")
+                            ),
+                        ),
+                        None if !r["correction"].is_null() => {
+                            (BadgeKind::Neutral, "Withdrawn".to_owned())
+                        }
+                        None => (BadgeKind::Success, "Current".to_owned()),
+                    };
+                    row.cell("status", Cell::text(&status)).slot(
+                        "status",
+                        render(Badge::status(kind, &status)).unwrap_or(Html::EMPTY),
+                    )
                 })
                 .collect();
             let mut table = FlexTable::new("source-periods", self.columns.flex_columns(), rows);
@@ -442,21 +379,39 @@ impl State {
             if self.kind == "movement" {
                 body.push(&self.bridge(scope, company).await?);
             }
-            // The schedule is entered in a dialog, which the review replaces.
-            if self.adding && self.review.is_none() {
-                body.push(&render(Modal {
-                    id: "source-period-modal",
-                    title: "New source schedule",
-                    description: "Retain a source report's rows for the current company.",
-                    cancel_event: "close_schedule",
-                    width: ModalWidth::Wide,
-                    body: self.form(scope, company).await?,
-                    ..Modal::default()
-                })?);
-            }
+        }
+        // The schedule is entered (or corrected) in a dialog, which the
+        // review replaces.
+        if self.adding && self.review.is_none() {
+            let (title, description) = match &self.replacing {
+                Some((_, reference)) => (
+                    "Correct source schedule",
+                    format!("Retain a corrected copy of {reference}. The original stays as evidence, marked replaced."),
+                ),
+                None => (
+                    "New source schedule",
+                    "Retain a source report's rows for the current company.".to_owned(),
+                ),
+            };
+            body.push(&render(Modal {
+                id: "source-period-modal",
+                title,
+                description: &description,
+                cancel_event: "close_schedule",
+                width: ModalWidth::Wide,
+                body: self.form(scope, company).await?,
+                ..Modal::default()
+            })?);
+        }
+        if self.withdrawing && self.review.is_none() {
+            body.push(&self.withdraw_modal()?);
         }
         if let Some(review) = &self.review {
-            body.push(&self.review_modal(review)?);
+            body.push(&if review.contract == crate::source_period::WITHDRAW {
+                self.withdraw_review_modal(review)?
+            } else {
+                self.review_modal(review)?
+            });
         }
         Ok(LiveBody {
             html: render(bilibi_ui::Page {
@@ -494,103 +449,33 @@ impl LiveState<Scope, Error> for State {
                             );
                         }
                     }
-                    "preview" => {
-                        self.review = None;
-                        self.errors.clear();
-                        self.message = None;
-                        self.dialog_message = None;
-                        let company = Self::company(r.scope)?;
-                        let (input, numbers) = match self.schedule(r.scope, company).await? {
-                            Ok(schedule) => schedule,
-                            Err(why) => {
-                                self.dialog_message = Some(why);
-                                return self.body(r.scope).await;
-                            }
-                        };
-                        let call = Call {
-                            scope: r.scope,
-                            credential: r.credential,
-                            service: PAGES,
-                            event: "preview",
-                            contract: IMPORT,
-                        };
-                        match self.pages.contracts.preview(&call, input.clone()).await {
-                            Ok(answer) => {
-                                let result = &answer["results"][0];
-                                if result["valid"] == true {
-                                    self.review = Some(Review {
-                                        input,
-                                        facts: result["preview"]["result"]["changes"].clone(),
-                                    });
-                                } else {
-                                    let fields: BTreeMap<String, Vec<String>> =
-                                        serde_json::from_value(result["error"]["fields"].clone())
-                                            .unwrap_or_default();
-                                    // A row's refusal names the pasted row it came from.
-                                    let mut rows = Vec::new();
-                                    for (path, messages) in fields {
-                                        let pasted = path
-                                            .strip_prefix("rows.")
-                                            .and_then(|rest| rest.split('.').next())
-                                            .and_then(|i| i.parse::<usize>().ok())
-                                            .and_then(|i| numbers.get(i));
-                                        match pasted {
-                                            Some(number) => rows.push(format!(
-                                                "Row {number}: {}",
-                                                messages.join(" ")
-                                            )),
-                                            None => {
-                                                self.errors.insert(path, messages);
-                                            }
-                                        }
-                                    }
-                                    let other: Vec<String> = self
-                                        .errors
-                                        .iter()
-                                        .filter(|(k, _)| {
-                                            !["source_reference", "source_system", "period_start", "period_end", "accounting_timezone"].contains(&k.as_str())
-                                        })
-                                        .flat_map(|(_, m)| m.clone())
-                                        .collect();
-                                    rows.extend(other);
-                                    self.dialog_message = Some(if rows.is_empty() {
-                                        "Check the fields marked above and preview again.".into()
-                                    } else {
-                                        rows.join(" ")
-                                    });
-                                }
-                            }
-                            Err(_) => {
-                                self.dialog_message = Some(
-                                    "The schedule could not be reviewed. Check your access and try again."
-                                        .into(),
-                                )
-                            }
-                        }
+                    "preview" => self.preview(&r, IMPORT, "preview", "do_confirm").await?,
+                    "preview_correction" => {
+                        self.preview(
+                            &r,
+                            crate::source_period::REPLACE,
+                            "preview_correction",
+                            "do_correct",
+                        )
+                        .await?
                     }
-                    "do_confirm" => {
-                        if let Some(review) = self.review.take() {
-                            let call = Call {
-                                scope: r.scope,
-                                credential: r.credential,
-                                service: PAGES,
-                                event: "do_confirm",
-                                contract: IMPORT,
-                            };
-                            match self.pages.contracts.commit(&call, review.input).await {
-                                Ok(_) => {
-                                    self.values.clear();
-                                    self.paste_text.clear();
-                                    self.paste = None;
-                                    self.adding = false;
-                                    self.message=Some("The source schedule was retained. Open it to attach its supporting report.".into());
-                                }
-                                Err(_) => {
-                                    self.dialog_message =
-                                        Some("The schedule changed. Preview it again.".into())
-                                }
-                            }
-                        }
+                    "preview_withdraw" => self.preview_withdraw(&r, value).await?,
+                    "do_confirm" | "do_correct" | "do_withdraw" => {
+                        let event = value["type"].as_str().unwrap_or("");
+                        self.commit(&r, event).await?
+                    }
+                    "correct_schedule" => self.open_correction()?,
+                    "withdraw_schedule" => {
+                        self.withdrawing = true;
+                        self.values.clear();
+                        self.errors.clear();
+                        self.dialog_message = None;
+                    }
+                    "close_withdraw" => {
+                        self.withdrawing = false;
+                        self.values.clear();
+                        self.errors.clear();
+                        self.dialog_message = None;
                     }
                     "cancel_review" => self.review = None,
                     "new_schedule" => {
@@ -599,6 +484,7 @@ impl LiveState<Scope, Error> for State {
                     }
                     "close_schedule" => {
                         self.adding = false;
+                        self.replacing = None;
                         self.values.clear();
                         self.errors.clear();
                         self.paste_text.clear();

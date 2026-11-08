@@ -105,7 +105,8 @@ async fn bridge(
     let mut months = months(year.start_date, conversion).map_err(|_| Error::Internal)?;
     // One row per retained schedule and account: the debit-positive net of
     // its rows, summed by PostgreSQL. Every movement schedule of the
-    // conversion fiscal year before cut-off is read; one whose period is not
+    // conversion fiscal year before cut-off is read, except one withdrawn or
+    // replaced (its replacement counts instead); one whose period is not
     // a source month (an earlier cut-off) is listed apart and not added.
     let rows = client
         .query(
@@ -115,6 +116,8 @@ async fn bridge(
              FROM finance_reports_source_periods s CROSS JOIN LATERAL jsonb_array_elements(s.facts) r \
              WHERE s.tenant_id = $1 AND s.company_id = $2 AND s.kind = 'movement' \
              AND s.period_start >= $3::text::date AND s.period_end < $4::text::date \
+             AND NOT EXISTS (SELECT 1 FROM finance_reports_source_period_corrections c \
+                 WHERE c.tenant_id = s.tenant_id AND c.company_id = s.company_id AND c.schedule_id = s.id) \
              GROUP BY s.id, s.source_reference, s.period_start, s.period_end, 5 \
              ORDER BY s.period_start, s.id, 5",
             &[
