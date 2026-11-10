@@ -176,7 +176,10 @@ impl Import {
                         // The bank changed its export: map the columns again,
                         // from a fresh guess rather than the saved columns.
                         Err(ReconciliationError::MissingHeaders(_)) => {
-                            self.refusal = Some("This file's columns differ from the ones saved for this account. Match them below; importing keeps the new ones.".into());
+                            self.refusal = Some(
+                                "This file has different columns from last time. Check them below."
+                                    .into(),
+                            );
                             return self.columns(pages, scope, account, held, true).await;
                         }
                         Err(
@@ -301,9 +304,9 @@ impl Import {
                 id: "statement-import-modal",
                 title: "Import statement",
                 description: if mapped {
-                    "Choose the CSV file your bank exported for this account. A file or line already imported is refused."
+                    "Choose the CSV file from the bank. A line cannot be imported twice."
                 } else {
-                    "Choose the CSV file your bank exported for this account. Next, you match its columns once; later files import in one step."
+                    "Choose the CSV file from the bank. Next, you check which column is which."
                 },
                 cancel_event: "close_import",
                 body,
@@ -368,7 +371,7 @@ impl Import {
         render(Modal {
             id: "statement-import-modal",
             title: &format!("Match the columns of {}", file.name),
-            description: "Say which column holds what. The lines below show how the file will import, and the columns are kept for this bank account's next file.",
+            description: "Check which column is which. Bilibi remembers this for the next file from this bank account.",
             cancel_event: "close_import",
             width: ModalWidth::Wide,
             body,
@@ -471,7 +474,7 @@ impl Import {
         table.caption = "How the first lines import";
         table.empty = Some(bilibi_ui::TableEmpty::State(
             bilibi_ui::EmptyState::missing(
-                "Nothing reads yet",
+                "No lines could be read yet.",
                 "Choose the date, description and amount columns above.",
             ),
         ));
@@ -599,11 +602,11 @@ impl Import {
                 .value(get("delimiter")),
             Field::in_form(FORM, "header_rows")
                 .id("statement-columns-header-rows")
-                .label("Rows above the first line")
+                .label("Rows to skip at the top")
                 .kind(InputKind::Number)
                 .attr("min", "0")
                 .attr("max", "20")
-                .hint("Including the header row; 0 when the file starts with a line.")
+                .hint("Count the heading row. Use 0 when the file has no heading.")
                 .value(get("header_rows")),
         ]);
         let mut html = Html::EMPTY;

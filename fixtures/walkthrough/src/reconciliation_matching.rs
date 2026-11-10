@@ -973,7 +973,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     show(
         "admin finalises it",
         reconciliation
-            .finalise_reconciliation(&admin, COMPANY, mistyped.id)
+            .finalise_reconciliation(&admin, COMPANY, mistyped.id, None)
             .await
             .map(|r| brief_reconciliation(&r)),
     );
@@ -1006,7 +1006,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     show(
         "finalise the abandoned one",
         reconciliation
-            .finalise_reconciliation(&admin, COMPANY, mistyped.id)
+            .finalise_reconciliation(&admin, COMPANY, mistyped.id, None)
             .await
             .map(|r| brief_reconciliation(&r)),
     );
@@ -1039,13 +1039,19 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         show(
             step,
             reconciliation
-                .finalise_reconciliation(scope, COMPANY, february_open.id)
+                .finalise_reconciliation(scope, COMPANY, february_open.id, None)
                 .await
                 .map(|r| brief_reconciliation(&r)),
         );
     }
+    // Outstanding items never block: a reason is kept when lines wait.
     let finalised = reconciliation
-        .finalise_reconciliation(&admin, COMPANY, february_open.id)
+        .finalise_reconciliation(
+            &admin,
+            COMPANY,
+            february_open.id,
+            Some("Outstanding items checked against the March statement"),
+        )
         .await?;
     println!("admin finalises: {}", brief_reconciliation(&finalised));
     let snapshot = finalised.figures.clone().ok_or("finalised figures")?;
@@ -1061,7 +1067,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     show(
         "finalise it again",
         reconciliation
-            .finalise_reconciliation(&admin, COMPANY, february_open.id)
+            .finalise_reconciliation(&admin, COMPANY, february_open.id, None)
             .await
             .map(|r| brief_reconciliation(&r)),
     );
@@ -1180,7 +1186,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     show(
         "the manager who opened it finalises while duties are separated",
         reconciliation
-            .finalise_reconciliation(&manager, COMPANY, march_open.id)
+            .finalise_reconciliation(
+                &manager,
+                COMPANY,
+                march_open.id,
+                Some("Outstanding items checked"),
+            )
             .await
             .map(|r| brief_reconciliation(&r)),
     );
@@ -1194,7 +1205,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     show(
         "the manager who opened it finalises while duties are not separated",
         reconciliation
-            .finalise_reconciliation(&manager, COMPANY, march_open.id)
+            .finalise_reconciliation(
+                &manager,
+                COMPANY,
+                march_open.id,
+                Some("Outstanding items checked"),
+            )
             .await
             .map(|r| brief_reconciliation(&r)),
     );

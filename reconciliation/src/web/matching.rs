@@ -136,13 +136,15 @@ struct Described<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion" class="mr-1.5">{{ journal|safe }} on {{ bilibi_finance_ledger::dates::display(entry.entry_date) }}</span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
+    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion" class="mr-1.5">{{ journal|safe }} · <span class="whitespace-nowrap">{{ date }}</span></span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
     ext = "html"
 )]
 struct Suggested<'a> {
     line: i64,
     entry: Option<&'a LedgerItem>,
+    /// The entry in its own words, linked to its journal.
     journal: Html,
+    date: String,
     accept: bool,
     accept_id: String,
 }
@@ -560,6 +562,7 @@ impl Matching {
             .map(|html| html.as_str().to_owned());
         };
         let units = l.units;
+        let display = self.pages.display(scope).await?;
 
         let mode = self.lines_columns.mode();
         let mut rows = vec![];
@@ -601,7 +604,15 @@ impl Matching {
                     render(Suggested {
                         line: line.id,
                         entry: l.suggestions.get(&line.id),
-                        journal: journal(l.suggestions.get(&line.id))?,
+                        journal: match l.suggestions.get(&line.id) {
+                            Some(e) => EntryLink::named(e.entry_id, &e.description)?,
+                            None => Html::EMPTY,
+                        },
+                        date: l
+                            .suggestions
+                            .get(&line.id)
+                            .map(|e| bilibi_finance_ledger::dates::display(e.entry_date))
+                            .unwrap_or_default(),
                         accept: l.can_match,
                         accept_id: format!("line-{}-accept", line.id),
                     })?,
@@ -692,7 +703,6 @@ impl Matching {
             ),
         )?;
 
-        let display = self.pages.display(scope).await?;
         let mut rows = vec![];
         for m in &l.matches {
             let total: Decimal = m
@@ -783,7 +793,7 @@ impl Matching {
         let back = format!("/finance/reconciliation/accounts/{}", l.account.id);
         let header = render(Header {
             title: Html::text(&format!("{}: matching", l.account.name)),
-            subtitle: "Tick statement lines and ledger entries whose amounts agree, then match them; or accept a suggestion.",
+            subtitle: "Match each bank line to what is in the books.",
             title_actions: Html::EMPTY,
             actions: render(BackLink {
                 href: &back,

@@ -216,7 +216,7 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     }
     let manager = crate::in_company(db, services, 1, COMPANY).await?;
     reconciliation
-        .finalise_reconciliation(&manager, COMPANY, opened.id)
+        .finalise_reconciliation(&manager, COMPANY, opened.id, Some("Conversion proof"))
         .await?;
     let preview = registry
         .read(

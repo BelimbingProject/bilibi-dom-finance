@@ -336,7 +336,7 @@ impl Account {
         if !account.active {
             let manage = self.pages.allowed(scope, MANAGE_BANK_ACCOUNTS).await?;
             let mut body =
-                Html::text("This bank account is inactive: it imports and reconciles no more.");
+                Html::text("This bank account is turned off. Turn it on to import statements.");
             if manage {
                 body.push(&render(Toggle {
                     on: false,
@@ -551,7 +551,7 @@ impl Account {
                 "reconciliation-statement-balance",
                 "Balance per statement",
             )
-            .hint("The closing balance the bank's statement shows on that date."),
+            .hint("The closing balance on the bank statement."),
         )?);
         let mut buttons = render(Button {
             id: "reconciliation-open-cancel",
@@ -581,7 +581,7 @@ impl Account {
         render(Modal {
             id: "reconciliation-open-modal",
             title: &format!("Reconcile {}", account.name),
-            description: "Compare the books with the bank's statement as of its end date. Prefilled from the latest statement.",
+            description: "Check the books against the bank statement on this date.",
             cancel_event: "close_reconcile",
             body: form,
             ..Modal::default()
@@ -641,15 +641,25 @@ impl Account {
                         1 => " 1 row with no amount was skipped.".into(),
                         n => format!(" {n} rows with no amount were skipped."),
                     };
+                    let (from, to) = (
+                        bilibi_finance_ledger::dates::display(s.start_date),
+                        bilibi_finance_ledger::dates::display(s.end_date),
+                    );
+                    // "5 Aug to 31 Oct 2026": the year once when both share it.
+                    let from = match (from.rsplit_once(' '), to.rsplit_once(' ')) {
+                        (Some((day, year)), Some((_, same))) if year == same => day.to_owned(),
+                        _ => from,
+                    };
                     self.flash = Some((
                         StatusKind::Success,
-                        format!(
-                            "Statement {} imported: {} lines from {} to {}.{skipped} Match its lines next.",
-                            s.statement_number,
-                            s.line_count,
-                            bilibi_finance_ledger::dates::display(s.start_date),
-                            bilibi_finance_ledger::dates::display(s.end_date)
-                        ),
+                        if s.line_count == 1 {
+                            format!("Imported 1 line, {to}.{skipped} Match it next.")
+                        } else {
+                            format!(
+                                "Imported {} lines, {from} to {to}.{skipped} Match them next.",
+                                s.line_count
+                            )
+                        },
                     ));
                     // The draft follows the newest statement.
                     self.draft.clear();

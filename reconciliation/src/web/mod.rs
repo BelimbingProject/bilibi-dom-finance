@@ -279,6 +279,7 @@ impl Page<Scope, Error> for Pages {
                 ),
                 "reconciliation" => Box::new(
                     reconciliation::Detail::new(self, path_id(&request)?)?
+                        .returned(request.query)
                         .follow(Follow::subscribe(self, scope).await),
                 ),
                 _ => self.state(&request)?,

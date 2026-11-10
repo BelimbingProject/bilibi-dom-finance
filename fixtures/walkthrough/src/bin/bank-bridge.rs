@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .open_reconciliation(&manager, 2, account.id, &input)
                 .await?;
             let finalised = bank
-                .finalise_reconciliation(&reviewer, 2, opened.id)
+                .finalise_reconciliation(&reviewer, 2, opened.id, None)
                 .await?;
             let report = bank.get_reconciliation(&reviewer, 2, finalised.id).await?;
             assert!(report

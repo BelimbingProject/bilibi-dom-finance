@@ -201,6 +201,22 @@ impl EntryLink {
             _ => Ok(Html::text("—")),
         }
     }
+
+    /// The same link under the entry's own words ("Receipt RCP-00001 · Acme
+    /// Trading"), for a page that names what was posted, not its number.
+    pub fn named(id: i64, text: &str) -> Result<Html> {
+        Html::render(&NamedEntryLink { id, text }).map_err(|_| Error::Internal)
+    }
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<a href="/finance/ledger/journals/entry-{{ id }}" class="text-link hover:underline">{{ text }}</a>"#,
+    ext = "html"
+)]
+struct NamedEntryLink<'a> {
+    id: i64,
+    text: &'a str,
 }
 
 /// An account as a record page shows it: the name, then the code muted and

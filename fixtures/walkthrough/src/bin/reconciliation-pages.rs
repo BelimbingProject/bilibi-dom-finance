@@ -3,7 +3,9 @@
 //! NC4_STORAGE_ROOT set. It drives the mounted pages through their own events
 //! (matching a selection, accepting a suggestion, unmatching with a reason,
 //! posting a charge and interest, finalising by someone other than the
-//! opener, abandoning) and their posting-notice subscriptions, then serves the
+//! opener, abandoning, the links that record a statement line as a receipt or a
+//! payment and the match made on coming back, finalising with a reason while
+//! lines are not in the books) and their posting-notice subscriptions, then serves the
 //! app with a second bank account left unmatched and open for the browser.
 //! The fixture owns its records and storage; no product seed or route is
 //! added.
@@ -40,8 +42,18 @@ async fn mount(
     operation: &'static str,
     id: i64,
 ) -> Outcome<(State, LiveBody)> {
+    mount_at(pages, scope, operation, id, HashMap::new()).await
+}
+
+/// The page as a person lands on it from an address with a query.
+async fn mount_at(
+    pages: &PageService<Scope, Error>,
+    scope: &Scope,
+    operation: &'static str,
+    id: i64,
+    query: HashMap<String, String>,
+) -> Outcome<(State, LiveBody)> {
     let path = HashMap::from([("id".into(), id.to_string())]);
-    let query = HashMap::new();
     let mut state = pages
         .0
         .mount(PageRequest {
@@ -354,7 +366,9 @@ async fn main() -> Outcome<()> {
             "id=\"unmatched-lines-table\"",
             "id=\"unmatched-entries-table\"",
             "id=\"standing-matches-table\"",
-            "Journal 1</a> on 1 Oct 2026",
+            "Customer receipt INV-301</a>",
+            "1 Oct 2026",
+            "Match each bank line to what is in the books.",
             "-120.00",
             "Selected: <span id=\"selected-lines-count\">0</span>",
             "No matches yet",
@@ -411,7 +425,7 @@ async fn main() -> Outcome<()> {
     shows(
         "matching 75.00 with 50.00",
         &html,
-        &["The sides do not agree: the statement lines sum to 75 and the ledger entries to 50."],
+        &["The amounts differ: 75 on the statement, 50 in the books."],
     )?;
     let mut matched = selection.clone();
     matched["type"] = json!("match");
@@ -572,8 +586,9 @@ async fn main() -> Outcome<()> {
             "Balance per statement",
             "248.75 MYR",
             "Balance per books",
-            "Unexplained difference",
-            "explained",
+            "Difference",
+            "3 statement lines not in the books",
+            "Not matched yet",
             "On the statement, not in the books",
             "In the books, not on the statement",
             "Post as bank charge",
@@ -670,7 +685,7 @@ async fn main() -> Outcome<()> {
     shows(
         "with the books explained",
         &body.html,
-        &["explained", "Cheque 3001"],
+        &["1 statement line not in the books", "Cheque 3001"],
     )?;
     let html = event(&mut page, &manager, json!({"type":"finalise"})).await?;
     shows(
@@ -678,7 +693,19 @@ async fn main() -> Outcome<()> {
         &html,
         &["Someone else must finalise this because the company requires separation of duties"],
     )?;
-    let html = event(&mut watcher, &staff, json!({"type":"finalise"})).await?;
+    // The payment line was never matched: the clerk is asked why first.
+    let html = event(&mut watcher, &staff, json!({"type":"finalising"})).await?;
+    shows(
+        "the clerk presses Finalise with a line left",
+        &html,
+        &["Finalise with 1 statement line not in the books?"],
+    )?;
+    let html = event(
+        &mut watcher,
+        &staff,
+        json!({"type":"finalise","finalise[reason]":"The payment clears in November"}),
+    )
+    .await?;
     shows(
         "the clerk finalises",
         &html,
@@ -805,6 +832,256 @@ async fn main() -> Outcome<()> {
         &["The statement line no longer exists."],
     )?;
 
+    println!("\n== Recording a statement line elsewhere, and finalising with lines left");
+    let Setup {
+        account: savings, ..
+    } = setup(
+        services,
+        &manager,
+        "1890",
+        "Savings bank",
+        "october-savings.csv",
+    )
+    .await?;
+    let savings_open = facade
+        .open_reconciliation(
+            &manager,
+            COMPANY,
+            savings.id,
+            &NewReconciliation {
+                end_date: Some(date(2026, 10, 31)),
+                statement_balance: OCTOBER_BALANCE.into(),
+            },
+        )
+        .await?;
+    let (_, body) = mount(&pages, &manager, "reconciliation", savings_open.id).await?;
+    lacks(
+        "a manager who may not record receipts or request payments",
+        &body.html,
+        &["Record receipt", "Pay a bill"],
+    )?;
+    for capability in [
+        "finance.receivables.payments.post",
+        "finance.payables.payments.submit",
+    ] {
+        grants.set_direct(&admin, 1, capability, Some(true)).await?;
+    }
+    let (_, body) = mount(&pages, &manager, "reconciliation", savings_open.id).await?;
+    let back = format!(
+        "return_to=%2Ffinance%2Freconciliation%2Freconciliations%2F{}%3Fline%3D",
+        savings_open.id
+    );
+    shows(
+        "nothing matched: the difference is zero, and the page says what is missing",
+        &body.html,
+        &[
+            "5 statement lines not in the books",
+            "Record receipt",
+            "/finance/receivables/receipts?",
+            "seen_amount=1.25",
+            "seen_date=2026-10-30",
+            "seen_text=Credit%20interest",
+            "Pay a bill",
+            "/finance/payables/payments/new?",
+            "seen_amount=7.50",
+            &back,
+        ],
+    )?;
+    lacks("an amount out as a receipt", &body.html, &["seen_amount=-"])?;
+    let (_, body) = mount(&pages, &staff, "reconciliation", savings_open.id).await?;
+    lacks(
+        "the clerk's page",
+        &body.html,
+        &["Record receipt", "Pay a bill"],
+    )?;
+
+    // Coming back from recording a line names the line and the entry posted.
+    let chart = ledger.list_accounts(&manager, COMPANY).await?;
+    let id = |code: &str| {
+        chart
+            .iter()
+            .find(|a| a.code == code)
+            .map(|a| a.id)
+            .ok_or("fixture account")
+    };
+    let recorded = |day: Date, text: &str, amount: &str| NewEntry {
+        entry_date: day,
+        description: text.into(),
+        reference: None,
+        lines: vec![
+            NewLine::debit(
+                id("1890").expect("bank"),
+                Money::parse(amount, units).expect("amount"),
+            ),
+            NewLine::credit(
+                id("1100").expect("receivables"),
+                Money::parse(amount, units).expect("amount"),
+            ),
+        ],
+    };
+    let interest = line_id(&facade, &manager, savings.id, "INT-10").await?;
+    let receipt = line_id(&facade, &manager, savings.id, "INV-301").await?;
+    let batch = line_id(&facade, &manager, savings.id, "BATCH-3").await?;
+    let returned = |line: i64, entry: i64| {
+        HashMap::from([
+            ("line".to_owned(), line.to_string()),
+            ("entry".to_owned(), entry.to_string()),
+        ])
+    };
+    let mine = ledger
+        .post_entry(
+            &manager,
+            COMPANY,
+            &recorded(date(2026, 10, 30), "Receipt for the interest line", "1.25"),
+            &PostOptions::default(),
+        )
+        .await?;
+    let (_, body) = mount_at(
+        &pages,
+        &manager,
+        "reconciliation",
+        savings_open.id,
+        returned(interest, mine.id),
+    )
+    .await?;
+    shows(
+        "the manager comes back from recording the interest line",
+        &body.html,
+        &[
+            "Recorded and matched to the statement line.",
+            "4 statement lines not in the books",
+        ],
+    )?;
+    let (_, body) = mount_at(
+        &pages,
+        &manager,
+        "reconciliation",
+        savings_open.id,
+        returned(interest, mine.id),
+    )
+    .await?;
+    lacks(
+        "opening that address again",
+        &body.html,
+        &["Recorded and matched", "Recorded, but not matched"],
+    )?;
+    let differs = ledger
+        .post_entry(
+            &manager,
+            COMPANY,
+            &recorded(date(2026, 10, 12), "Receipt of another amount", "70.00"),
+            &PostOptions::default(),
+        )
+        .await?;
+    let (_, body) = mount_at(
+        &pages,
+        &manager,
+        "reconciliation",
+        savings_open.id,
+        returned(batch, differs.id),
+    )
+    .await?;
+    shows(
+        "coming back with an entry of another amount",
+        &body.html,
+        &[
+            "Recorded, but not matched to the statement line. The amounts differ: 75 on the statement, 70 in the books.",
+            "4 statement lines not in the books",
+        ],
+    )?;
+    // An address alone never matches an entry someone else posted.
+    let theirs = ledger
+        .post_entry(
+            &admin,
+            COMPANY,
+            &recorded(date(2026, 10, 2), "Receipt someone else posted", "300.00"),
+            &PostOptions::default(),
+        )
+        .await?;
+    let (_, body) = mount_at(
+        &pages,
+        &manager,
+        "reconciliation",
+        savings_open.id,
+        returned(receipt, theirs.id),
+    )
+    .await?;
+    shows(
+        "the manager opens an address naming an entry the administrator posted",
+        &body.html,
+        &["4 statement lines not in the books"],
+    )?;
+    lacks("that address", &body.html, &["Recorded and matched"])?;
+
+    // Finalising while lines are not in the books: warned, asked why, never blocked.
+    let refused = facade
+        .finalise_reconciliation(&staff, COMPANY, savings_open.id, None)
+        .await;
+    match refused {
+        Err(bilibi_finance_reconciliation::ReconciliationError::LinesNotInBooks(4)) => {
+            println!("finalising without a reason: refused, 4 lines are not in the books")
+        }
+        other => return Err(format!("finalising without a reason: {other:?}").into()),
+    }
+    let (mut clerk, body) = mount(&pages, &staff, "reconciliation", savings_open.id).await?;
+    if finalise_disabled(&body.html) {
+        return Err("lines not in the books disabled Finalise".into());
+    }
+    let html = event(&mut clerk, &staff, json!({"type":"finalising"})).await?;
+    shows(
+        "the clerk presses Finalise",
+        &html,
+        &[
+            "id=\"finalise-modal\"",
+            "Finalise with 4 statement lines not in the books?",
+            "4 lines are on the bank statement but not in the books. You can still finalise.",
+            "id=\"finalise-reason\"",
+            "id=\"finalise-cancel\"",
+        ],
+    )?;
+    let html = event(
+        &mut clerk,
+        &staff,
+        json!({"type":"finalise","finalise[reason]":"  "}),
+    )
+    .await?;
+    shows(
+        "finalising with a blank reason",
+        &html,
+        &[
+            "id=\"finalise-refusal\"",
+            "4 statement lines are not in the books. Say why to finalise without them.",
+        ],
+    )?;
+    let html = event(&mut clerk, &staff, json!({"type":"cancel_finalise"})).await?;
+    lacks("after Cancel", &html, &["id=\"finalise-modal\""])?;
+    let html = event(&mut clerk, &staff, json!({"type":"finalise"})).await?;
+    shows(
+        "a finalise sent without the dialog",
+        &html,
+        &["id=\"finalise-modal\""],
+    )?;
+    let html = event(
+        &mut clerk,
+        &staff,
+        json!({"type":"finalise","finalise[reason]":"Receipts banked on 2 November"}),
+    )
+    .await?;
+    shows(
+        "the clerk finalises with a reason",
+        &html,
+        &[
+            "Reconciliation 3 finalised; its figures are now fixed.",
+            "Receipts banked on 2 November",
+            "4 statement lines not in the books",
+        ],
+    )?;
+    lacks(
+        "the finalised reconciliation",
+        &html,
+        &["id=\"finalise-modal\"", "Record receipt", "Pay a bill"],
+    )?;
+
     println!("\n== Left for the browser");
     let Setup {
         account: browse, ..
@@ -827,7 +1104,7 @@ async fn main() -> Outcome<()> {
             },
         )
         .await?;
-    println!("NC4 proof passed: matching, suggestions, unmatching, refusals, withheld controls, posting notices, charges and interest, finalising by a non-opener and abandoning.");
+    println!("NC4 proof passed: matching, suggestions, unmatching, refusals, withheld controls, posting notices, charges and interest, finalising by a non-opener, abandoning, recording a line elsewhere and finalising with lines left.");
     println!(
         "Matching page: {origin}/finance/reconciliation/accounts/{}/matching",
         browse.id

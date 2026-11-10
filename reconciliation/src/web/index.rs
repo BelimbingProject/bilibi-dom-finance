@@ -536,7 +536,7 @@ impl Index {
                     Ok(a) if a.active => (StatusKind::Success, format!("{} is active.", a.name)),
                     Ok(a) => (
                         StatusKind::Success,
-                        format!("{} is inactive: it imports and reconciles no more.", a.name),
+                        format!("{} is turned off. Turn it on to import statements.", a.name),
                     ),
                     Err(e) => (StatusKind::Error, e),
                 });
