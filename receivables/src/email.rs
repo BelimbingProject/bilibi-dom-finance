@@ -300,7 +300,19 @@ impl Receivables {
             reply_to: Some(settings.reply_to.clone()).filter(|r| !r.is_empty()),
             subject,
             message,
-            attachment: format!("invoice-{}.pdf", facts.reference),
+            // A reference may carry a slash ("INV/2026/001"); a file name may not.
+            attachment: format!(
+                "invoice-{}.pdf",
+                facts
+                    .reference
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() || "-_.".contains(c) {
+                        c
+                    } else {
+                        '-'
+                    })
+                    .collect::<String>()
+            ),
         })
     }
 
