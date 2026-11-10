@@ -62,6 +62,7 @@ WALKTHROUGHS=(
   'ledger-ui|ledger-ui|'
   'ledger-ui-opening-proof|ledger-ui|opening-proof'
   'ledger-ui-book-proof|ledger-ui|book-proof|seed'
+  'ledger-ui-years-proof|ledger-ui|years-proof'
   'finance-ui|finance-ui|'
   'companies-ui|companies-ui|'
   'adopter-ui|adopter-ui|'

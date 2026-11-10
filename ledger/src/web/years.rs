@@ -1,6 +1,8 @@
-//! Fiscal years and their monthly periods: open a year, then close, reopen and
-//! lock its periods, and close or reopen the year. Each action calls the same
-//! contract an agent calls; the ledger decides what is allowed and says why not.
+//! Fiscal years and their months: open a year, then close, reopen and lock its
+//! months, and close or reopen the year. A period is a whole calendar month,
+//! so the page names it "January 2026", never "period 1". Each action calls
+//! the same contract an agent calls; the ledger decides what is allowed and
+//! says why not.
 use super::{
     capability_for, dialog_actions, error_text, event_type, no_company, render, shell, unavailable,
     view, Company, Failure, Flash, Pages, Read, Refusal, Review,
@@ -110,8 +112,14 @@ struct Chosen {
     kind: Kind,
     company: i64,
     company_name: String,
+    /// The person works in more than one company, so every sentence about
+    /// this action names the company.
+    several: bool,
     id: i64,
+    /// "January 2026" for a month, "January to December 2026" for a year.
     label: String,
+    /// The month alone ("January"), for a sentence that already has the year.
+    month: String,
     review: Option<Review>,
     reason: String,
     refusal: Refusal,
@@ -521,9 +529,7 @@ impl Years {
                 ListColumns::mount(
                     "ledger-year-periods",
                     vec![
-                        BuiltinColumn::new("number", "Period"),
-                        BuiltinColumn::new("start", "From"),
-                        BuiltinColumn::new("end", "To"),
+                        BuiltinColumn::new("month", "Month"),
                         BuiltinColumn::new("status", "Status"),
                     ],
                 )
@@ -535,17 +541,12 @@ impl Years {
         let mut rows = Vec::new();
         let last = year.periods.last().map(|p| p.id);
         for period in &year.periods {
-            let label = format!(
-                "period {} ({} to {})",
-                period.period_number,
-                crate::dates::display_text(&period.start_date),
-                crate::dates::display_text(&period.end_date)
-            );
+            let label = crate::dates::months_text(&period.start_date, &period.end_date);
             // The period's next step is local to it, so it is a plain icon
             // button with a tooltip, raising the page's own confirmation.
             let mut actions = Html::EMPTY;
             let mut button = |kind: &str, icon: &str, text: &str, danger: bool| -> Result<()> {
-                let value = format!("{kind}:{}:{}:{}", company.id, period.id, label);
+                let value = format!("{kind}:{}:{}", company.id, period.id);
                 let label = format!("{text} {label}");
                 actions.push(&render(IconButton {
                     kind: if danger {
@@ -578,15 +579,7 @@ impl Years {
                 _ => {}
             }
             let mut row = FlexRow::new(period.id.to_string())
-                .cell("number", Cell::text(period.period_number.to_string()))
-                .cell(
-                    "start",
-                    Cell::text(crate::dates::display_text(&period.start_date)),
-                )
-                .cell(
-                    "end",
-                    Cell::text(crate::dates::display_text(&period.end_date)),
-                )
+                .cell("month", Cell::text(&label))
                 .slot("status", period_badge(&period.status)?);
             row.actions = actions;
             row.dom_id = Some(format!("ledger-period-{}", period.id));
@@ -594,33 +587,54 @@ impl Years {
         }
         let table_id = format!("ledger-year-{}-periods", year.id);
         let mut table = FlexTable::new(&table_id, columns.flex_columns(), rows);
-        table.caption = "Periods";
+        table.caption = "Months";
         table.framed = false;
         table.zoom = columns.zoom;
         table.suggestions = columns.flex_suggestions();
         table.add_query = &columns.add_query;
         table.actions = true;
-        table.empty = Some(TableEmpty::Content(Html::text("This year has no periods.")));
+        table.empty = Some(TableEmpty::Content(Html::text("This year has no months.")));
 
         let mut year_actions = Html::EMPTY;
         let mine = |id: Option<i64>| id.is_some_and(|id| year.periods.iter().any(|p| p.id == id));
-        if !closed && manage && post && mine(close_id) {
-            year_actions.push(&render(Button {
-                id: &format!("ledger-year-close-{}", year.id),
-                button_type: "button",
-                event: "choose",
-                name: "action",
-                value: &format!(
-                    "close_year:{}:{}:{} to {}",
-                    company.id,
-                    year.id,
-                    crate::dates::display_text(&year.start_date),
-                    crate::dates::display_text(&year.end_date)
-                ),
-                variant: ButtonVariant::Primary,
-                body: Html::text("Close year"),
-                ..Button::default()
-            })?);
+        // The year's one main button is its next step: close the earliest
+        // open month by name, and the year itself only once every month
+        // before its last is closed (the last month closes with the year).
+        let next = year
+            .periods
+            .iter()
+            .find(|p| close_id == Some(p.id))
+            .filter(|_| !closed && manage);
+        match next {
+            Some(period) if Some(period.id) != last => {
+                let month = period
+                    .start_date
+                    .parse::<Date>()
+                    .map_or("month", crate::dates::month_name);
+                year_actions.push(&render(Button {
+                    id: &format!("ledger-year-close-month-{}", year.id),
+                    button_type: "button",
+                    event: "choose",
+                    name: "action",
+                    value: &format!("close_period:{}:{}", company.id, period.id),
+                    variant: ButtonVariant::Primary,
+                    body: Html::text(&format!("Close {month}")),
+                    ..Button::default()
+                })?);
+            }
+            Some(_) if post => {
+                year_actions.push(&render(Button {
+                    id: &format!("ledger-year-close-{}", year.id),
+                    button_type: "button",
+                    event: "choose",
+                    name: "action",
+                    value: &format!("close_year:{}:{}", company.id, year.id),
+                    variant: ButtonVariant::Primary,
+                    body: Html::text("Close year"),
+                    ..Button::default()
+                })?);
+            }
+            _ => {}
         }
         if closed && reopen && post && !all_locked && reopen_id == year.periods.last().map(|p| p.id)
         {
@@ -629,13 +643,7 @@ impl Years {
                 button_type: "button",
                 event: "choose",
                 name: "action",
-                value: &format!(
-                    "reopen_year:{}:{}:{} to {}",
-                    company.id,
-                    year.id,
-                    crate::dates::display_text(&year.start_date),
-                    crate::dates::display_text(&year.end_date)
-                ),
+                value: &format!("reopen_year:{}:{}", company.id, year.id),
                 body: Html::text("Reopen year"),
                 ..Button::default()
             })?);
@@ -646,13 +654,7 @@ impl Years {
                 button_type: "button",
                 event: "choose",
                 name: "action",
-                value: &format!(
-                    "lock_year:{}:{}:{} to {}",
-                    company.id,
-                    year.id,
-                    crate::dates::display_text(&year.start_date),
-                    crate::dates::display_text(&year.end_date)
-                ),
+                value: &format!("lock_year:{}:{}", company.id, year.id),
                 variant: ButtonVariant::Danger,
                 body: Html::text("Lock year"),
                 ..Button::default()
@@ -662,10 +664,9 @@ impl Years {
         let mut heading = render(SectionHeading {
             id: &heading_id,
             title: &format!(
-                "{} · {} to {}",
+                "{} · {}",
                 company_name,
-                crate::dates::display_text(&year.start_date),
-                crate::dates::display_text(&year.end_date)
+                crate::dates::months_text(&year.start_date, &year.end_date)
             ),
             title_actions: render(Badge::status(
                 if closed {
@@ -819,7 +820,7 @@ impl Years {
                     .kind(InputKind::Textarea)
                     .value(&choice.reason)
                     .required()
-                    .hint("Up to 500 characters. The ledger records the reopening for an independent reviewer.")
+                    .hint("Up to 500 characters. A reviewer will read it.")
                     .errors(errors)
                     .attr("data-debounce", "300"),
             )?);
@@ -841,16 +842,20 @@ impl Years {
             })?);
             return render(Modal {
                 id: "ledger-choice-modal",
-                title: &format!(
-                    "Reopen {} of {company_name}",
-                    if choice.kind == Kind::ReopenYear {
-                        "fiscal year"
-                    } else {
-                        "period"
-                    }
-                ),
+                title: &if choice.kind == Kind::ReopenYear {
+                    format!("Reopen the fiscal year {}", choice.label)
+                } else {
+                    format!("Reopen {}", choice.label)
+                },
                 cancel_event: "cancel_choice",
-                description: &format!("{} · {}", company_name, choice.label),
+                description: &if choice.kind == Kind::ReopenYear {
+                    format!("{company_name}. Only the last month of the year opens again.")
+                } else {
+                    format!(
+                        "{company_name}. Entries dated in {} can be added and changed again.",
+                        choice.month
+                    )
+                },
                 body: render(Form {
                     id: "ledger-reopen-form",
                     event: "validate",
@@ -865,35 +870,47 @@ impl Years {
         let (consequence, detail, confirm, working) = match choice.kind {
             Kind::ClosePeriod => (
                 format!("Close {}?", choice.label),
-                "Nobody can post into it until it is reopened. Periods close in date order."
-                    .to_owned(),
-                "Close period",
+                format!(
+                    "No one can add or change entries dated in {} until someone reopens it.",
+                    choice.month
+                ),
+                format!("Close {}", choice.month),
                 "Closing…",
             ),
             Kind::LockPeriod => (
                 format!("Lock {} for good?", choice.label),
-                "A locked period can never be reopened. Periods lock in date order.".to_owned(),
-                "Lock period",
+                format!(
+                    "No one can ever reopen {} after this. Months lock in date order.",
+                    choice.month
+                ),
+                format!("Lock {}", choice.month),
                 "Locking…",
             ),
             Kind::CloseYear => (
-                format!("Close fiscal year {}?", choice.label),
+                format!("Close the fiscal year {}?", choice.label),
                 close_year_detail(choice.review.as_ref()),
-                "Close year",
+                "Close year".to_owned(),
                 "Closing…",
             ),
             _ => (
-                format!("Lock fiscal year {} for good?", choice.label),
-                "Every closed period of the year is locked and can never be reopened.".to_owned(),
-                "Lock year",
+                format!("Lock the fiscal year {} for good?", choice.label),
+                "Every closed month of the year is locked, and no one can ever reopen it."
+                    .to_owned(),
+                "Lock year".to_owned(),
                 "Locking…",
             ),
         };
+        // One company needs no name in the question; among several it does.
+        let consequence = if choice.several {
+            format!("{consequence} ({company_name})")
+        } else {
+            consequence
+        };
         render(ConfirmDialog {
             id: "ledger-choice-confirm",
-            consequence: &format!("{consequence} ({company_name})"),
+            consequence: &consequence,
             detail: &detail,
-            confirm,
+            confirm: &confirm,
             working,
             confirm_event: "do_confirm",
             cancel_event: "cancel_choice",
@@ -912,7 +929,7 @@ impl Years {
     }
 
     async fn choose(&mut self, r: &LiveRequest<'_, Scope>, action: &str) -> Result<()> {
-        let mut parts = action.splitn(4, ':');
+        let mut parts = action.splitn(3, ':');
         let kind = parts.next().and_then(Kind::parse).ok_or(Error::Invalid)?;
         let company_id: i64 = parts
             .next()
@@ -922,7 +939,6 @@ impl Years {
             .next()
             .and_then(|i| i.parse().ok())
             .ok_or(Error::Invalid)?;
-        let label = parts.next().unwrap_or_default().to_owned();
         if !self
             .pages
             .allowed(r.scope, capability_for(kind.event()))
@@ -931,17 +947,42 @@ impl Years {
             self.flash.error(super::DENIED);
             return Ok(());
         }
-        let Some(company) = self.named(r.scope, company_id).await? else {
+        let companies = self.pages.companies(r.scope).await?;
+        let Some(company) = companies.iter().find(|c| c.id == company_id).cloned() else {
             self.flash
                 .error("That company is not available to you. Reload the page.");
+            return Ok(());
+        };
+        // The name comes from the ledger's own dates, never from the button.
+        let years = self.pages.years_in(r.scope, company.id).await?;
+        let named = years.ok().and_then(|years| {
+            if kind.key() == "period_id" {
+                let period = years.iter().flat_map(|y| &y.periods).find(|p| p.id == id)?;
+                let start = period.start_date.parse::<Date>().ok()?;
+                Some((
+                    crate::dates::months_text(&period.start_date, &period.end_date),
+                    crate::dates::month_name(start).to_owned(),
+                ))
+            } else {
+                let year = years.iter().find(|y| y.id == id)?;
+                Some((
+                    crate::dates::months_text(&year.start_date, &year.end_date),
+                    String::new(),
+                ))
+            }
+        });
+        let Some((label, month)) = named else {
+            self.flash.error(GONE);
             return Ok(());
         };
         let mut choice = Chosen {
             kind,
             company: company.id,
             company_name: company.name,
+            several: companies.len() > 1,
             id,
             label,
+            month,
             review: None,
             reason: String::new(),
             refusal: Refusal::default(),
@@ -962,7 +1003,7 @@ impl Years {
             {
                 Ok(review) => choice.review = Some(review),
                 Err(failure) => {
-                    self.flash.error(failure.text("The period"));
+                    self.flash.error(failure.text(&choice.label));
                     return Ok(());
                 }
             }
@@ -972,10 +1013,10 @@ impl Years {
     }
 
     async fn confirm(&mut self, r: &LiveRequest<'_, Scope>) -> Result<()> {
-        let Some(choice) = self.choice.take() else {
+        let Some(mut choice) = self.choice.take() else {
             return Ok(());
         };
-        let Some(review) = choice.review else {
+        let Some(review) = choice.review.take() else {
             return Ok(());
         };
         // The contract proves the company's reach and the capability again;
@@ -991,24 +1032,16 @@ impl Years {
             )
             .await?
         {
-            Ok(_) => self.flash.success(match choice.kind {
-                Kind::ClosePeriod => format!("The period of {} is closed.", choice.company_name),
-                Kind::LockPeriod => {
-                    format!("The period of {} is locked for good.", choice.company_name)
-                }
-                Kind::CloseYear => {
-                    format!("The fiscal year of {} is closed.", choice.company_name)
-                }
-                _ => format!(
-                    "The fiscal year of {} is locked for good.",
-                    choice.company_name
-                ),
-            }),
-            Err(failure) => self.flash.error(format!(
-                "{}: {}",
-                choice.company_name,
-                failure.text("The period")
-            )),
+            Ok(_) => {
+                let label = &choice.label;
+                self.flash.success(choice.say(match choice.kind {
+                    Kind::ClosePeriod => format!("{label} is closed."),
+                    Kind::LockPeriod => format!("{label} is locked for good."),
+                    Kind::CloseYear => format!("The fiscal year {label} is closed."),
+                    _ => format!("The fiscal year {label} is locked for good."),
+                }));
+            }
+            Err(failure) => self.flash.error(choice.say(failure.text(&choice.label))),
         }
         Ok(())
     }
@@ -1031,14 +1064,14 @@ impl Years {
             .await?
         {
             Ok(_) => {
-                let year = choice.kind == Kind::ReopenYear;
-                let name = choice.company_name.clone();
-                self.choice = None;
-                self.flash.success(if year {
-                    format!("The fiscal year of {name} is reopened. Its last period is open again.")
+                let label = &choice.label;
+                let text = choice.say(if choice.kind == Kind::ReopenYear {
+                    format!("The fiscal year {label} is reopened. Its last month is open again.")
                 } else {
-                    format!("The period of {name} is open again.")
+                    format!("{label} is open again.")
                 });
+                self.choice = None;
+                self.flash.success(text);
             }
             Err(Failure::Refused(refusal)) => {
                 choice.refusal = refusal;
@@ -1220,6 +1253,21 @@ impl Years {
     }
 }
 
+/// The month or year a button named is no longer there to act on.
+const GONE: &str = "Nothing was changed. Reload the page and try again.";
+
+impl Chosen {
+    /// A message about this action: among several companies it starts with
+    /// the company's name, and with one company it needs none.
+    fn say(&self, text: String) -> String {
+        if self.several {
+            format!("{}: {text}", self.company_name)
+        } else {
+            text
+        }
+    }
+}
+
 impl Opening {
     /// A last day the person chose, not the calculated twelve months.
     fn overridden(&self) -> bool {
@@ -1306,25 +1354,26 @@ fn review_detail(review: &Review) -> String {
     let start = review.facts["start_date"].as_str().unwrap_or("");
     let end = review.facts["end_date"].as_str().unwrap_or("");
     let months = months_between(start, end);
-    let (start, end) = (
-        crate::dates::display_text(start),
-        crate::dates::display_text(end),
-    );
     match months {
         Some(months) => format!(
-            "{start} to {end}: {months} monthly {}, all open.",
-            if months == 1 { "period" } else { "periods" }
+            "{}: {months} {}, all open.",
+            crate::dates::months_text(start, end),
+            if months == 1 { "month" } else { "months" }
         ),
-        None => format!("{start} to {end}"),
+        None => format!(
+            "{} to {}",
+            crate::dates::display_text(start),
+            crate::dates::display_text(end)
+        ),
     }
 }
 
 fn close_year_detail(review: Option<&Review>) -> String {
-    let base = "Any open periods close with it, and nobody can post into the year again until it is reopened.";
+    let base = "Any month still open closes with it, and no one can add or change entries dated in the year until someone reopens it.";
     let entry = review.map(|r| &r.facts["entry"]).filter(|e| !e.is_null());
     match entry.and_then(|e| e["lines"].as_array()).map(Vec::len) {
         Some(lines) => format!(
-            "{base} The ledger also posts one closing entry of {lines} lines that moves income and expenses into retained earnings."
+            "{base} Closing also posts one closing entry of {lines} lines that moves income and expenses into retained earnings."
         ),
         None => format!("{base} Nothing is posted: the year has no income or expense to move."),
     }
