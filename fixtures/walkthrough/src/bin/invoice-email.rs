@@ -254,7 +254,7 @@ async fn main() -> Proof<()> {
         let raw = mailbox.read(&entry.id)?;
         let parsed = bilibi_mail::parse(raw.as_bytes(), &mailer.parse_limits().await?)?;
         if parsed.to.iter().any(|to| to.email == "jamie@example.test") && parsed.subject.as_deref().is_some_and(|s| s.starts_with(&format!("Invoice {reference}"))) {
-            assert_eq!(parsed.from.as_ref().and_then(|from| from.name.as_deref()), Some("Example Trading Accounts"));
+            assert_eq!(parsed.from.first().and_then(|from| from.name.as_deref()), Some("Example Trading Accounts"));
             assert_eq!(parsed.reply_to.first().map(|reply| reply.email.as_str()), Some("accounts@example.test"));
             assert!(parsed.text.as_deref().unwrap().contains("Hello Jamie Mail Buyer"));
             let pdf = &parsed.attachments[0];
