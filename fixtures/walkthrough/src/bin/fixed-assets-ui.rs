@@ -321,7 +321,7 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     assert_eq!(applied.query["to"], "2026-12-31");
-    has(&applied, "Ledger check as of 2026-12-31");
+    has(&applied, "Ledger check as of 31 Dec 2026");
     let mut ids = Vec::new();
     let mut entries = Vec::new();
     for label in [
@@ -359,7 +359,7 @@ async fn main() -> Outcome<()> {
         .await?;
         has(&chosen, &source);
         // The purchase's description and date fill the dialog.
-        has(&chosen, "2026-01-17");
+        has(&chosen, "17 Jan 2026");
         let body=event(&mut register,&manager,json!({"type":"register_asset","asset[category_revision_id]":original.revision.id.to_string(),"asset[source]":source,"asset[description]":label,"asset[in_service_date]":"2026-01-31","asset[residual_value]":"0"})).await?;
         has(&body, "Registered ");
         no(&body, "asset-modal");
@@ -606,7 +606,7 @@ async fn main() -> Outcome<()> {
         .set_direct(&admin, 1, bilibi_finance_fixed_assets::ACQUIRE, Some(false))
         .await?;
     let denied = event(&mut register, &manager, json!({"type":"new"})).await?;
-    has(&denied, "You do not have permission for that action.");
+    has(&denied, "You do not have permission to do that.");
     no(&denied, "assets-create");
     no(&denied, "asset-modal");
     grants

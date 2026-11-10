@@ -256,9 +256,16 @@ impl Returns {
             row = row
                 .cell(
                     "period",
-                    Cell::text(format!("{} to {}", p.period_start, p.period_end)),
+                    Cell::text(format!(
+                        "{} to {}",
+                        bilibi_finance_ledger::dates::display(p.period_start),
+                        bilibi_finance_ledger::dates::display(p.period_end)
+                    )),
                 )
-                .cell("due", Cell::text(p.due_date.to_string()));
+                .cell(
+                    "due",
+                    Cell::text(bilibi_finance_ledger::dates::display(p.due_date)),
+                );
             for tax in &taxes {
                 let html = match self.standing(*tax, p.period_start) {
                     None if self.can_prepare => render(Button {
@@ -385,10 +392,17 @@ impl Returns {
                 .cell("tax", Cell::text(f::tax_name(r.tax_type)))
                 .cell(
                     "period",
-                    Cell::text(format!("{} to {}", r.period_start, r.period_end)),
+                    Cell::text(format!(
+                        "{} to {}",
+                        bilibi_finance_ledger::dates::display(r.period_start),
+                        bilibi_finance_ledger::dates::display(r.period_end)
+                    )),
                 )
                 .slot("status", status)
-                .cell("due", Cell::text(r.due_date.to_string()))
+                .cell(
+                    "due",
+                    Cell::text(bilibi_finance_ledger::dates::display(r.due_date)),
+                )
                 .cell(
                     "tax_payable",
                     Cell::text(r.tax_payable.map_or_else(

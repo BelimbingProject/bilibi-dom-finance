@@ -33,7 +33,7 @@ pub(crate) const PANELS: &str = "finance/attachments.panels";
 pub const EMBED: &str = "finance.attachments-panel";
 
 /// Bilimbi `LiveAuthorization`'s denied message.
-pub(crate) const DENIED: &str = "You do not have permission for that action.";
+pub(crate) const DENIED: &str = "You do not have permission to do that.";
 
 macro_rules! provenance {
     () => {

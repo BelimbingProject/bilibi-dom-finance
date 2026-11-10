@@ -98,7 +98,10 @@ impl Index {
             row = row
                 .cell("number", Cell::text(a.attachment_number.to_string()))
                 .slot("record", record)
-                .cell("dated", Cell::date(&date, &date))
+                .cell(
+                    "dated",
+                    Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                )
                 .slot("file", file)
                 .cell("sha256", Cell::text(a.sha256.clone()))
                 .slot("sha256", hash)

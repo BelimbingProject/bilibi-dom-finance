@@ -607,7 +607,10 @@ impl BillForm {
                             f::optional(&b.party_document_number)
                         ),
                     ),
-                    plain("Bill date", &b.document_date.to_string()),
+                    plain(
+                        "Bill date",
+                        &bilibi_finance_ledger::dates::display(b.document_date),
+                    ),
                     plain(
                         "Still owed",
                         &b.outstanding.map_or_else(

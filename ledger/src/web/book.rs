@@ -360,7 +360,7 @@ impl Book {
                     .label("Currency code")
                     .value(&self.currency)
                     .required()
-                    .hint("The currency list has not been imported, so this code is not checked against ISO 4217. Three letters, like MYR. You cannot change it later.")
+                    .hint("The currency list is not installed, so Bilibi cannot check this code. Three letters, like MYR. You cannot change it later.")
                     .errors(errors("currency_code"))
                     .attr("maxlength", "3")
                     .attr("data-debounce", "300"),
@@ -463,7 +463,7 @@ impl Book {
             }
             if currency["reference"].as_str() == Some("unchecked") {
                 detail.push_str(&format!(
-                    "The currency list has not been imported, so {code} was not checked against ISO 4217. "
+                    "The currency list is not installed, so Bilibi cannot check {code}. "
                 ));
             }
             detail.push_str(if self.approver == "one_person" { "The currency and decimal places are permanent. The preparer may approve their own bills, payments and other Finance records; each such approval is listed in Approval exceptions. Manual journals follow their own approval rules." } else { "The currency and decimal places are permanent. Bills, payments and other Finance records need someone else's approval. Manual journals follow their own approval rules." });

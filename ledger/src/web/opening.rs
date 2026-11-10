@@ -563,6 +563,6 @@ impl LiveState<Scope, Error> for Opening {
 
 /// A contract's `YYYY-MM-DD` date in the one date format pages show.
 fn date(display: &DisplayContext, text: &str) -> String {
-    text.parse::<jiff::civil::Date>()
-        .map_or_else(|_| text.to_owned(), |d| display.render_date(d))
+    let _ = display;
+    crate::dates::display_text(text)
 }

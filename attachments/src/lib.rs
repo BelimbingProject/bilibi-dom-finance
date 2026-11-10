@@ -178,7 +178,7 @@ pub enum AttachmentError {
     InvalidFileName,
     #[error("The file is empty")]
     EmptyFile,
-    #[error("The file is larger than 25 MiB")]
+    #[error("The file is larger than 25 MB")]
     FileTooLarge,
     #[error("The content type is not valid")]
     InvalidContentType,
@@ -210,24 +210,23 @@ pub enum AttachmentError {
     #[error("Invalid option")]
     InvalidOption,
     /// An operator has not set Base Artifacts' storage root and retention.
-    #[error(
-        "Ask a server administrator to set Storage folder (artifacts.storage_root) and Document retention days (artifacts.retention_days) in Global settings: /system/settings"
-    )]
+    #[error("File storage is not set up. Ask your administrator to set the storage folder in System settings.")]
     RetentionNotConfigured,
-    /// The folder an administrator chose for Base Artifacts does not exist;
-    /// the text is Base's own, naming the folder.
-    #[error("{0} Global settings: /system/settings")]
+    /// The folder an administrator chose for Base Artifacts does not exist.
+    /// It carries Base's own text, which names the folder, for the log; a
+    /// person is never shown a path.
+    #[error("The storage folder cannot be found. Ask your administrator to check it in System settings.")]
     StorageFolderMissing(String),
     /// The Storage folder is empty or not an absolute, private folder.
     #[error(
-        "Storage folder (artifacts.storage_root) must be the absolute path of an existing private folder (permission 0700). Ask a server administrator to set it in Global settings: /system/settings"
+        "The storage folder cannot be used. Ask your administrator to check it in System settings."
     )]
     StorageFolderUnsafe,
     /// The file is larger than Base Artifacts' `artifacts.max_bytes`.
     #[error("The file is larger than the storage limit")]
     InvalidSize,
     /// Base Artifacts refused with this stable code.
-    #[error("Storage refused the request ({0})")]
+    #[error("The file could not be saved. Try again.")]
     Storage(&'static str),
     /// Base applied the change and this module could not record its event; the
     /// next read of the attachment records it.

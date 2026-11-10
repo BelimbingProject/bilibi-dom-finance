@@ -184,7 +184,12 @@ impl Credits {
                     Html::text(if reversed { "Reversed" } else { "" })
                 };
                 Ok(FlexRow::new(text(&e["id"]))
-                    .cell("date", Cell::text(text(&e["effective_date"])))
+                    .cell(
+                        "date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(&text(
+                            &e["effective_date"],
+                        ))),
+                    )
                     .cell("kind", Cell::text(text(&e["kind"])))
                     .cell(
                         "amount",
@@ -225,7 +230,10 @@ impl Credits {
                     ),
                     fact("Supplier", text(&f["credit"]["party_name"])),
                     fact("Target", text(&f["target"]["party_document_number"])),
-                    fact("Effective date", text(&f["effective_date"])),
+                    fact(
+                        "Effective date",
+                        bilibi_finance_ledger::dates::display_text(&text(&f["effective_date"])),
+                    ),
                     fact(
                         "Posting",
                         if f["posts"] == true {
@@ -311,7 +319,9 @@ impl Credits {
                             .flatten()
                             .map(|v| {
                                 Choice::new(text(&v["party_document_number"]), text(&v["id"]))
-                                    .detail(text(&v["document_date"]))
+                                    .detail(bilibi_finance_ledger::dates::display_text(&text(
+                                        &v["document_date"],
+                                    )))
                             })
                             .collect()
                     } else {

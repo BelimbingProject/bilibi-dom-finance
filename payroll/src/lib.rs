@@ -54,7 +54,7 @@ pub struct Payroll {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PayrollError {
-    #[error("You do not have permission for that action.")]
+    #[error("You do not have permission to do that.")]
     Unauthorized,
     #[error("The company could not be found.")]
     CompanyNotFound,

@@ -272,8 +272,8 @@ impl Reports {
                                 "{} fiscal {}; the latest runs {} to {}. {open} open {}.{}",
                                 years.len(),
                                 if years.len() == 1 { "year" } else { "years" },
-                                latest.start_date,
-                                latest.end_date,
+                                bilibi_finance_ledger::dates::display(latest.start_date),
+                                bilibi_finance_ledger::dates::display(latest.end_date),
                                 if open == 1 { "period" } else { "periods" },
                                 if open == 0 {
                                     " No period is open, so nothing can be posted; open the next fiscal year."
@@ -359,7 +359,7 @@ impl Reports {
                     (JournalStatus::Rejected, _) => (SetupState::Incomplete, "was rejected"),
                     (JournalStatus::Withdrawn, _) => (SetupState::Incomplete, "was withdrawn"),
                 };
-                (state, format!("Opening journal {} dated {} {status}. Open invoices, bills and historical transactions are excluded; this does not establish a complete conversion.", opening.journal_number, opening.conversion_date))
+                (state, format!("Opening journal {} dated {} {status}. Open invoices, bills and historical transactions are excluded; this does not establish a complete conversion.", opening.journal_number, bilibi_finance_ledger::dates::display(opening.conversion_date)))
             }
             Ok(Some(None)) => (SetupState::NotSetUp, "No opening balances have been submitted. Only needed when converting from another accounting system; a new company can start without them.".into()),
             Err(state) => (state, failed(state)),

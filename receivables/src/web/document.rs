@@ -548,7 +548,7 @@ impl Document {
                         self.flash.set(
                             StatusKind::Error,
                             if message.is_empty() {
-                                "That could not be done.".into()
+                                "Nothing was changed. Reload the page and try again.".into()
                             } else {
                                 message
                             },

@@ -329,8 +329,12 @@ impl State {
                             "period",
                             Cell::text(format!(
                                 "{} – {}",
-                                r["period_start"].as_str().unwrap_or(""),
-                                r["period_end"].as_str().unwrap_or("")
+                                bilibi_finance_ledger::dates::display_text(
+                                    r["period_start"].as_str().unwrap_or("")
+                                ),
+                                bilibi_finance_ledger::dates::display_text(
+                                    r["period_end"].as_str().unwrap_or("")
+                                )
                             )),
                         )
                         .cell(

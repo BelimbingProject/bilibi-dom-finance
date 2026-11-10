@@ -591,7 +591,7 @@ async fn main() -> Outcome<()> {
         assert!(body
             .html
             .contains(if cap == bilibi_finance_reports::EXPORT {
-                "You do not have permission for that action."
+                "You do not have permission to do that."
             } else if mandatory {
                 "You do not have permission to export this company’s ledger."
             } else {

@@ -381,7 +381,7 @@ impl ReadHandler for List {
             let after = input["after"].as_i64().unwrap_or(0);
             let id = input["id"].as_i64();
             if after < 0 {
-                return Err(bilibi_agent_api::invalid("after", "Choose a valid cursor."));
+                return Err(bilibi_agent_api::invalid("after", "Reload the page."));
             }
             // A schedule's correction (withdrawn, or replaced by a later one)
             // and the schedule it replaces, so a reader never takes a

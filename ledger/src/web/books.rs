@@ -83,8 +83,8 @@ impl Calendar {
     fn of(years: &[view::Year], today: Date) -> Self {
         let latest = years.last().map(|y| {
             (
-                y.start_date.clone(),
-                y.end_date.clone(),
+                crate::dates::display_text(&y.start_date),
+                crate::dates::display_text(&y.end_date),
                 if y.periods.iter().all(|p| p.status == "locked") {
                     "locked".into()
                 } else {
@@ -241,7 +241,11 @@ impl Books {
                         };
                         row = match calendar.earliest_open {
                             Some((start, end)) => {
-                                let mut cell = Html::text(&format!("{start} to {end}"));
+                                let mut cell = Html::text(&format!(
+                                    "{} to {}",
+                                    crate::dates::display_text(&start),
+                                    crate::dates::display_text(&end)
+                                ));
                                 if calendar.past_due {
                                     cell.push(&Html::text(" "));
                                     cell.push(&render(Badge::status(

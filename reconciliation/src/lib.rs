@@ -181,7 +181,7 @@ pub enum ReconciliationError {
     #[error("The running balance does not follow from the amounts at row {0}")]
     RunningBalanceMismatch(usize),
     /// The reader accepts files of at most 5 MiB.
-    #[error("The file is larger than 5 MiB")]
+    #[error("The file is larger than 5 MB")]
     FileTooLarge,
     #[error("The file is not UTF-8 text")]
     NotUtf8,

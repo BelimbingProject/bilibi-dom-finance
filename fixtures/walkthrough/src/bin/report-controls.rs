@@ -358,7 +358,7 @@ async fn main() -> Outcome<()> {
         "restricted page shows the controlled bookkeeping toggle"
     );
     let forged = event(restricted.as_mut(), &viewer, json!({"type":"turn_on"})).await?;
-    contains(&forged, "You do not have permission for that action.");
+    contains(&forged, "You do not have permission to do that.");
     event(
         book.as_mut(),
         &manager,
@@ -374,7 +374,7 @@ async fn main() -> Outcome<()> {
         json!({"type":"turn_off","dialog[text]":"Stale page"}),
     )
     .await?;
-    contains(&revoked, "You do not have permission for that action.");
+    contains(&revoked, "You do not have permission to do that.");
     assert!(
         ledger
             .get_controlled_bookkeeping(&manager, 1)
@@ -393,7 +393,7 @@ async fn main() -> Outcome<()> {
         json!({"type":"review","dialog[text]":"forged"}),
     )
     .await?;
-    contains(&forged, "You do not have permission for that action.");
+    contains(&forged, "You do not have permission to do that.");
     grants
         .set_direct(&authority, 1, REVIEW_EXCEPTIONS, None)
         .await?;

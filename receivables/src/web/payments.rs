@@ -393,7 +393,10 @@ impl Payments {
                     })?,
                 )
                 .cell("customer", Cell::text(self.customer_name(p.customer_id)))
-                .cell("payment_date", Cell::text(&p.payment_date))
+                .cell(
+                    "payment_date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(&p.payment_date)),
+                )
                 .slot("amount", f::tabular(&self.figures.money(p.amount))?)
                 .slot(
                     "deposit",
@@ -637,7 +640,9 @@ impl Payments {
                     .label(format!(
                         "{} · due {} · owes {}",
                         reference(d),
-                        d.due_date.as_deref().unwrap_or("—"),
+                        bilibi_finance_ledger::dates::display_text(
+                            d.due_date.as_deref().unwrap_or("—")
+                        ),
                         self.figures.optional(d.outstanding)
                     ))
                     .attr("inputmode", "decimal")

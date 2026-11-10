@@ -247,9 +247,7 @@ pub(super) fn live_warning() -> Result<Html> {
     render(Alert {
         id: "report-live-warning",
         kind: StatusKind::Warning,
-        body: Html::text(
-            "Posting notices are unavailable. Latest figures refresh periodically; reload to reconnect live updates.",
-        ),
+        body: Html::text("Live updates are off. Reload to see the latest figures."),
         ..Alert::default()
     })
 }
@@ -646,7 +644,10 @@ fn activity(
                         number: e.entry_number,
                     })?,
                 )
-                .slot("date", Html::text(&e.entry_date.to_string()))
+                .slot(
+                    "date",
+                    Html::text(&bilibi_finance_ledger::dates::display(e.entry_date)),
+                )
                 .slot("description", Html::text(&desc))
                 .slot(
                     "reference",
@@ -727,16 +728,26 @@ fn type_label(t: AccountType) -> &'static str {
 }
 fn column_label(c: &Column) -> String {
     match c {
-        Column::Period { from, to } => format!("{from} – {to}"),
-        Column::AsOf { as_of } => format!("As of {as_of}"),
+        Column::Period { from, to } => format!(
+            "{} – {}",
+            bilibi_finance_ledger::dates::display(*from),
+            bilibi_finance_ledger::dates::display(*to)
+        ),
+        Column::AsOf { as_of } => {
+            format!("As of {}", bilibi_finance_ledger::dates::display(*as_of))
+        }
     }
 }
 fn window(a: &AccountActivity) -> String {
     match (a.from, a.to) {
         (None, None) => "All entries".into(),
-        (None, Some(to)) => format!("Up to {to}"),
-        (Some(from), None) => format!("From {from}"),
-        (Some(from), Some(to)) => format!("{from} – {to}"),
+        (None, Some(to)) => format!("Up to {}", bilibi_finance_ledger::dates::display(to)),
+        (Some(from), None) => format!("From {}", bilibi_finance_ledger::dates::display(from)),
+        (Some(from), Some(to)) => format!(
+            "{} – {}",
+            bilibi_finance_ledger::dates::display(from),
+            bilibi_finance_ledger::dates::display(to)
+        ),
     }
 }
 fn amount(m: Money, u: MinorUnits) -> String {

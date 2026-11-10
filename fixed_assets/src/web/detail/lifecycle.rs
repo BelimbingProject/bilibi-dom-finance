@@ -271,10 +271,13 @@ impl Detail {
                 "Residual value",
                 Html::text(&a.residual_value.display(units)),
             ),
-            fact("Bought", Html::text(&a.acquisition_date.to_string())),
+            fact(
+                "Bought",
+                Html::text(&bilibi_finance_ledger::dates::display(a.acquisition_date)),
+            ),
             fact(
                 "In service from",
-                Html::text(&a.in_service_date.to_string()),
+                Html::text(&bilibi_finance_ledger::dates::display(a.in_service_date)),
             ),
             fact(
                 "Method",

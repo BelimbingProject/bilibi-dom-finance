@@ -223,7 +223,10 @@ impl Payments {
                             body: Html::text(&format!("#{}", r.request_number)),
                         })?,
                     )
-                    .cell("payment_date", Cell::text(r.payment_date.to_string()))
+                    .cell(
+                        "payment_date",
+                        Cell::text(bilibi_finance_ledger::dates::display(r.payment_date)),
+                    )
                     .cell("party", Cell::text(&r.party_name))
                     .slot(
                         "paid_from",

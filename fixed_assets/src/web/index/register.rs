@@ -128,7 +128,10 @@ impl Index {
             query.insert(key.into(), value.to_string());
         }
         let mut html = render(SectionHeading {
-            title: &format!("Ledger check as of {}", r.as_of),
+            title: &format!(
+                "Ledger check as of {}",
+                bilibi_finance_ledger::dates::display(r.as_of)
+            ),
             id: "assets-reconciliation",
             class: "mt-4",
             description:

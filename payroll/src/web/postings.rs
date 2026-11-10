@@ -37,7 +37,10 @@ impl State {
                         &format!("payroll-posting-{}", posting.id),
                         &[
                             ("source", format!("{source} {}", posting.source_reference)),
-                            ("date", posting.entry_date.clone()),
+                            (
+                                "date",
+                                bilibi_finance_ledger::dates::display_text(&posting.entry_date),
+                            ),
                             (
                                 "total",
                                 format!(
@@ -202,14 +205,15 @@ impl State {
                             ("reference", reference.clone()),
                             (
                                 "date",
-                                source[if claims { "approved_on" } else { "pay_date" }]
-                                    .as_str()
-                                    .unwrap_or(if claims {
-                                        "unknown"
-                                    } else {
-                                        "missing or invalid"
-                                    })
-                                    .to_owned(),
+                                bilibi_finance_ledger::dates::display_text(
+                                    source[if claims { "approved_on" } else { "pay_date" }]
+                                        .as_str()
+                                        .unwrap_or(if claims {
+                                            "unknown"
+                                        } else {
+                                            "missing or invalid"
+                                        }),
+                                ),
                             ),
                             ("failure", failure.unwrap_or("—").to_owned()),
                         ];

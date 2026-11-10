@@ -246,9 +246,7 @@ async fn main() -> Outcome<()> {
         serde_json::json!({"type": "prepare", "period": format!("sales_tax|{start}")}),
     )
     .await?;
-    assert!(body
-        .html
-        .contains("You do not have permission for that action."));
+    assert!(body.html.contains("You do not have permission to do that."));
     let after = sst
         .list_returns(&manager, COMPANY, None, Some(500), None)
         .await?;

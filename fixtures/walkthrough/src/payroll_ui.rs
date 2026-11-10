@@ -217,7 +217,7 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
         json!({"type": "save_mapping_account", "id": mapped.id.to_string(), "field": "liability_account_id", "value": settings.net_pay_account_id.to_string()}),
     )
     .await?
-    .contains("You do not have permission for that action."));
+    .contains("You do not have permission to do that."));
     assert_eq!(payroll.list_mappings(&manager, 1).await?, mappings_before);
     assert_eq!(
         payroll.list_mapping_changes(&manager, 1).await?,

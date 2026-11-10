@@ -219,7 +219,10 @@ impl Request {
             id: "payables-payment-facts",
             items: vec![
                 f::fact("Supplier", &r.party_name),
-                f::fact("Payment date", &r.payment_date.to_string()),
+                f::fact(
+                    "Payment date",
+                    &bilibi_finance_ledger::dates::display(r.payment_date),
+                ),
                 bilibi_ui::Fact {
                     title: "Paid from",
                     value: bilibi_finance_ledger::AccountName::label(&account)?,
@@ -295,7 +298,10 @@ impl Request {
                     &re.posted_at,
                     "payables-payment-reversed-at",
                 )?);
-                summary.push(f::fact("Reversal date", &re.payment_date.to_string()));
+                summary.push(f::fact(
+                    "Reversal date",
+                    &bilibi_finance_ledger::dates::display(re.payment_date),
+                ));
                 summary.push(bilibi_ui::Fact {
                     title: "Reversal journal",
                     value: EntryLink::html(Some(re.entry_id), Some(re.entry_number))?,
@@ -438,7 +444,10 @@ impl Request {
                     .kind(InputKind::Date)
                     .label("Reversal date")
                     .value(self.date.clone())
-                    .hint(format!("Not before {}.", r.payment_date))
+                    .hint(format!(
+                        "Not before {}.",
+                        bilibi_finance_ledger::dates::display(r.payment_date)
+                    ))
                     .required(),
             );
             fields.push(

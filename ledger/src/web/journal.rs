@@ -238,7 +238,7 @@ impl Journal {
             Fact {
                 title: "Date",
                 id: "ledger-journal-date",
-                value: Html::text(&journal.entry_date),
+                value: Html::text(&crate::dates::display_text(&journal.entry_date)),
             },
             Fact {
                 title: "Description",

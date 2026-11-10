@@ -136,7 +136,7 @@ struct Described<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion" class="mr-1.5">{{ journal|safe }} on {{ entry.entry_date }}</span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
+    source = r#"{% import "components.html" as ui %}{% if let Some(entry) = entry %}<span id="line-{{ line }}-suggestion" class="mr-1.5">{{ journal|safe }} on {{ bilibi_finance_ledger::dates::display(entry.entry_date) }}</span>{% if accept %}{% call ui::button(id=accept_id, button_type="button", event="accept", name="line", value=line.to_string()) %}Accept{% endcall %}{% endif %}{% endif %}"#,
     ext = "html"
 )]
 struct Suggested<'a> {
@@ -579,8 +579,14 @@ impl Matching {
             };
             let mut row = FlexRow::new(line.id.to_string())
                 .slot("select", select)
-                .cell("date", Cell::date(&date, &date))
-                .slot("date", super::nowrap(&date)?)
+                .cell(
+                    "date",
+                    Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                )
+                .slot(
+                    "date",
+                    super::nowrap(&bilibi_finance_ledger::dates::display_text(&date))?,
+                )
                 .cell("description", Cell::text(&line.description))
                 .slot(
                     "description",
@@ -655,8 +661,14 @@ impl Matching {
                 .slot("select", select)
                 .cell("entry", Cell::text(entry.entry_number.to_string()))
                 .slot("entry", journal(Some(entry))?)
-                .cell("date", Cell::date(&date, &date))
-                .slot("date", super::nowrap(&date)?)
+                .cell(
+                    "date",
+                    Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                )
+                .slot(
+                    "date",
+                    super::nowrap(&bilibi_finance_ledger::dates::display_text(&date))?,
+                )
                 .cell("description", Cell::text(&entry.description))
                 .slot(
                     "description",

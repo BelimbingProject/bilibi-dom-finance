@@ -66,7 +66,7 @@ inventory::submit! { Module {
 pub type Result<T> = std::result::Result<T, FixedAssetsError>;
 #[derive(Debug, thiserror::Error)]
 pub enum FixedAssetsError {
-    #[error("You do not have permission for this action.")]
+    #[error("You do not have permission to do that.")]
     Unauthorized,
     #[error("Company not found")]
     CompanyNotFound,

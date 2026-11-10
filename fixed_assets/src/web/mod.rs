@@ -26,7 +26,7 @@ use bilibi_ui::{
 use std::{collections::HashMap, sync::Arc};
 
 pub(crate) const PAGES: &str = "finance/fixed_assets.pages";
-const DENIED: &str = "You do not have permission for that action.";
+const DENIED: &str = "You do not have permission to do that.";
 #[derive(Clone)]
 pub(crate) struct Pages {
     pub db: Db,
@@ -100,7 +100,7 @@ fn refusal_text(e: &FixedAssetsError) -> String {
             .collect::<Vec<_>>()
             .join("; "),
         FixedAssetsError::Failed(_) | FixedAssetsError::Ledger(LedgerError::Failed(_)) => {
-            "The operation was refused. Refresh this page and review the record.".into()
+            "The record changed while you were working. Reload the page and check it.".into()
         }
         e => e.to_string(),
     }

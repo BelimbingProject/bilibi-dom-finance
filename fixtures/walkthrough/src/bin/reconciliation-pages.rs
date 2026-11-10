@@ -354,7 +354,7 @@ async fn main() -> Outcome<()> {
             "id=\"unmatched-lines-table\"",
             "id=\"unmatched-entries-table\"",
             "id=\"standing-matches-table\"",
-            "Journal 1</a> on 2026-10-01",
+            "Journal 1</a> on 1 Oct 2026",
             "-120.00",
             "Selected: <span id=\"selected-lines-count\">0</span>",
             "No matches yet",
@@ -500,7 +500,7 @@ async fn main() -> Outcome<()> {
     shows(
         "viewer forges a match",
         &html,
-        &["You do not have permission for that action."],
+        &["You do not have permission to do that."],
     )?;
     assert_eq!(
         facade
@@ -568,7 +568,7 @@ async fn main() -> Outcome<()> {
         "manager opens reconciliation 1",
         &body.html,
         &[
-            "Reconciliation 1 as of 2026-10-31",
+            "Reconciliation 1 as of 31 Oct 2026",
             "Balance per statement",
             "248.75 MYR",
             "Balance per books",
@@ -713,7 +713,7 @@ async fn main() -> Outcome<()> {
     shows(
         "viewer opens it",
         &body.html,
-        &["Reconciliation 1 as of 2026-10-31"],
+        &["Reconciliation 1 as of 31 Oct 2026"],
     )?;
 
     println!("\n== Abandoning");
@@ -754,7 +754,7 @@ async fn main() -> Outcome<()> {
     shows(
         "viewer forges finalise",
         &html,
-        &["You do not have permission for that action."],
+        &["You do not have permission to do that."],
     )?;
     let (mut reserve_page, body) =
         mount(&pages, &manager, "reconciliation", reserve_open.id).await?;

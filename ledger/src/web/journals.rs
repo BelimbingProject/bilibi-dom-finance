@@ -925,7 +925,7 @@ impl Journals {
                     "request",
                     Cell::text(record.request.map(|n| n.to_string()).unwrap_or_default()),
                 )
-                .cell("date", Cell::text(&record.date));
+                .cell("date", Cell::text(crate::dates::display_text(&record.date)));
             row = match record.number {
                 Some(number) => row
                     .slot("number", link(Html::text(&number.to_string()))?)

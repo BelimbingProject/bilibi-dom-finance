@@ -112,7 +112,7 @@ pub(super) fn badge(text: &str, kind: BadgeKind, class: &str) -> Result<Html> {
 /// carry SQL or internals, so it is never shown.
 pub(super) fn refusal(error: &SstError) -> String {
     match error {
-        SstError::Failed(_) => "It could not be done. Please try again.".into(),
+        SstError::Failed(_) => "Nothing was changed. Reload the page and try again.".into(),
         other => other.to_string(),
     }
 }

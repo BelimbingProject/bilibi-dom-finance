@@ -194,7 +194,7 @@ impl Entry {
             Fact {
                 title: "Date",
                 id: "ledger-entry-date",
-                value: Html::text(&entry.entry_date),
+                value: Html::text(&crate::dates::display_text(&entry.entry_date)),
             },
             Fact {
                 title: "Description",
