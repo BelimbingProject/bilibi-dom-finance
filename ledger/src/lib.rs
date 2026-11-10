@@ -3828,14 +3828,26 @@ impl Ledger {
 }
 
 /// A write inside a caller's own transaction: the capability and company
-/// reach now, then the company's row lock on that transaction.
+/// reach now, then the company's write lock on that transaction, tried and
+/// never waited for. It is the lock `require_writable` takes (NO KEY UPDATE):
+/// a no-op inside a write that holds it, and compatible with the KEY SHARE
+/// every authorizer takes, where FOR UPDATE would refuse at random. A
+/// competing writer answers `Conflict` (retryable). SKIP LOCKED, not NOWAIT:
+/// a raised lock error would abort the caller's whole transaction.
 async fn preview_lock(
     client: &dyn bilibi_agent_api::OperationClient,
     scope: &Scope,
     company_id: i64,
 ) -> Result<()> {
     agent_operations::authorize_on(client, scope, company_id, POST_ENTRIES).await?;
-    let row = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT", &[&scope.tenant(), &company_id]).await?.ok_or(LedgerError::CompanyNotFound)?;
+    let Some(row) = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR NO KEY UPDATE SKIP LOCKED", &[&scope.tenant(), &company_id]).await? else {
+        let live = client.query_opt("SELECT 1 FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL", &[&scope.tenant(), &company_id]).await?.is_some();
+        return Err(if live {
+            LedgerError::Failed(Error::Conflict)
+        } else {
+            LedgerError::CompanyNotFound
+        });
+    };
     if row.get::<_, String>(0) == "archived" {
         return Err(LedgerError::CompanyArchived);
     }

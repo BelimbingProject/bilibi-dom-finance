@@ -543,10 +543,13 @@ impl FixedAssets {
         company: i64,
         capability: &str,
     ) -> Result<()> {
-        // Core's authorizer takes KEY SHARE on the company. Prove capability
-        // and the sealed desk reach first, without that company lock, so a
-        // competing writer can yield Conflict instead of blocking the preview.
-        // The caller rechecks through Core after this try-lock succeeds.
+        // Prove capability and the sealed desk reach first, without a company
+        // lock, so a competing writer can yield Conflict instead of blocking
+        // the preview. The caller rechecks through Core after this try-lock.
+        // The try-lock is the company write lock itself (NO KEY UPDATE, as
+        // `require_writable` takes): a no-op inside a write that holds it, and
+        // compatible with the KEY SHARE every authorizer takes. FOR UPDATE
+        // would conflict with those readers and refuse at random.
         bilibi_authz::authorize_proof(c, s, capability)
             .await
             .map_err(|e| match e {
@@ -565,7 +568,7 @@ impl FixedAssets {
         }
         let Some(row) = c
             .query_opt(
-                "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE SKIP LOCKED",
+                "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR NO KEY UPDATE SKIP LOCKED",
                 &[&s.tenant(), &company],
             )
             .await?
