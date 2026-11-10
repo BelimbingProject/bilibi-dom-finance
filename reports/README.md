@@ -14,6 +14,8 @@ exceptions are also available (NT3), alongside auditor-pack generation and downl
 
 ## Pages
 
+**Month-end checklist** (`/finance/close-month`, opened from Fiscal years) lists what is left before a month closes and closes it; see [Month-end checklist](#month-end-checklist).
+
 **Finance setup** (`/finance/setup`, menu Finance, Bookkeeping, first) shows what the current company has set up and what remains, with a link to the page for each area. It is described under [Finance setup](#finance-setup) below; the two report routes follow.
 
 Both routes require `finance.ledger.view` and read the session's current company through the facade. Reports has four addressable views (`view=overview`, `profit-and-loss`, `balance-sheet`, `cash-position`), the shared period filter (the latest month with entries by default, see First report and layout), and previous-period comparison, switched with the Compare toggle (`compare=none` turns it off except on Overview). Accounts read name first, code muted. Custom dates stay a draft until Apply range succeeds. The display policy and browser timezone decide the preset's calendar.
@@ -190,6 +192,34 @@ Reports owns it because it is the Finance module that already depends on every o
 Opening balances is optional and does not contribute to the required-step total. The ledger's `opening_progress` reads the latest retained opening submission. No submission is `not_set_up`; a waiting, rejected, withdrawn or reversed journal is `incomplete`, with its actual status in the summary; an approved, unreversed opening is `set_up`. This measures the opening journal only. Open invoices, bills, historical transactions and the accountant's conversion reconciliation remain outside that status. The same facts are available through `finance.ledger.opening_balances.get` and the setup contract.
 
 A different company is set up by choosing it in the top bar; **Company books** (ledger) lists every company the person works in. The page's pin id is `nav-finance-reports-setup`.
+
+## Month-end checklist
+
+`/finance/close-month` is one page per month of the current company: what is left before the month closes, each check with a button to the place that clears it, and the close itself. It has no menu item. Fiscal years is the list of months, so each month's name and the year's "Close January" button open the page (`?period=<id>`; with no `period`, the earliest open month). After a close the page moves to the next month.
+
+It is the page of the contract `finance.reports.month_close.get` (`Reports::month_close`), which an agent calls with a `company_id` and a `period_id` or a `month` (`YYYY-MM`). The page, an agent and an accountant read the same list.
+
+| Check | Asks | Something is left when |
+| --- | --- | --- |
+| Bank: *account* (one per active bank account) | Reconciliation | The account is not reconciled to the month's last day: statement lines up to that day are unmatched, or no finalised reconciliation reaches it |
+| Draft invoices | Receivables | A draft invoice or credit note is dated in the month (a draft with no date takes the day it is issued, so it is not counted) |
+| Draft bills, Bills not posted | Payables | A bill dated in the month is a draft, or approved or on hold and not posted |
+| Payments waiting for approval | Payables | A payment request dated in the month is not approved |
+| Journals waiting for approval | Ledger | A manual journal dated in the month is submitted and not approved |
+| Late entries to review | Ledger | An entry dated in the month was entered late and has no review |
+| Depreciation | Fixed assets | The register schedules depreciation up to the last day that is not posted (what a run for the month would charge) |
+| Payroll | Payroll | A payroll run paid in the month is not posted |
+| SST | SST | A return for a taxable period that has ended is open, or none is prepared for the period that ends in the month |
+| E-invoices | E-invoicing | A valid e-invoice is not posted, a cancelled one still stands in the books, or documents wait for the month's consolidated e-invoice |
+| Trial balance | Ledger | Never: it links the trial balance on the last day to read before closing |
+
+Each check answers `open`, `clear`, `not_used` (no bank account, no asset, no SST registration, payroll not connected, no e-invoice), `no_access` (the reader lacks that area's view capability) or `unavailable`, with a `count` where the owner counts, a short `badge`, the sentence `found`, and the `path` and `action` of the page that clears it. `open_checks` is absent unless every check could be read. A check reads at most 2,000 rows and then says "At least".
+
+The checks warn; they never block. What may close stays the ledger's rule, and `close` repeats it so a page and an agent can say why not: `allowed`, or `blocked` with a sentence and where to go first ("Close January 2026 first.", "December 2026 is the last month of the fiscal year, so it closes with the year."), plus the `operation` and `input` that close it. `later` lists the open months that may close together with this one, and `through_period_id` reads such a run as one list: the dated checks cover every month of it and the as-of checks read its last day. "Close several months" on the page shows that list and closes the run in one write (`finance.ledger.period.close` with `with_earlier`), so the months close together or none does.
+
+The page closes through the ledger's contract only: "Close October" reviews and then confirms, and the dialog for several months submits. It needs `finance.ledger.periods.manage`; a reader without it sees the list and no close button.
+
+Prove it with `cargo run -p bilibi-finance-walkthrough-fixture --bin finance-ui -- month-close-proof` (`fixtures/walkthrough/src/month_close.rs`).
 
 ## Bookkeeping controls and approval exceptions pages
 

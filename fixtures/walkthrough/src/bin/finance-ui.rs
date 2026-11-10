@@ -1,6 +1,8 @@
 //! NU1: one disposable browser fixture for the Finance click-through sweep.
 //! Run with DATABASE_URL, APP_ORIGIN, BIND_ADDR and BILIBI_SETTINGS_KEY.
 //! Identity fixture SQL only; every Finance record is created by its facade.
+//! Pass `month-close-proof` to read the month-end checklist and drive its
+//! page first (it closes January to April 2026).
 use bilibi_authz::{RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{pool, Error};
 use bilibi_finance_attachments::{Attachments, NewFile};
@@ -649,6 +651,9 @@ async fn main() -> Outcome<()> {
         &db, services, &manager, &operator, COMPANY,
     )
     .await?;
+    if std::env::args().any(|arg| arg == "month-close-proof") {
+        bilibi_finance_walkthrough_fixture::month_close::proof(services, &manager, COMPANY).await?;
+    }
     println!(
         "Finance browser fixture: {origin}; manager@other.example.test, reviewer@other.example.test, viewer@other.example.test; walkthrough password"
     );

@@ -29,6 +29,7 @@ pub mod attachments;
 pub mod charts;
 pub mod controls;
 pub mod matching;
+pub mod month_close;
 pub mod payables;
 pub mod payments;
 pub mod payroll;

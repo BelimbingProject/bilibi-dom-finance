@@ -3259,33 +3259,46 @@ impl Ledger {
         period_id: i64,
         reason: Option<&str>,
     ) -> Result<Period> {
+        let mut closed =
+            Self::close_periods_on(tx, scope, company_id, period_id, false, reason).await?;
+        closed.pop().ok_or(LedgerError::PeriodNotFound)
+    }
+
+    /// Closes `period_id` and, with `with_earlier`, every open period before
+    /// it, in date order and in the caller's one transaction: several months
+    /// close together or none does. The rules are [`Ledger::close_period`]'s
+    /// (`periods::closing`).
+    async fn close_periods_on(
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company_id: i64,
+        period_id: i64,
+        with_earlier: bool,
+        reason: Option<&str>,
+    ) -> Result<Vec<Period>> {
         join(tx, scope, company_id, MANAGE_PERIODS).await?;
         let state = periods::state(tx.sql(), scope.tenant(), company_id).await?;
-        let period = state.period(period_id).ok_or(LedgerError::PeriodNotFound)?;
-        let (previous, _) = state.neighbours(period_id);
-        if period.status != PeriodStatus::Open {
-            return Err(LedgerError::PeriodNotOpen);
-        }
-        if previous.is_some_and(|previous| previous.status == PeriodStatus::Open) {
-            return Err(LedgerError::EarlierPeriodOpen);
-        }
-        if state.year(period.fiscal_year_id).is_some_and(|year| {
-            year.end_date == period.end_date && year.status != YearStatus::Closed
-        }) {
-            return Err(LedgerError::ClosesWithFiscalYear);
-        }
+        let closes: Vec<Period> = periods::closing(&state, period_id, with_earlier)?
+            .into_iter()
+            .cloned()
+            .collect();
         let reason = periods::reason(reason, None).map_err(LedgerError::Invalid)?;
-        let period = period.clone();
-        Self::change_period(
-            scope,
-            company_id,
-            tx,
-            period,
-            ClosingAction::Close,
-            reason,
-            None,
-        )
-        .await
+        let mut closed = Vec::with_capacity(closes.len());
+        for period in closes {
+            closed.push(
+                Self::change_period(
+                    scope,
+                    company_id,
+                    tx,
+                    period,
+                    ClosingAction::Close,
+                    reason.clone(),
+                    None,
+                )
+                .await?,
+            );
+        }
+        Ok(closed)
     }
 
     /// Reopens a closed period with a `reason` (`finance.ledger.periods.reopen`),

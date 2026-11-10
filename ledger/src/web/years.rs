@@ -105,6 +105,15 @@ struct Targets {
     can_reopen: bool,
     can_lock: bool,
     can_post: bool,
+    /// The company is the session's current one, so its months link to their
+    /// month-end checklist, whose links act on the current company.
+    checklist: bool,
+}
+
+/// A month's checklist of what is left before it closes (the Reports
+/// module's page; a link only, never a read of a sibling).
+fn checklist_path(period: i64) -> String {
+    format!("/finance/close-month?period={period}")
 }
 
 /// What the person chose, and the ledger's review of it once it has one.
@@ -489,6 +498,7 @@ impl Years {
             can_reopen: allowed.reopen,
             can_lock: allowed.lock,
             can_post: allowed.post,
+            checklist: Pages::company(scope) == Some(company.id),
         };
         let mut shown = 0;
         for year in years.iter().rev() {
@@ -521,6 +531,7 @@ impl Years {
             can_reopen: reopen,
             can_lock: lock,
             can_post: post,
+            checklist,
         } = targets;
         let closed = year.status == "closed";
         let all_locked = year.periods.iter().all(|p| p.status == "locked");
@@ -578,8 +589,20 @@ impl Years {
                 }
                 _ => {}
             }
-            let mut row = FlexRow::new(period.id.to_string())
-                .cell("month", Cell::text(&label))
+            let mut row = FlexRow::new(period.id.to_string());
+            // The month's name opens its checklist of what is left to do.
+            row = if checklist {
+                row.slot(
+                    "month",
+                    render(super::RecordLink {
+                        href: &checklist_path(period.id),
+                        label: &label,
+                    })?,
+                )
+            } else {
+                row.cell("month", Cell::text(&label))
+            };
+            let mut row = row
                 .slot("status", period_badge(&period.status)?);
             row.actions = actions;
             row.dom_id = Some(format!("ledger-period-{}", period.id));
@@ -611,15 +634,30 @@ impl Years {
                     .start_date
                     .parse::<Date>()
                     .map_or("month", crate::dates::month_name);
-                year_actions.push(&render(Button {
-                    id: &format!("ledger-year-close-month-{}", year.id),
-                    button_type: "button",
-                    event: "choose",
-                    name: "action",
-                    value: &format!("close_period:{}:{}", company.id, period.id),
-                    variant: ButtonVariant::Primary,
-                    body: Html::text(&format!("Close {month}")),
-                    ..Button::default()
+                // The main button leads to the month's checklist, which
+                // closes it; for a company that is not the current one it
+                // asks to close here, as the row's icon does.
+                let href = checklist_path(period.id);
+                let value = format!("close_period:{}:{}", company.id, period.id);
+                year_actions.push(&render(if checklist {
+                    Button {
+                        id: &format!("ledger-year-close-month-{}", year.id),
+                        href: &href,
+                        variant: ButtonVariant::Primary,
+                        body: Html::text(&format!("Close {month}")),
+                        ..Button::default()
+                    }
+                } else {
+                    Button {
+                        id: &format!("ledger-year-close-month-{}", year.id),
+                        button_type: "button",
+                        event: "choose",
+                        name: "action",
+                        value: &value,
+                        variant: ButtonVariant::Primary,
+                        body: Html::text(&format!("Close {month}")),
+                        ..Button::default()
+                    }
                 })?);
             }
             Some(_) if post => {

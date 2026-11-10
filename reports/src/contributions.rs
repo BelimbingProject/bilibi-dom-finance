@@ -175,6 +175,19 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
     service: crate::setup_page::PAGES, contracts: &[], pending: bilibi_module_registry::contributions::Pending::None,
 }) }
 
+// The month-end checklist: one page per month, reached from Fiscal years
+// (the list of months), so it has no menu item of its own.
+inventory::submit! { Contribution::new(ROUTES, "finance/reports.month-close", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
+    method: Method::Get, path: crate::month_close::PATH, service: crate::month_close_page::PAGES,
+    operation: "month-close", access: Access::Capability(crate::VIEW), framed: true,
+}) }
+// Closing is the ledger's own contract; the checklist reads and never blocks.
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, crate::month_close_page::PAGES, provenance!(), &bilibi_module_registry::contributions::PageWrites {
+    service: crate::month_close_page::PAGES,
+    contracts: &[("close", "finance.ledger.period.close"), ("do_close", "finance.ledger.period.close"), ("do_close_several", "finance.ledger.period.close")],
+    pending: bilibi_module_registry::contributions::Pending::None,
+}) }
+
 // One list and record home for every issued conversion report and its sign-off.
 inventory::submit! { Contribution::new(ROUTES,"finance/reports.conversions",provenance!(),&Route {company_scope:bilibi_module_registry::contributions::CompanyScope::Company,method:Method::Get,path:"/finance/reports/conversions",service:crate::conversion_page::SERVICE,operation:"conversions",access:Access::Capability(crate::VIEW),framed:true}) }
 inventory::submit! { Contribution::new(ROUTES,"finance/reports.conversion",provenance!(),&Route {company_scope:bilibi_module_registry::contributions::CompanyScope::Company,method:Method::Get,path:"/finance/reports/conversions/{report_id}",service:crate::conversion_page::SERVICE,operation:"conversion",access:Access::Capability(crate::VIEW),framed:true}) }

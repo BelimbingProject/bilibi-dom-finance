@@ -143,6 +143,54 @@ impl ReadHandler for SetupRead {
         })
     }
 }
+/// What is left before a month of one company closes.
+struct MonthCloseRead;
+impl ReadHandler for MonthCloseRead {
+    fn owner(&self) -> &'static str {
+        MODULE
+    }
+    fn call<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let company = input["company_id"]
+                .as_i64()
+                .and_then(|id| OrganisationId::new(id).ok())
+                .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
+            bilibi_company::authorize_work_target(client, scope, company.get(), VIEW).await?;
+            let query = crate::MonthQuery {
+                period_id: input["period_id"].as_i64(),
+                month: input["month"].as_str().map(str::to_owned),
+                through_period_id: input["through_period_id"].as_i64(),
+            };
+            // A read holds no company lock, so the facades' own connections are safe here.
+            let checklist = OWNER
+                .get()
+                .ok_or(Error::Internal)?
+                .month_close(scope, company.get(), &query)
+                .await
+                .map_err(|error| match error {
+                    crate::ReportsError::Unauthorized => bilibi_agent_api::Error::Forbidden,
+                    crate::ReportsError::MonthNotFound => bilibi_agent_api::invalid(
+                        "period_id",
+                        "That month is not in this company's fiscal years.",
+                    ),
+                    crate::ReportsError::InvalidOption => {
+                        bilibi_agent_api::invalid("month", "Enter the month as YYYY-MM.")
+                    }
+                    crate::ReportsError::BookNotOpen => bilibi_agent_api::invalid(
+                        "base",
+                        "The company's book is not open yet.",
+                    ),
+                    _ => Error::Internal.into(),
+                })?;
+            Ok(json!(checklist).into())
+        })
+    }
+}
 struct Layout;
 impl ReadHandler for Layout {
     fn owner(&self) -> &'static str {
@@ -203,6 +251,14 @@ impl WriteHandler for Layout {
 fn get_schema() -> Value {
     json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1}}})
 }
+fn month_close_schema() -> Value {
+    json!({"type":"object","required":["company_id"],"properties":{
+        "company_id":{"type":"integer","minimum":1},
+        "period_id":{"type":"integer","minimum":1,"description":"The month to read, as a fiscal period. Without it or month, the earliest open month."},
+        "month":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}$","description":"The month to read, as YYYY-MM."},
+        "through_period_id":{"type":"integer","minimum":1,"description":"Read a run of months, from the first through this one."}
+    }})
+}
 fn set_schema() -> Value {
     let mut s = get_schema();
     s["required"] = json!(["company_id", "sections"]);
@@ -216,6 +272,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/reports.layout-opera
     operations: &[
         Operation {key:"finance.reports.sections.get",title:"Read report sections",summary:"Read the company's headings and account choices.",keywords:&[],capability:VIEW,input:get_schema,output,handler:Handler::Read(&Layout),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.setup.get",title:"Read the Finance setup",summary:"Read which Finance areas the company has set up and which remain, each with the page that sets it up. A step has a status only where its module can tell.",keywords:&["setup","onboarding","checklist"],capability:VIEW,input:get_schema,output,handler:Handler::Read(&SetupRead),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.reports.month_close.get",title:"Read the month-end checklist",summary:"Read what is left before a month closes: unmatched bank lines, draft invoices and bills, bills not posted, payments and journals waiting for approval, late entries to review, depreciation, payroll, SST and e-invoices, each with the page that clears it, and whether the ledger's closing rules let the month close now. The checks warn; they never block. Close with finance.ledger.period.close.",keywords:&["month end","close month","closing","checklist"],capability:VIEW,input:month_close_schema,output,handler:Handler::Read(&MonthCloseRead),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.sections.set",title:"Arrange report sections",summary:"Replace the company's report headings and account choices in order.",keywords:&[],capability:MANAGE,input:set_schema,output,handler:Handler::SafeWrite(&Layout),channels:Channels::Every,step_up:&[]},
     ], guides:&[],
 }) }

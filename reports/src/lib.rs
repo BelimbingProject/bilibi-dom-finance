@@ -40,6 +40,8 @@ mod conversion_operations;
 mod conversion_page;
 mod issued;
 mod layout;
+mod month_close;
+mod month_close_page;
 mod pack_owner;
 mod setup;
 mod setup_page;
@@ -53,6 +55,7 @@ pub use bilibi_finance_ledger::{PostingEvent, PostingSubscription};
 pub use configuration::SECTIONS;
 pub use contributions::{CAPABILITIES, EXPORT, ISSUE, SIGN_OFF};
 pub use issued::{EvidencePage, IssuedReport};
+pub use month_close::{Check, CheckState, CloseStep, Month, MonthClose, MonthQuery};
 pub use setup::{SetupArea, SetupOverview, SetupState};
 
 use bilibi_company::WriteError;
@@ -154,6 +157,12 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
             }))))
+        } }, Service { id: month_close_page::PAGES, factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(month_close_page::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                parties: services.get("base/tenancy.parties")?,
+            }))))
         } }, Service { id: conversion_page::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(conversion_page::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -186,6 +195,10 @@ pub enum ReportsError {
     AccountNotFound,
     #[error("Not found")]
     ReportNotFound,
+    /// A month that is in none of the company's fiscal years, or a run of
+    /// months that ends before it starts.
+    #[error("That month is not in this company's fiscal years.")]
+    MonthNotFound,
     /// No periods or dates, more than four, a period that ends before it
     /// starts, a negative entry number, or a limit, cursor or dataset the
     /// ledger refuses.

@@ -328,7 +328,9 @@ impl Write {
             Self::OpenYear => {
                 "Open the next fiscal year and its monthly periods; dates must be contiguous with the previous year."
             }
-            Self::ClosePeriod => "Close the period to posting until a privileged reopening.",
+            Self::ClosePeriod => {
+                "Close the period to posting until a privileged reopening. With with_earlier, every open period before it closes in the same write."
+            }
             Self::ReopenPeriod => {
                 "Reopen the period to posting and record the control override with its reason."
             }
@@ -623,17 +625,10 @@ impl Write {
                 };
                 match self {
                     Self::ClosePeriod => {
-                        if p.status != PeriodStatus::Open {
-                            return Err(LedgerError::PeriodNotOpen);
-                        }
-                        if previous.is_some_and(|p| p.status == PeriodStatus::Open) {
-                            return Err(LedgerError::EarlierPeriodOpen);
-                        }
-                        if state.year(p.fiscal_year_id).is_some_and(|y| {
-                            y.end_date == p.end_date && y.status != YearStatus::Closed
-                        }) {
-                            return Err(LedgerError::ClosesWithFiscalYear);
-                        }
+                        let closes = periods::closing(&state, p.id, with_earlier(input))?;
+                        let reason = periods::reason(input["reason"].as_str(), None)
+                            .map_err(LedgerError::Invalid)?;
+                        return Ok(json!({"company_id":company,"book":book,"summary":self.consequence(),"changes":{"before":p,"closes":closes,"reason":reason,"approval_exception":false}}));
                     }
                     Self::ReopenPeriod => {
                         if p.status == PeriodStatus::Locked {
@@ -1094,6 +1089,20 @@ impl WriteHandler for Write {
                 )
                 .await
                 .map_err(invalid)?),
+                // One period answers as it always did; with earlier ones,
+                // every period closed, in date order.
+                Self::ClosePeriod if with_earlier(input) => {
+                    json!({"closed": Ledger::close_periods_on(
+                        tx,
+                        scope,
+                        company,
+                        id(input, "period_id").map_err(invalid)?,
+                        true,
+                        input["reason"].as_str()
+                    )
+                    .await
+                    .map_err(invalid)?})
+                }
                 Self::ClosePeriod => json!(Ledger::close_period_on(
                     tx,
                     scope,
@@ -1597,6 +1606,16 @@ fn period_schema() -> Value {
         json!({"period_id":identifier(),"reason":string(500)}),
     )
 }
+/// Closing may take every open period before the named one with it.
+fn close_period_schema() -> Value {
+    schema(
+        &["period_id"],
+        json!({"period_id":identifier(),"reason":string(500),"with_earlier":{"type":"boolean","description":"Also close every open period before this one, in date order, in the same write."}}),
+    )
+}
+fn with_earlier(input: &Value) -> bool {
+    input["with_earlier"].as_bool().unwrap_or(false)
+}
 fn reopen_period_schema() -> Value {
     schema(
         &["period_id", "reason"],
@@ -1709,7 +1728,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/ledger.operations",P
         Operation {key:"finance.ledger.entry.review_late",title:"Review a late recording",summary:"Record a permanent independent review with a reason. Refuses the poster, impersonation overlap and a second review.",keywords:&["late", "review"],capability:REVIEW_LATE_RECORDINGS,input:late_review_schema,output,handler:Handler::SafeWrite(&Write::ReviewLate),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.entry.reverse",title:"Reverse a manual entry",summary:"Post the mirror once, never reverse an owned entry or a year-end closing entry here.",keywords:&[],capability:POST_ENTRIES,input:reverse_schema,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.fiscal_year.open",title:"Open a fiscal year",summary:"Open the next year and calendar-month periods; the first start date is explicit.",keywords:&[],capability:MANAGE_PERIODS,input:open_year_schema,output,handler:Handler::SafeWrite(&Write::OpenYear),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.ledger.period.close",title:"Close a period",summary:"Close in date order; the last period closes only with its year.",keywords:&[],capability:MANAGE_PERIODS,input:period_schema,output,handler:Handler::SafeWrite(&Write::ClosePeriod),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.ledger.period.close",title:"Close a period",summary:"Close in date order; the last period closes only with its year. Set with_earlier to close every open period before it in the same write.",keywords:&["month end","close month"],capability:MANAGE_PERIODS,input:close_period_schema,output,handler:Handler::SafeWrite(&Write::ClosePeriod),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.period.reopen",title:"Reopen a period",summary:"Reopen in reverse date order with a reason and an approval exception.",keywords:&[],capability:REOPEN_PERIODS,input:reopen_period_schema,output,handler:Handler::SafeWrite(&Write::ReopenPeriod),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.period.lock",title:"Lock a period permanently",summary:"Lock closed periods in date order; a locked period never reopens.",keywords:&[],capability:LOCK_PERIODS,input:period_schema,output,handler:Handler::SafeWrite(&Write::LockPeriod),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.fiscal_year.close",title:"Close a fiscal year",summary:"Post computed closing balances to retained earnings and close remaining open periods. Also requires entries.post.",keywords:&[],capability:MANAGE_PERIODS,input:close_year_schema,output,handler:Handler::SafeWrite(&Write::CloseYear),channels:Channels::Every,step_up:&[]},

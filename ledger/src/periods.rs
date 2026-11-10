@@ -58,6 +58,44 @@ impl State {
     }
 }
 
+/// The periods a close of `period_id` closes, in date order: the period
+/// alone, or with `with_earlier` every open period before it as well, so
+/// several months close in one write. The closing rules are the same either
+/// way: only an open period closes, in date order, and a year's last period
+/// closes only with its year.
+pub(crate) fn closing(
+    state: &State,
+    period_id: i64,
+    with_earlier: bool,
+) -> std::result::Result<Vec<&Period>, crate::LedgerError> {
+    use crate::LedgerError;
+    let periods: Vec<&Period> = state.periods().collect();
+    let index = periods
+        .iter()
+        .position(|period| period.id == period_id)
+        .ok_or(LedgerError::PeriodNotFound)?;
+    if periods[index].status != PeriodStatus::Open {
+        return Err(LedgerError::PeriodNotOpen);
+    }
+    let mut closes: Vec<&Period> = periods[..index]
+        .iter()
+        .copied()
+        .filter(|period| period.status == PeriodStatus::Open)
+        .collect();
+    if !with_earlier && !closes.is_empty() {
+        return Err(LedgerError::EarlierPeriodOpen);
+    }
+    closes.push(periods[index]);
+    for period in &closes {
+        if state.year(period.fiscal_year_id).is_some_and(|year| {
+            year.end_date == period.end_date && year.status != YearStatus::Closed
+        }) {
+            return Err(LedgerError::ClosesWithFiscalYear);
+        }
+    }
+    Ok(closes)
+}
+
 pub(crate) async fn state(
     client: &dyn OperationClient,
     tenant: i64,
