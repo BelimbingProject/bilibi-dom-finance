@@ -36,3 +36,56 @@ pub fn display_utc(at: Timestamp) -> String {
         .render(at, Format::DateTime, Precision::Minute)
         .utc
 }
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// The month a date falls in, by name: "January".
+pub fn month_name(date: impl std::borrow::Borrow<Date>) -> &'static str {
+    MONTHS[usize::from(date.borrow().month().unsigned_abs()) - 1]
+}
+
+/// A calendar month as pages name it: "January 2026". A fiscal period is a
+/// whole calendar month, so this is its name; never "period 1".
+pub fn month(date: impl std::borrow::Borrow<Date>) -> String {
+    let date = date.borrow();
+    format!("{} {}", month_name(date), date.year())
+}
+
+/// A run of whole months as pages name it: "January 2026" for one month,
+/// "January to December 2026" within a calendar year, "April 2026 to March
+/// 2027" across two. A fiscal year is named this way.
+pub fn months(
+    start: impl std::borrow::Borrow<Date>,
+    end: impl std::borrow::Borrow<Date>,
+) -> String {
+    let (start, end) = (start.borrow(), end.borrow());
+    if start.year() != end.year() {
+        format!("{} to {}", month(start), month(end))
+    } else if start.month() == end.month() {
+        month(start)
+    } else {
+        format!("{} to {}", month_name(start), month(end))
+    }
+}
+
+/// [`months`] for a contract's `YYYY-MM-DD` dates. Dates that cannot be read
+/// are shown as they came.
+pub fn months_text(start: &str, end: &str) -> String {
+    match (start.parse::<Date>(), end.parse::<Date>()) {
+        (Ok(start), Ok(end)) => months(start, end),
+        _ => format!("{start} to {end}"),
+    }
+}

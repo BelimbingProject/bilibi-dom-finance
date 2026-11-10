@@ -174,7 +174,6 @@ pub(crate) struct Journal {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct Period {
     pub id: i64,
-    pub period_number: i16,
     pub start_date: String,
     pub end_date: String,
     pub status: String,

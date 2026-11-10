@@ -17,7 +17,10 @@
 //! Pass `opening` for the chart and open periods with no posted entries, or
 //! `opening-proof` to drive the opening balances page through it as well.
 //! After seeding it drives the Journals page's period control through
-//! its real `LiveState` and prints one proof line.
+//! its real `LiveState` and prints one proof line. Pass `years-proof` to
+//! drive the Fiscal years page instead: months by name, the year's one main
+//! button ("Close September", then "Close year" once November is closed) and
+//! the confirmations, closing the months through the page.
 use bilibi_database::{pool, Error};
 use bilibi_finance_ledger::{
     AccountChange, AccountType, Ledger, Money, NewAccount, NewAccountGroup, NewBook, NewEntry,
@@ -120,6 +123,8 @@ async fn main() -> Outcome<()> {
                 services, &manager, &reviewer, COMPANY, first,
             )
             .await?;
+        } else if std::env::args().any(|arg| arg == "years-proof") {
+            years_proof(services, &manager).await?;
         } else if !std::env::args().any(|arg| arg == "opening") {
             period_proof(services, &manager, account, pin).await?;
         }
@@ -572,6 +577,109 @@ async fn book_page_proof(
     lacks(&read, "ledger-book-controls-change");
     println!(
         "Book page and book.open: with no currency used yet and no currency manage, every current currency is offered; MYR is reviewed with no enable step, opens the book, is marked used in the same write, keeps its 2 decimal places and lands on Chart of accounts"
+    );
+    Ok(())
+}
+
+/// The Fiscal years page through its own live state, on the seeded years
+/// (last year closed, this year's first eight months closed): every month has
+/// its name, the open year's one main button is its next month, the
+/// confirmation and the message name the month, and "Close year" appears only
+/// when the last month alone is open.
+async fn years_proof(services: &Services, manager: &Scope) -> Outcome<()> {
+    let login = services
+        .get::<bilibi_core::user::UserService>("core/user.accounts")?
+        .login(
+            "manager@other.example.test",
+            bilibi_finance_walkthrough_fixture::PASSWORD,
+        )
+        .await?;
+    assert!(!login.pending);
+    let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
+    let years = ledger.list_fiscal_years(manager, COMPANY).await?;
+    let (last, this) = (&years[0], &years[1]);
+    let year = this.start_date.year();
+    let pages = services.get::<PageService<Scope, Error>>("finance/ledger.pages")?;
+    let mut state = pages
+        .0
+        .mount(PageRequest {
+            operation: "years",
+            scope: Some(manager),
+            path: &HashMap::new(),
+            query: &HashMap::new(),
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .expect("the fiscal years page mounts");
+    let page = update(&mut state, manager, LiveInput::Refresh).await?;
+    has(&page, &format!("January to December {year}"));
+    has(&page, &format!("January to December {}", year - 1));
+    has(&page, &format!("September {year}"));
+    has(&page, ">Close September<");
+    lacks(&page, ">Close year<");
+    lacks(&page, &format!("{year}-09-01"));
+    lacks(&page, &format!("1 Sep {year}"));
+    lacks(&page, &format!("ledger-year-close-month-{}", last.id));
+
+    let months = ["September", "October", "November"];
+    for (index, month) in months.iter().enumerate() {
+        let period = &this.periods[8 + index];
+        let choose =
+            json!({"type":"choose","action":format!("close_period:{COMPANY}:{}", period.id)});
+        let asked = act(&mut state, manager, &login.token, &choose).await?;
+        has(&asked, &format!("Close {month} {year}?"));
+        has(
+            &asked,
+            &format!("No one can add or change entries dated in {month} until someone reopens it."),
+        );
+        lacks(&asked, "Private other-tenant company)");
+        let done = act(
+            &mut state,
+            manager,
+            &login.token,
+            &json!({"type":"do_confirm"}),
+        )
+        .await?;
+        has(&done, &format!("{month} {year} is closed."));
+        match months.get(index + 1) {
+            Some(next) => {
+                has(&done, &format!(">Close {next}<"));
+                lacks(&done, ">Close year<");
+            }
+            None => {
+                has(&done, ">Close year<");
+                lacks(&done, ">Close December<");
+            }
+        }
+    }
+    // A name the button did not carry: a month that is not there is refused
+    // in plain words and nothing opens.
+    let gone = json!({"type":"choose","action":format!("close_period:{COMPANY}:0")});
+    let refused = act(&mut state, manager, &login.token, &gone).await?;
+    has(
+        &refused,
+        "Nothing was changed. Reload the page and try again.",
+    );
+    lacks(&refused, "ledger-choice-confirm");
+
+    let reopen = json!({"type":"choose","action":format!("reopen_period:{COMPANY}:{}", this.periods[10].id)});
+    let asked = act(&mut state, manager, &login.token, &reopen).await?;
+    has(&asked, &format!("Reopen November {year}"));
+    let reason = json!({"type":"validate","reopen[reason]":"An October bill arrived late."});
+    act(&mut state, manager, &login.token, &reason).await?;
+    let reopened = act(
+        &mut state,
+        manager,
+        &login.token,
+        &json!({"type":"do_reopen"}),
+    )
+    .await?;
+    has(&reopened, &format!("November {year} is open again."));
+    has(&reopened, ">Close November<");
+    lacks(&reopened, ">Close year<");
+    println!(
+        "Fiscal years proof: months and years by name; the main button closes September, October and November in turn; Close year only once November is closed; a missing month is refused in plain words; reopening November brings Close November back"
     );
     Ok(())
 }

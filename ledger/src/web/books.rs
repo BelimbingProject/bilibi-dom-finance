@@ -74,7 +74,7 @@ enum Book {
 
 /// The state of a company's fiscal calendar, as the books page words it.
 struct Calendar {
-    latest: Option<(String, String, String)>,
+    latest: Option<(String, String)>,
     earliest_open: Option<(String, String)>,
     past_due: bool,
 }
@@ -83,8 +83,7 @@ impl Calendar {
     fn of(years: &[view::Year], today: Date) -> Self {
         let latest = years.last().map(|y| {
             (
-                crate::dates::display_text(&y.start_date),
-                crate::dates::display_text(&y.end_date),
+                crate::dates::months_text(&y.start_date, &y.end_date),
                 if y.periods.iter().all(|p| p.status == "locked") {
                     "locked".into()
                 } else {
@@ -222,30 +221,27 @@ impl Books {
                         year_state = if calendar
                             .latest
                             .as_ref()
-                            .is_some_and(|(_, _, state)| state == "locked")
+                            .is_some_and(|(_, state)| state == "locked")
                         {
                             "locked"
                         } else if calendar
                             .latest
                             .as_ref()
-                            .is_some_and(|(_, _, state)| state == "closed")
+                            .is_some_and(|(_, state)| state == "closed")
                         {
                             "closed"
                         } else {
                             "open"
                         };
                         row = match calendar.latest {
-                            Some((start, end, state)) => row
-                                .cell("year", Cell::text(format!("{start} to {end} ({})", state))),
+                            Some((months, state)) => {
+                                row.cell("year", Cell::text(format!("{months} ({state})")))
+                            }
                             None => row.cell("year", dash()),
                         };
                         row = match calendar.earliest_open {
                             Some((start, end)) => {
-                                let mut cell = Html::text(&format!(
-                                    "{} to {}",
-                                    crate::dates::display_text(&start),
-                                    crate::dates::display_text(&end)
-                                ));
+                                let mut cell = Html::text(&crate::dates::months_text(&start, &end));
                                 if calendar.past_due {
                                     cell.push(&Html::text(" "));
                                     cell.push(&render(Badge::status(
@@ -417,7 +413,7 @@ impl Books {
                             BuiltinColumn::new("book", "Book"),
                             BuiltinColumn::new("currency", "Currency"),
                             BuiltinColumn::new("year", "Latest fiscal year"),
-                            BuiltinColumn::new("open", "Earliest open period"),
+                            BuiltinColumn::new("open", "Earliest open month"),
                         ],
                     )
                     .map_err(|_| Error::Internal)?,
