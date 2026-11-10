@@ -638,7 +638,7 @@ impl Payments {
                 Field::in_form("receipt", &format!("alloc_{}", d.id))
                     .id(format!("receivables-receipt-alloc-{}", d.id))
                     .label(format!(
-                        "{} · due {} · owes {}",
+                        "{} · due {} · {} unpaid",
                         reference(d),
                         bilibi_finance_ledger::dates::display_text(
                             d.due_date.as_deref().unwrap_or("—")

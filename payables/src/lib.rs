@@ -6,6 +6,7 @@
 //! events (`orders`). SQL and validation remain private.
 mod agent_operations;
 mod contributions;
+mod document_page;
 mod documents;
 mod opening;
 mod opening_csv;
@@ -402,10 +403,15 @@ impl Default for DocumentQuery {
 pub struct DocumentPageQuery {
     pub source: Option<String>,
     pub document_type: Option<String>,
+    /// A stored status, or where a posted bill's money is: `unpaid` (still
+    /// owed, overdue included), `overdue` or `paid`.
     pub status: Option<String>,
     pub search: String,
     pub page: i64,
     pub page_size: i64,
+    /// The day overdue is counted against: today where the company is.
+    /// Absent means today in UTC.
+    pub as_of: Option<Date>,
 }
 impl Default for DocumentPageQuery {
     fn default() -> Self {
@@ -416,6 +422,7 @@ impl Default for DocumentPageQuery {
             search: String::new(),
             page: 1,
             page_size: 25,
+            as_of: None,
         }
     }
 }
@@ -425,6 +432,8 @@ pub struct DocumentPage {
     pub total: i64,
     pub page: i64,
     pub page_size: i64,
+    /// The day `days_overdue` was counted against.
+    pub as_of: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -436,11 +445,21 @@ pub struct DocumentPageRow {
     pub party_name: String,
     pub party_document_number: Option<String>,
     pub document_date: String,
+    pub due_date: String,
     pub total: Decimal,
+    /// What a posted bill or supplier credit still owes; absent otherwise.
+    pub outstanding: Option<Decimal>,
     pub currency_code: String,
     pub status: String,
     pub match_status: Option<String>,
     pub opening: bool,
+    /// An opening bill a later opening register replaced: kept as source
+    /// evidence, it owes nothing and was never paid.
+    pub replaced: bool,
+    /// Where a posted bill's money is; absent on anything else.
+    pub payment_status: Option<bilibi_finance_ledger::PaymentStatus>,
+    /// Days past the due date while money is still owed.
+    pub days_overdue: Option<i64>,
 }
 
 pub struct Payables {

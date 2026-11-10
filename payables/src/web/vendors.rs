@@ -10,7 +10,9 @@ mod list;
 use super::{company, render, Pages, PAGES};
 use crate::{Vendor, MANAGE_SETTINGS};
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{MultiPartyChooser, PartyErrors, PartyPickerContext};
+use bilibi_finance_ledger::{
+    MinorUnits, Money, MultiPartyChooser, PartyErrors, PartyPickerContext,
+};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -35,6 +37,10 @@ pub(super) struct Vendors {
     /// Records an "Add to…" link carried (`?drop=`), opened once on first use.
     dropped: Option<String>,
     all: Vec<Vendor>,
+    /// What is owed to each supplier today and how much of it is overdue,
+    /// from the aging report; `None` when the person may not read it.
+    owing: Option<HashMap<i64, (Money, Money)>>,
+    units: Option<MinorUnits>,
     list: ListState,
     columns: ListColumns,
     can_manage: bool,
@@ -49,12 +55,16 @@ impl Vendors {
             pages,
             dropped: query.get(bilibi_records::DROP_PARAM).cloned(),
             all: vec![],
+            owing: None,
+            units: None,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Invalid)?,
             columns: ListColumns::mount(
                 "payables-vendors-table",
                 [
                     ("code", "Code"),
                     ("company", "Supplier"),
+                    ("owed", "Owed"),
+                    ("overdue", "Overdue"),
                     ("terms", "Terms (days)"),
                     ("payable", "Payable account"),
                     ("expense", "Default expense"),
@@ -63,7 +73,14 @@ impl Vendors {
                     ("relationship", "Company record"),
                 ]
                 .into_iter()
-                .map(|(k, l)| BuiltinColumn::new(k, l))
+                .map(|(k, l)| {
+                    let column = BuiltinColumn::new(k, l);
+                    if matches!(k, "owed" | "overdue") {
+                        column.right()
+                    } else {
+                        column
+                    }
+                })
                 .collect(),
             )
             .map_err(|_| Error::Internal)?,
@@ -105,7 +122,40 @@ impl Vendors {
             input["after_id"] = result["next_after_id"].clone();
         }
         self.columns.load(&self.all, |v| v.id.to_string());
+        // The aging report's first bucket is not yet due; the rest are overdue.
+        let today = self.pages.today(s).await?.to_string();
+        self.owing = self
+            .read(
+                s,
+                "finance.payables.aging.get",
+                json!({"company_id":company,"as_of":today}),
+            )
+            .await
+            .ok()
+            .and_then(|aged| serde_json::from_value::<crate::AgedPayables>(aged).ok())
+            .map(|aged| {
+                aged.parties
+                    .iter()
+                    .filter_map(|p| {
+                        let owed: Money = p.buckets.iter().copied().sum();
+                        let overdue: Money = p.buckets.iter().skip(1).copied().sum();
+                        Some((p.vendor_id?, (owed, overdue)))
+                    })
+                    .collect()
+            });
+        self.units = self.pages.units(s).await;
         Ok(())
+    }
+    /// An Owed or Overdue cell: the amount, or "—" when nothing is owed or
+    /// the person may not read aging.
+    fn owing_cell(&self, vendor: i64, overdue: bool) -> Cell {
+        let amount = self
+            .owing
+            .as_ref()
+            .and_then(|owing| owing.get(&vendor))
+            .map(|(owed, late)| if overdue { *late } else { *owed })
+            .filter(|amount| !amount.is_zero());
+        Cell::text(amount.map_or_else(|| "—".into(), |amount| amount.display(self.units)))
     }
     async fn read(&self, s: &Scope, key: &str, input: Value) -> Result<Value> {
         self.pages

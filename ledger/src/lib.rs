@@ -4197,11 +4197,15 @@ pub use party_links::{PartyFacts, PartyLinks, PartyTarget};
 mod party_picker;
 mod people;
 pub use people::{People, DIRECTORY as PEOPLE};
+mod owed;
 mod record_page;
+pub use owed::{DocumentTotals, Owed, OwedFigure, OwedSummary, PaymentStatus, Tally};
 pub use party_picker::{
     party_billing_lines, record_relationship as record_party_relationship,
     relation as party_relation, relationship_flash as party_relationship_flash, MultiPartyChooser,
     PartyChooser, PartyErrors, PartyPickerContext, PartySubmission, Relation as PartyRelation,
     Reviewed as PartyReview,
 };
-pub use record_page::{AccountName, DocumentLayout, EntryLink, RecordAction, RecordActions};
+pub use record_page::{
+    AccountName, DocumentLayout, EntryLink, RecordAction, RecordActions, DO as RECORD_DO,
+};

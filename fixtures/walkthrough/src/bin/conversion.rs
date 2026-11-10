@@ -457,7 +457,80 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
         current_page["result"]["documents"][0]["id"],
         current_draft.id
     );
+    // Where the money is: every unpaid invoice is overdue against a far
+    // future day and none against a past one, and the three figures above
+    // the list count the same invoices the filters return.
+    let mut pages = Vec::new();
+    for (status, as_of) in [
+        ("unpaid", "2999-01-01"),
+        ("overdue", "2999-01-01"),
+        ("overdue", "1900-01-01"),
+        ("paid", "2999-01-01"),
+    ] {
+        pages.push(
+            registry
+                .call(
+                    &**client,
+                    &admin,
+                    "finance.receivables.document.page",
+                    &json!({"company_id":company,"status":status,"as_of":as_of,"page":1,"page_size":25}),
+                )
+                .await?,
+        );
+    }
+    let [unpaid, overdue, not_due, paid] =
+        <[serde_json::Value; 4]>::try_from(pages).map_err(|_| "money status pages")?;
+    let unpaid_total = unpaid["result"]["total"].as_i64().ok_or("unpaid total")?;
+    assert!(unpaid_total > 0);
+    assert_eq!(overdue["result"]["total"], unpaid_total);
+    assert_eq!(not_due["result"]["total"], 0);
+    assert!(overdue["result"]["documents"]
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty()
+            && rows.iter().all(|row| {
+                matches!(
+                    row["payment_status"].as_str(),
+                    Some("awaiting_payment" | "part_paid")
+                ) && row["days_overdue"].as_i64().is_some_and(|days| days > 0)
+            })));
+    assert!(unpaid["result"]["documents"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().all(|row| row["replaced"] == false)));
+    assert!(paid["result"]["documents"]
+        .as_array()
+        .is_some_and(|rows| rows
+            .iter()
+            .all(|row| row["payment_status"] == "paid" && row["days_overdue"].is_null())));
+    let summary = registry
+        .call(
+            &**client,
+            &admin,
+            "finance.receivables.document.summary",
+            &json!({"company_id":company,"as_of":"2999-01-01"}),
+        )
+        .await?;
+    assert_eq!(summary["result"]["awaiting_payment"]["count"], unpaid_total);
+    assert_eq!(summary["result"]["overdue"]["count"], unpaid_total);
+    assert_eq!(
+        summary["result"]["overdue"]["amount"],
+        summary["result"]["awaiting_payment"]["amount"]
+    );
+    assert!(summary["result"]["oldest_days_overdue"]
+        .as_i64()
+        .is_some_and(|days| days > 0));
+    let early = registry
+        .call(
+            &**client,
+            &admin,
+            "finance.receivables.document.summary",
+            &json!({"company_id":company,"as_of":"1900-01-01"}),
+        )
+        .await?;
+    assert_eq!(early["result"]["overdue"]["count"], 0);
+    assert!(early["result"]["oldest_days_overdue"].is_null());
+    assert_eq!(early["result"]["awaiting_payment"]["count"], unpaid_total);
     println!("Opening invoice scale proof: staged reconciliation, SQL source/search filtering, sorting, count and clamping passed.");
+    println!("Invoice money status proof: unpaid, overdue and paid filters, payment_status, days_overdue and the list summary agree.");
     Ok(())
 }
 async fn prove(db: &Db, services: &Services) -> Outcome<()> {

@@ -15,6 +15,7 @@ mod format;
 mod issue;
 mod lines;
 mod opening;
+mod owing;
 mod payment;
 mod payments;
 mod settings;

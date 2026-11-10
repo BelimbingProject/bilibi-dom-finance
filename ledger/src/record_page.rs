@@ -2,7 +2,7 @@
 //! receipt, a payment), so the twins come out the same: the header leads with
 //! Back, the record's own (local) actions as icon buttons, one "Non-local
 //! actions" menu for what opens another record or module, and the one primary
-//! verb for the record's state,
+//! verb for the record's state (on a list row, one named next-step button),
 //! and the body shows the document itself on the left with a narrow summary
 //! (status, amount due, payments, journal, files) on the right. Below `lg`
 //! the two stack, summary first (on a phone it leads). The grid is `dir="rtl"`
@@ -10,7 +10,7 @@
 //! both children are `dir="ltr"` so their content reads left to right.
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_ui::{AddToItem, AddToMenu, Html, IconButton};
+use bilibi_ui::{AddToItem, AddToMenu, Button, Html, IconButton};
 
 /// The document and its summary side by side at `lg`, summary first below it.
 #[derive(Template)]
@@ -47,6 +47,8 @@ pub struct RecordAction {
     pub href: String,
     /// The icon of a local action; `None` for a non-local one.
     pub icon: Option<&'static str>,
+    /// The row's one named next step ([`RecordAction::next`]).
+    pub next: bool,
 }
 
 impl RecordAction {
@@ -56,6 +58,19 @@ impl RecordAction {
             label: label.to_owned(),
             href: href.into(),
             icon: None,
+            next: false,
+        }
+    }
+
+    /// A list row's one named next step (Record receipt on an unpaid invoice,
+    /// Request payment on a posted bill): the commonest thing to do with the
+    /// record in its state, drawn as a button with its words even when it
+    /// opens another kind of record (captain, 2026-11-11). A row has at most
+    /// one; a record page draws the same step as its primary verb instead.
+    pub fn next(label: &str, href: impl Into<String>) -> Self {
+        Self {
+            next: true,
+            ..Self::link(label, href)
         }
     }
 
@@ -66,6 +81,7 @@ impl RecordAction {
             label: label.to_owned(),
             href: href.into(),
             icon: Some(icon),
+            next: false,
         }
     }
 
@@ -93,6 +109,19 @@ impl RecordActions {
         primary: Option<Html>,
     ) -> Result<Html> {
         let mut html = back;
+        let (next, items): (Vec<_>, Vec<_>) = items.into_iter().partition(|item| item.next);
+        if let Some(item) = next.first() {
+            html.push(
+                &Html::render(&Button {
+                    id: &format!("{menu_id}-next"),
+                    href: &item.href,
+                    class: "whitespace-nowrap",
+                    body: Html::text(&item.label),
+                    ..Button::default()
+                })
+                .map_err(|_| Error::Internal)?,
+            );
+        }
         let (local, items): (Vec<_>, Vec<_>) =
             items.into_iter().partition(|item| item.icon.is_some());
         for (i, item) in local.iter().enumerate() {
@@ -130,8 +159,9 @@ impl RecordActions {
         Ok(html)
     }
 
-    /// A list row's local actions as icon buttons and its one "Non-local
-    /// actions" menu, or nothing when it has neither.
+    /// A list row's named next step ([`RecordAction::next`]), its local
+    /// actions as icon buttons and its one "Non-local actions" menu, or
+    /// nothing when it has none of them.
     pub fn row(menu_id: &str, subject: &str, items: Vec<RecordAction>) -> Result<Html> {
         Self::render(Html::EMPTY, menu_id, subject, items, None)
     }

@@ -234,6 +234,9 @@ impl Vendors {
             })?);
         }
         row = row.slot("company", company_body);
+        row = row
+            .cell("owed", self.owing_cell(v.id, false))
+            .cell("overdue", self.owing_cell(v.id, true));
         row = row.slot(
             "terms",
             render(InlineEdit {

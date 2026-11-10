@@ -1,10 +1,12 @@
 //! Bilimbi Payables.Web.BillsLive: filters, paging and built-in ListColumns.
 use super::opening::Opening;
-use super::{bill_form::BillForm, company, format, render, Pages, INDEX};
-use crate::{DocumentPageRow, APPROVE_DOCUMENTS, CREATE_DOCUMENTS, VIEW};
+use super::{bill_form::BillForm, company, format, render, Pages, INDEX, NEW_PAYMENT};
+use crate::{DocumentPageRow, APPROVE_DOCUMENTS, CREATE_DOCUMENTS, SUBMIT_PAYMENTS, VIEW};
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{MinorUnits, Money, RecordAction, RecordActions};
+use bilibi_finance_ledger::{
+    MinorUnits, Money, Owed, OwedFigure, OwedSummary, RecordAction, RecordActions, Tally,
+};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -29,7 +31,13 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             ),
             (
                 "status".into(),
-                Filter::one_of(&["", "draft", "approved", "held", "posted", "voided"], ""),
+                Filter::one_of(
+                    &[
+                        "", "draft", "approved", "held", "unpaid", "overdue", "paid", "posted",
+                        "voided",
+                    ],
+                    "",
+                ),
             ),
             (
                 "document_type".into(),
@@ -61,6 +69,10 @@ pub(super) struct Bills {
     success: bool,
     total: u64,
     units: Option<MinorUnits>,
+    /// The three figures above the list; absent when they cannot be read.
+    summary: Option<OwedSummary>,
+    currency: String,
+    can_pay: bool,
     can_create: bool,
     can_approve: bool,
     can_match: bool,
@@ -76,15 +88,16 @@ impl Bills {
             ("party", "Supplier"),
             ("party_document_number", "Supplier's invoice number"),
             ("document_date", "Date"),
+            ("due_date", "Due"),
             ("total", "Total"),
-            ("source", "Source"),
+            ("outstanding", "Owed"),
             ("status", "Status"),
             ("match_status", "Match"),
         ]
         .into_iter()
         .map(|(id, label)| {
             let c = BuiltinColumn::new(id, label);
-            if id == "total" {
+            if id == "total" || id == "outstanding" {
                 c.right()
             } else {
                 c
@@ -105,6 +118,9 @@ impl Bills {
             success: false,
             total: 0,
             units: None,
+            summary: None,
+            currency: String::new(),
+            can_pay: false,
             can_create: false,
             can_approve: false,
             can_match: false,
@@ -118,14 +134,17 @@ impl Bills {
         self.can_approve = self.pages.allowed(scope, APPROVE_DOCUMENTS).await?;
         self.can_match = self.pages.allowed(scope, crate::APPROVE_MATCH).await?;
         self.can_open = self.pages.allowed(scope, VIEW).await?;
+        self.can_pay = self.pages.allowed(scope, SUBMIT_PAYMENTS).await?;
         if std::mem::take(&mut self.open_opening) && self.can_open {
             self.opening = Some(Opening::new(self.pages.clone())?);
         }
         self.documents.clear();
         self.total = 0;
         self.unavailable = true;
+        self.summary = None;
         if let Some(company) = company(scope) {
-            let mut input = json!({"company_id":company,"search":self.list.search,"page":self.list.page,"page_size":self.list.page_size});
+            let today = self.pages.today(scope).await?.to_string();
+            let mut input = json!({"company_id":company,"search":self.list.search,"page":self.list.page,"page_size":self.list.page_size,"as_of":today});
             for key in ["document_type", "status", "source"] {
                 if let Some(value) = self.list.filters.get(key).filter(|value| !value.is_empty()) {
                     input[key] = json!(value);
@@ -144,6 +163,20 @@ impl Bills {
                 self.list.page = page["page"].as_u64().ok_or(Error::Internal)?;
                 self.units = self.pages.units(scope).await;
                 self.unavailable = false;
+                if let Some(first) = self.documents.first() {
+                    self.currency = first.currency_code.clone();
+                }
+                self.summary = self
+                    .pages
+                    .contracts
+                    .read(
+                        scope,
+                        "finance.payables.document.summary",
+                        &json!({"company_id":company,"as_of":today}),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|answer| serde_json::from_value(answer["result"].clone()).ok());
             }
         }
         self.columns.load(&self.documents, |d| d.id.to_string());
@@ -214,6 +247,9 @@ impl Bills {
                         ("Draft", "draft"),
                         ("Approved", "approved"),
                         ("Held", "held"),
+                        ("Awaiting payment", "unpaid"),
+                        ("Overdue", "overdue"),
+                        ("Paid", "paid"),
                         ("Posted", "posted"),
                         ("Voided", "voided"),
                     ]
@@ -237,6 +273,9 @@ impl Bills {
             ],
         );
         toolbar.event = "filter";
+        if !self.unavailable {
+            content.push(&self.strips()?);
+        }
         content.push(&render(toolbar)?);
         if self.unavailable {
             let mut empty = EmptyState::missing(
@@ -250,9 +289,26 @@ impl Bills {
             for d in &self.documents {
                 let mut row = FlexRow::new(d.id.to_string());
                 row.dom_id = Some(format!("payables-bill-{}", d.id));
+                // The supplier's own invoice number is what a person looks a
+                // bill up by, so it is the link; ours comes only on posting.
+                let kind = format::kind(&d.document_type);
                 row = row
+                    .cell("number", Cell::text(format::number(d.document_number)))
                     .slot(
-                        "number",
+                        "document_type",
+                        format::badge(
+                            &if d.opening && d.document_type == "bill" {
+                                format!("{kind} · Opening")
+                            } else {
+                                kind.to_owned()
+                            },
+                            BadgeKind::Neutral,
+                            false,
+                        )?,
+                    )
+                    .cell("party", Cell::text(&d.party_name))
+                    .slot(
+                        "party_document_number",
                         render(RecordLink {
                             workspace: self.framed,
                             kind: crate::MODULE,
@@ -260,23 +316,21 @@ impl Bills {
                             href: &format!("{INDEX}/{}", d.id),
                             class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
                             body: Html::text(
-                                &d.document_number
-                                    .map_or_else(|| "Not posted".to_owned(), |n| format!("#{n}")),
+                                d.party_document_number.as_deref().unwrap_or("No number"),
                             ),
                         })?,
-                    )
-                    .slot(
-                        "document_type",
-                        format::badge(format::kind(&d.document_type), BadgeKind::Neutral, false)?,
-                    )
-                    .cell("party", Cell::text(&d.party_name))
-                    .cell(
-                        "party_document_number",
-                        Cell::text(format::optional(&d.party_document_number)),
                     )
                     .cell(
                         "document_date",
                         Cell::text(bilibi_finance_ledger::dates::display_text(&d.document_date)),
+                    )
+                    .cell(
+                        "due_date",
+                        Cell::text(if d.document_type == "opening_credit" {
+                            "—".to_owned()
+                        } else {
+                            bilibi_finance_ledger::dates::display_text(&d.due_date)
+                        }),
                     )
                     .slot(
                         "total",
@@ -288,11 +342,25 @@ impl Bills {
                             ),
                         })?,
                     )
-                    .cell(
-                        "source",
-                        Cell::text(if d.opening { "Opening" } else { "Ordinary" }),
+                    .slot(
+                        "outstanding",
+                        render(Tabular {
+                            text: d.outstanding.map_or_else(
+                                || "—".into(),
+                                |owed| Money::display_decimal(owed, self.units),
+                            ),
+                        })?,
                     )
-                    .slot("status", format::status(&d.status)?)
+                    .slot(
+                        "status",
+                        match Owed::read(d.payment_status, d.days_overdue) {
+                            Some(owed) => owed.badges(),
+                            None if d.replaced && d.status == "posted" => {
+                                format::badge("Replaced", BadgeKind::Neutral, true)?
+                            }
+                            None => format::status(&d.status)?,
+                        },
+                    )
                     .slot(
                         "match_status",
                         match &d.match_status {
@@ -305,7 +373,7 @@ impl Bills {
             }
             let mut table =
                 FlexTable::new("payables-bills-table", self.columns.flex_columns(), rows);
-            table.actions = self.can_create || self.can_approve || self.can_match;
+            table.actions = self.can_create || self.can_approve || self.can_match || self.can_pay;
             table.event = "bills_grid";
             table.caption = "Bills";
             table.framed = false;
@@ -351,10 +419,66 @@ struct View {
 }
 
 impl Bills {
-    /// A row's local icons and non-local menu: what its bill page offers for its state.
+    /// Awaiting payment, overdue and what is not posted yet above the list;
+    /// the first two link to the list narrowed to them. Nothing while there
+    /// are no bills.
+    fn strips(&self) -> Result<Html> {
+        let Some(s) = self.summary.as_ref().filter(|s| {
+            s.not_posted.count > 0 || s.awaiting_payment.count > 0 || s.overdue.count > 0
+        }) else {
+            return Ok(Html::EMPTY);
+        };
+        let amount = |tally: &Tally| {
+            format!(
+                "{} {}",
+                Money::display_decimal(tally.amount, self.units),
+                self.currency
+            )
+            .trim_end()
+            .to_owned()
+        };
+        let count = |tally: &Tally| OwedSummary::counted(tally.count, "bill", "bills");
+        OwedSummary::strips(
+            "payables-bills-summary",
+            vec![
+                OwedFigure {
+                    title: "Awaiting payment",
+                    detail: count(&s.awaiting_payment),
+                    amount: amount(&s.awaiting_payment),
+                    href: format!("{INDEX}?status=unpaid"),
+                },
+                OwedFigure {
+                    title: "Overdue",
+                    detail: s.overdue_detail("bill", "bills"),
+                    amount: amount(&s.overdue),
+                    href: format!("{INDEX}?status=overdue"),
+                },
+                OwedFigure {
+                    title: "Not posted yet",
+                    detail: count(&s.not_posted),
+                    amount: amount(&s.not_posted),
+                    href: String::new(),
+                },
+            ],
+        )
+    }
+
+    /// A row's next step, local icons and menu: what its bill page offers for
+    /// its state. Request payment is the named next step on a bill still owed.
     fn row_actions(&self, d: &DocumentPageRow) -> Result<Html> {
         let here = format!("{INDEX}/{}", d.id);
         let mut items = Vec::new();
+        if d.document_type == "bill"
+            && d.status == "posted"
+            && self.can_pay
+            && d.outstanding
+                .is_some_and(|owed| owed > rust_decimal::Decimal::ZERO)
+        {
+            items.push(RecordAction::next(
+                "Request payment",
+                format!("{NEW_PAYMENT}?bill={}", d.id),
+            ));
+        }
         if d.document_type == "bill" && d.status == "posted" && self.can_create {
             items.push(RecordAction::link(
                 "Record debit note",

@@ -83,7 +83,6 @@ struct View {
     panel: String,
     card_id: String,
     heading_id: String,
-    submit_id: String,
     settings_id: String,
     count: Option<usize>,
     notice: Option<Notice>,
@@ -273,8 +272,20 @@ impl Panel {
         };
         let file_input = if can_create {
             Some(
-                Html::render(&self.uploads.input(UPLOAD, format!("{id}-file")))
-                    .map_err(|_| Error::Internal)?,
+                // One button: choosing the file attaches it, with no second
+                // press on a separate submit.
+                Html::render(
+                    &self
+                        .uploads
+                        .input(UPLOAD, format!("{id}-file"))
+                        .immediate()
+                        .label(if matches!(self.action, Action::Replace(_)) {
+                            "Choose replacement"
+                        } else {
+                            "Attach file"
+                        }),
+                )
+                .map_err(|_| Error::Internal)?,
             )
         } else {
             None
@@ -283,7 +294,6 @@ impl Panel {
             panel: id.clone(),
             card_id: format!("{id}-card"),
             heading_id: format!("{id}-heading"),
-            submit_id: format!("{id}-submit"),
             settings_id: format!("{id}-storage-settings"),
             count: Some(attachments.len()),
             notice: self.notice.as_ref().map(|n| Notice {

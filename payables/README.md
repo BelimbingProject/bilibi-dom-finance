@@ -39,7 +39,7 @@ Resolve `Payables` through `finance/payables.payables`. Every call takes the sea
 
 | Calls | Capability |
 | --- | --- |
-| `get_settings`, `list_tax_codes`, `list_settings_changes`, `list_tax_code_changes`, `get_document`, `list_documents`, `page_documents` | `finance.payables.view` |
+| `get_settings`, `list_tax_codes`, `list_settings_changes`, `list_tax_code_changes`, `get_document`, `list_documents`, `page_documents`, `summarize_documents` | `finance.payables.view` |
 | `put_settings`, `create_tax_code`, `update_tax_code` | `finance.payables.settings.manage` |
 | `create_bill`, `create_debit_note` | `finance.payables.documents.create` |
 | `replace_draft` | create and approve (`finance.payables.documents.create`, `.approve`) |
@@ -65,7 +65,7 @@ Documents move `draft → approved → posted`, or `draft/approved/held → void
 
 Posting calls `Ledger::post_entry_in` on the document's own transaction, owned as `finance/payables`, `document:<id>`. A bill debits line/tax accounts and credits the current payable account. A debit note mirrors this against its bill's original payable account even after configuration changes; only that settlement account may be inactive. The ledger validates the document's actual date, and a refusal rolls everything back without taking a document number. No ledger table is read or written here.
 
-`list_documents` is ordered by `(document_date,id)`, with a following cursor, date/type/status/party filters and limit 1–500 (default 100). `page_documents` is newest first, with case-insensitive literal party-name or party-document-number search (up to 255 characters), page and sizes 25/50/100. It clamps an out-of-range page to the last page, or 1 with no results. Reads return complete documents including lines, tax snapshots, correction IDs and a posted bill's outstanding balance.
+`list_documents` is ordered by `(document_date,id)`, with a following cursor, date/type/status/party filters and limit 1–500 (default 100). `page_documents` is newest first, with case-insensitive literal party-name or party-document-number search (up to 255 characters), page and sizes 25/50/100, and says where each posted bill's money is (see Pages). It clamps an out-of-range page to the last page, or 1 with no results. Reads return complete documents including lines, tax snapshots, correction IDs and a posted bill's outstanding balance.
 
 ## Bills pages
 
@@ -229,6 +229,8 @@ Stage a replacement export, then approve the complete reconciliation independent
 
 For browser/MCP parity, serve the disposable `conversion` fixture, provision credentials with `agent-operations conversion-credentials`, then run `fixtures/walkthrough/conversion-lifecycle-operations.py`. This mode uses the same independent reviewer for both doors; the default contractor fixture retains its Core fact masks.
 
-The Bills page reads `finance.payables.document.page`, with `source` (`ordinary` or `opening`), `status`, `document_type`, `search`, `page` and `page_size` (25, 50 or 100). Its result contains only displayed bill-row fields, not document lines, tax groups, corrections or match history. The cursor-based `finance.payables.document.list` also accepts `source`. Both retain the caller's company and view permission. The opening dialog uses the existing `finance.payables.opening.import` and `.stage` preview/commit contracts.
+The Bills page reads `finance.payables.document.page`, with `source` (`ordinary` or `opening`), `status`, `document_type`, `search`, `page`, `page_size` (25, 50 or 100) and `as_of`. Its result contains only displayed bill-row fields, not document lines, tax groups, corrections or match history.
+
+The list says where the money is. Each row carries `due_date` and, for a posted bill, `outstanding`, `payment_status` (`awaiting_payment`, `part_paid`, `paid`) and `days_overdue`, counted against `as_of` (the page sends today where the company is; without it, today in UTC). A bill due today is not overdue yet. The page shows them as the **Due**, **Owed** and **Status** columns: Awaiting payment, Part paid, Paid, or Overdue with the days late; a bill not posted yet keeps Draft, Approved or Held. `status` also takes `unpaid` (still owed, overdue included), `overdue` and `paid`. Above the list, `finance.payables.document.summary` (`Payables::summarize_documents`) gives three figures: bills awaiting payment, those overdue with the oldest days late, and bills not posted yet. The supplier's invoice number is the row's link; our own number shows once the bill is posted. A posted bill still owed has a **Request payment** button on its row. The Suppliers list shows **Owed** and **Overdue** per supplier from the aging report as of today. The cursor-based `finance.payables.document.list` also accepts `source`. Both retain the caller's company and view permission. The opening dialog uses the existing `finance.payables.opening.import` and `.stage` preview/commit contracts.
 
 Readers can open the opening dialog to inspect retained source batches. The import form still requires the module's existing opening-write permission, and approval checks run in the shared contract.

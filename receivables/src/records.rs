@@ -156,6 +156,55 @@ pub(crate) struct DocumentPageRow {
     pub document_reference: Option<String>,
     pub party_code: Option<String>,
     pub party_name: Option<String>,
+    /// An opening invoice a later opening register replaced: kept as source
+    /// evidence, it owes nothing and was never paid.
+    #[serde(default)]
+    pub replaced: bool,
+    /// Where an issued invoice's money is; absent on anything else.
+    #[serde(default)]
+    pub payment_status: Option<bilibi_finance_ledger::PaymentStatus>,
+    /// Days past the due date while money is still owed.
+    #[serde(default)]
+    pub days_overdue: Option<i64>,
+}
+
+impl DocumentPageRow {
+    /// Says where the money is, read against `as_of`.
+    pub(crate) fn settle(&mut self, as_of: jiff::civil::Date) {
+        let owed = owed(
+            &self.kind,
+            &self.status,
+            self.replaced,
+            self.total,
+            self.outstanding,
+            self.due_date.as_deref(),
+            as_of,
+        );
+        self.payment_status = owed.map(|o| o.payment_status);
+        self.days_overdue = owed.and_then(|o| o.days_overdue);
+    }
+}
+
+/// Where an invoice's money is on `as_of`: only an issued invoice that was
+/// not replaced has an answer.
+pub(crate) fn owed(
+    kind: &str,
+    status: &str,
+    replaced: bool,
+    total: Money,
+    outstanding: Option<Money>,
+    due_date: Option<&str>,
+    as_of: jiff::civil::Date,
+) -> Option<bilibi_finance_ledger::Owed> {
+    if kind != "invoice" || status != "issued" || replaced {
+        return None;
+    }
+    Some(bilibi_finance_ledger::Owed::of(
+        total.amount(),
+        outstanding?.amount(),
+        due_date.and_then(|day| day.parse().ok()),
+        as_of,
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

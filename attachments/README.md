@@ -141,8 +141,9 @@ PanelSpec {
 }
 ```
 
-It lists the record's standing attachments with a download link each, a live
-file input (one file, up to `MAX_FILE_BYTES`) to attach the next, and, while
+It lists the record's standing attachments with a download link each, one
+"Attach file" button (one file, up to `MAX_FILE_BYTES`) that attaches the file
+as soon as it is chosen, and, while
 the record is not final, Replace and Remove (with a reason) per attachment.
 Unlike Bilimbi, which takes `final?` from the page, the panel asks the
 record's `Source` whether it is final on every render, so a page cannot offer

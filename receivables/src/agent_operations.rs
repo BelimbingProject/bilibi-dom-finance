@@ -463,6 +463,7 @@ enum Read {
     Document,
     Documents,
     DocumentPage,
+    DocumentSummary,
     Payment,
     Payments,
     Aging,
@@ -528,76 +529,8 @@ impl ReadHandler for Read {
                             json!(documents::read(client,tenant,company,id(input,"document_id")?).await?)
                         }
                     },
-                    Self::DocumentPage => {
-                        let kind = input["kind"].as_str();
-                        let status = input["status"].as_str();
-                        let customer = input["customer_id"].as_i64();
-                        let source = input["source"].as_str();
-                        let search = input["search"].as_str().unwrap_or("").trim();
-                        let page = input["page"].as_i64().unwrap_or(1);
-                        let page_size = input["page_size"].as_i64().unwrap_or(25);
-                        let sort = input["sort"].as_str().unwrap_or("number");
-                        let direction = input["direction"].as_str().unwrap_or("desc");
-                        if kind.is_some_and(|value| !["invoice","credit_note","opening_credit"].contains(&value))
-                            || status.is_some_and(|value| {
-                                !matches!(value, "draft" | "issued" | "unpaid" | "discarded")
-                            })
-                            || customer.is_some_and(|value| value <= 0)
-                            || source.is_some_and(|value| {
-                                !matches!(value, "ordinary" | "opening" | "sales_order")
-                            })
-                            || !matches!(sort, "number" | "issue_date" | "due_date" | "total")
-                            || !matches!(direction, "asc" | "desc")
-                            || page < 1
-                            || ![25, 50, 100].contains(&page_size)
-                            || search.chars().count() > 255
-                        {
-                            return Err(ReceivableError::InvalidOption);
-                        }
-                        let filters_sql = " FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND ($3::text IS NULL OR d.kind=$3) AND ($4::text IS NULL OR ($4='unpaid' AND d.kind='invoice' AND d.status='issued' AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) AND finance_receivables_outstanding(d.id)>0) OR ($4<>'unpaid' AND d.status=$4)) AND ($5::bigint IS NULL OR d.customer_id=$5) AND ($6::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$6)";
-                        let filter_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] =
-                            [&tenant, &company, &kind, &status, &customer, &source];
-                        let mut matching_customers = Vec::new();
-                        if !search.is_empty() {
-                            let needle = search.to_lowercase();
-                            let candidates = format!("SELECT to_jsonb(c) FROM finance_receivables_customers c WHERE c.tenant_id=$1 AND c.company_id=$2 AND EXISTS (SELECT 1{filters_sql} AND d.status IN ('draft','discarded') AND d.party_name IS NULL AND d.customer_id=c.id AND strpos(lower(COALESCE(d.document_reference,'Draft #' || d.id::text)),lower($7))=0 AND strpos(lower(COALESCE(d.description,'')),lower($7))=0) ORDER BY c.id");
-                            let mut candidate_params = filter_params.to_vec();
-                            candidate_params.push(&search);
-                            for row in client.query(&candidates, &candidate_params).await? {
-                                let record = service.customer(client, scope, row.get(0)).await?;
-                                if record.code.to_lowercase().contains(&needle)
-                                    || record.name.to_lowercase().contains(&needle)
-                                {
-                                    matching_customers.push(record.id);
-                                }
-                            }
-                        }
-                        let where_sql = format!("{filters_sql} AND ($7='' OR strpos(lower(COALESCE(d.document_reference,'Draft #' || d.id::text)),lower($7))>0 OR strpos(lower(COALESCE(d.party_code,'')),lower($7))>0 OR strpos(lower(COALESCE(d.party_name,'')),lower($7))>0 OR strpos(lower(COALESCE(d.description,'')),lower($7))>0 OR (d.party_name IS NULL AND d.customer_id=ANY($8::bigint[])))");
-                        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 8] = [&tenant, &company, &kind, &status, &customer, &source, &search, &matching_customers];
-                        let total: i64 = client
-                            .query_opt(&format!("SELECT count(*){where_sql}"), &params)
-                            .await?
-                            .ok_or(Error::Internal)?
-                            .get(0);
-                        let page = page.min(((total + page_size - 1) / page_size).max(1));
-                        let offset = (page - 1) * page_size;
-                        let order = match (sort, direction) {
-                            ("issue_date", "asc") => "d.issue_date ASC NULLS FIRST,d.id ASC",
-                            ("issue_date", _) => "d.issue_date DESC NULLS LAST,d.id DESC",
-                            ("due_date", "asc") => "d.due_date ASC NULLS FIRST,d.id ASC",
-                            ("due_date", _) => "d.due_date DESC NULLS LAST,d.id DESC",
-                            ("total", "asc") => "d.total ASC,d.id ASC",
-                            ("total", _) => "d.total DESC,d.id DESC",
-                            ("number", "asc") => "d.id ASC",
-                            _ => "d.id DESC",
-                        };
-                        let rows_sql = format!("SELECT jsonb_build_object('sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),'opening',EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),'id',d.id,'kind',d.kind,'status',d.status,'customer_id',d.customer_id,'issue_date',d.issue_date,'due_date',d.due_date,'description',d.description,'total',d.total,'outstanding',CASE WHEN EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) THEN 0 WHEN d.kind IN ('invoice','opening_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,'document_reference',d.document_reference,'party_code',d.party_code,'party_name',d.party_name){where_sql} ORDER BY {order} LIMIT $9 OFFSET $10");
-                        let mut row_params = params.to_vec();
-                        row_params.push(&page_size);
-                        row_params.push(&offset);
-                        let documents: Vec<crate::records::DocumentPageRow> = client.query(&rows_sql, &row_params).await?.into_iter().map(|row| store::decode(row.get(0))).collect::<std::result::Result<_,_>>()?;
-                        json!({"documents":documents,"total":total,"page":page,"page_size":page_size})
-                    }
+                    Self::DocumentPage => crate::document_page::page(client, service, scope, company, input).await?,
+                    Self::DocumentSummary => crate::document_page::summary(client, tenant, company, input).await?,
                     Self::Payment => json!(posting::read_payment(client,tenant,company,id(input,"payment_id")?).await?),
                     Self::History | Self::Documents | Self::Payments => {
                         let customer = input["customer_id"].as_i64();
@@ -825,7 +758,8 @@ fn document_page() -> Value {
         json!({
             "source":choice(&["ordinary","opening","sales_order"]),
             "kind":choice(&["invoice","credit_note","opening_credit"]),
-            "status":choice(&["draft","issued","unpaid","discarded"]),
+            "status":{"type":"string","enum":["draft","issued","unpaid","overdue","paid","discarded"],"description":"unpaid: issued invoices still owed, overdue ones included. overdue: unpaid and due before as_of. paid: issued invoices with nothing owed."},
+            "as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."},
             "customer_id":identifier(),
             "search":string(255),
             "sort":choice(&["number","issue_date","due_date","total"]),
@@ -833,6 +767,12 @@ fn document_page() -> Value {
             "page":{"type":"integer","minimum":1},
             "page_size":{"type":"integer","enum":[25,50,100]}
         }),
+    )
+}
+fn document_summary() -> Value {
+    schema(
+        &[],
+        json!({"as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."}}),
     )
 }
 fn aging() -> Value {
@@ -862,7 +802,8 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.customer.list",title:"List customers",summary:"Read customers by ID cursor: Core Company or Person code and facts, payment terms and availability.",keywords:&[],capability:VIEW,input:customers,output,handler:Handler::Read(&Read::Codes(CUSTOMERS)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.customer.get",title:"Read a customer",summary:"Read one customer with its linked company (name, status, tax ID, registration number, email, phone as you may see them) and its own payment terms and availability.",keywords:&[],capability:VIEW,input:customer,output,handler:Handler::Read(&Read::Customer),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.list",title:"List receivables documents",summary:"Read drafts, issued invoices and credit notes, or discarded drafts by identifier with optional filters.",keywords:&[],capability:VIEW,input:documents,output,handler:Handler::Read(&Read::Documents),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.document.page",title:"Read invoices page",summary:"Read a bounded invoices page after applying source, type, status, customer and search filters, stable sorting, count and offset in SQL.",keywords:&["opening"],capability:VIEW,input:document_page,output,handler:Handler::Read(&Read::DocumentPage),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.page",title:"Read invoices page",summary:"Read a bounded invoices page after applying source, type, status, customer and search filters, stable sorting, count and offset in SQL. Each issued invoice says where its money is: payment_status (awaiting_payment, part_paid, paid) and days_overdue.",keywords:&["opening","overdue","unpaid","paid"],capability:VIEW,input:document_page,output,handler:Handler::Read(&Read::DocumentPage),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.summary",title:"Read what customers owe in three figures",summary:"Read the count and amount of draft invoices, of issued invoices still owed, and of those past their due date with the oldest days late.",keywords:&["overdue","unpaid","awaiting payment"],capability:VIEW,input:document_summary,output,handler:Handler::Read(&Read::DocumentSummary),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.get",title:"Read a receivables document",summary:"Read saved lines, tax and party snapshots, and either current or pinned outstanding and activity.",keywords:&[],capability:VIEW,input:dated_document,output,handler:Handler::Read(&Read::Document),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.list",title:"List receipts",summary:"Read numbered receipts with allocations and reversal, by identifier and optional customer.",keywords:&[],capability:VIEW,input:payments,output,handler:Handler::Read(&Read::Payments),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.get",title:"Read a receipt",summary:"Read the original receipt, its allocations and optional dated reversal.",keywords:&[],capability:VIEW,input:payment,output,handler:Handler::Read(&Read::Payment),channels:Channels::Every,step_up:&[]},
