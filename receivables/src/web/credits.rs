@@ -1,36 +1,57 @@
-//! Credit actions stay on the existing document page and use the agent doors.
-use super::{render, Pages, PAGES};
-use crate::POST_PAYMENTS;
+//! Customer credit actions on the existing document page: Apply and Refund on
+//! a credit, Apply on an invoice whose customer has credit left, and Reverse
+//! in the credit's history. A credit is an opening balance or the amount a
+//! receipt did not apply to an invoice; both are settled the same way. Each
+//! action previews, then commits `credit.apply`, `credit.refund` or
+//! `settlement.reverse`, the contracts the agent doors call, so the review a
+//! person confirms says what an agent's review says.
+mod view;
+pub(super) use view::applied_rows;
+
+use super::{Pages, PAGES};
+use crate::{Document, POST_PAYMENTS};
 use bilibi_agent_api::page::Call;
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_tenancy::Scope;
-use bilibi_ui::{
-    Alert, Attrs, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice, Combobox, Fact, Facts,
-    Field, FlexRow, FlexTable, Fold, Form, Html, InputKind, ListColumns, Modal, ModalWidth,
-    SectionHeading, StatusKind,
-};
+use bilibi_ui::{BuiltinColumn, Fact, Html, ListColumns, StatusKind};
+use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+/// The refusal a person sees when a write names no field of the dialog.
+const TRY_AGAIN: &str = "Nothing was changed. Reload the page and try again.";
+
 pub(super) struct Credits {
     allowed: bool,
+    /// On a credit: the invoices it can pay, the accounts a refund can be
+    /// paid from and what is left of it (`credit.context`).
     context: Value,
+    /// On an invoice: its customer's credits that still have something left
+    /// (`credit.list`).
+    offered: Vec<Value>,
     draft: Option<Draft>,
     columns: ListColumns,
-    message: Option<(StatusKind, String)>,
 }
+
 struct Draft {
     action: String,
+    /// Opened from an invoice: the person chooses the credit, not the invoice.
+    on_invoice: bool,
     values: BTreeMap<String, String>,
     fields: BTreeMap<String, Vec<String>>,
     review: Option<Review>,
+    /// The amount the dialog last filled in itself, so a choice the person
+    /// changes refills it and an amount they typed stays.
+    filled: String,
 }
+
 struct Review {
     input: Value,
     facts: Value,
     banner: Html,
 }
+
 fn contract(action: &str) -> &'static str {
     match action {
         "apply" => "finance.receivables.credit.apply",
@@ -38,22 +59,39 @@ fn contract(action: &str) -> &'static str {
         _ => "finance.receivables.settlement.reverse",
     }
 }
-fn verb(action: &str) -> &str {
+
+fn verb(action: &str) -> &'static str {
     match action {
         "apply" => "Apply credit",
         "refund" => "Refund credit",
-        _ => "Reverse settlement",
+        _ => "Reverse",
     }
 }
+
 fn text(value: &Value) -> String {
-    value.as_str().map(str::to_owned).unwrap_or_else(|| {
-        if value.is_null() {
-            "—".into()
-        } else {
-            value.to_string()
-        }
-    })
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
+
+fn number(value: &Value) -> Decimal {
+    text(value).parse().unwrap_or(Decimal::ZERO)
+}
+
+fn amount(value: Decimal, units: Option<MinorUnits>) -> String {
+    Money::display_decimal(value, units)
+}
+
+/// An amount as an input shows it: the book's places, no thousands commas.
+fn typed(value: Decimal, units: Option<MinorUnits>) -> String {
+    match units.and_then(|u| Money::new(value, u).ok().map(|m| m.shown(u))) {
+        Some(shown) => shown,
+        None => value.normalize().to_string(),
+    }
+}
+
 fn fact<'a>(title: &'a str, value: impl AsRef<str>) -> Fact<'a> {
     Fact {
         title,
@@ -61,506 +99,402 @@ fn fact<'a>(title: &'a str, value: impl AsRef<str>) -> Fact<'a> {
         ..Fact::default()
     }
 }
-fn money(value: &Value, units: MinorUnits) -> String {
-    Money::parse(&text(value), units)
-        .map(|m| m.display(units))
-        .unwrap_or_else(|_| "—".into())
-}
+
 impl Credits {
     pub(super) fn new() -> Result<Self> {
         Ok(Self {
             allowed: false,
             context: Value::Null,
+            offered: vec![],
             draft: None,
-            message: None,
             columns: ListColumns::mount(
                 "credit-settlements",
-                [
-                    ("date", "Effective date"),
-                    ("kind", "Action"),
-                    ("amount", "Amount"),
-                    ("target", "Invoice or bill"),
-                    ("reference", "Reference"),
-                    ("entry", "Ledger entry"),
-                    ("reverse", "Action"),
-                ]
-                .iter()
-                .map(|(id, label)| BuiltinColumn::new(id, label))
-                .collect(),
+                vec![
+                    BuiltinColumn::new("date", "Date"),
+                    BuiltinColumn::new("what", "What happened"),
+                    BuiltinColumn::new("amount", "Amount").right(),
+                    BuiltinColumn::new("entry", "Journal"),
+                    BuiltinColumn::new("reverse", ""),
+                ],
             )
             .map_err(|_| Error::Internal)?,
         })
     }
-    pub(super) async fn load(
-        &mut self,
-        pages: &Pages,
-        s: &Scope,
-        record: i64,
-        kind: &str,
-    ) -> Result<()> {
+
+    /// Read what the page's record can do with credit: a credit's invoices
+    /// and refund accounts, or an owed invoice's customer credits. Nothing
+    /// is read for a person who may not post payments.
+    pub(super) async fn load(&mut self, pages: &Pages, s: &Scope, d: &Document) -> Result<()> {
         self.allowed = pages.allowed(s, POST_PAYMENTS).await?;
-        if kind == "opening_credit" && self.allowed {
+        self.context = Value::Null;
+        self.offered.clear();
+        if !self.allowed || d.status != "issued" {
+            return Ok(());
+        }
+        if crate::is_credit(&d.kind) {
             let search = self
                 .draft
                 .as_ref()
                 .and_then(|d| d.values.get("search"))
                 .cloned()
                 .unwrap_or_default();
-            self.search(pages, s, record, &search).await?;
+            self.search(pages, s, d.id, &search).await;
+        } else if d.kind == "invoice" && d.outstanding.is_some_and(|m| m.is_positive()) {
+            if let Ok(answer) = pages
+                .read(
+                    s,
+                    "finance.receivables.credit.list",
+                    json!({"customer_id": d.customer_id}),
+                )
+                .await
+            {
+                self.offered = answer["credits"].as_array().cloned().unwrap_or_default();
+            }
         }
         Ok(())
     }
-    async fn search(&mut self, pages: &Pages, s: &Scope, record: i64, search: &str) -> Result<()> {
-        let company = s.current_company().ok_or(Error::Unauthorized)?.get();
-        let mut answer = pages
-            .contracts
+
+    async fn search(&mut self, pages: &Pages, s: &Scope, record: i64, search: &str) {
+        self.context = pages
             .read(
                 s,
                 "finance.receivables.credit.context",
-                &json!({"company_id":company,"credit_document_id":record,"search":search}),
+                json!({"credit_document_id": record, "search": search}),
             )
             .await
-            .map_err(|_| Error::Invalid)?;
-        self.context = answer["result"].take();
-        Ok(())
+            .unwrap_or(Value::Null);
     }
-    pub(super) async fn body(
-        &self,
+
+    /// What is left of the credit this page shows.
+    fn left(&self) -> Decimal {
+        number(&self.context["credit"]["available"])
+    }
+
+    /// The credit this page shows can still be refunded.
+    pub(super) fn can_refund(&self) -> bool {
+        self.allowed && self.left() > Decimal::ZERO
+    }
+
+    /// The credit this page shows can pay an invoice of its customer now.
+    pub(super) fn can_apply(&self) -> bool {
+        self.can_refund()
+            && self.context["targets"]
+                .as_array()
+                .is_some_and(|targets| !targets.is_empty())
+    }
+
+    /// What the customer of the invoice this page shows has in unused credit.
+    pub(super) fn offered_total(&self) -> Decimal {
+        self.offered.iter().map(|c| number(&c["available"])).sum()
+    }
+
+    /// Open a dialog an address or a button asked for.
+    pub(super) async fn ask(
+        &mut self,
         pages: &Pages,
-        record: i64,
-        kind: &str,
-        events: &[Value],
-        units: Option<MinorUnits>,
-    ) -> Result<Html> {
-        let units = units.or_else(|| {
-            self.context["book"]["minor_units"]
-                .as_i64()
-                .and_then(MinorUnits::new)
-        });
-        let mut actions = Html::EMPTY;
-        if kind == "opening_credit" && self.allowed {
-            for (action, label) in [("apply", "Apply credit"), ("refund", "Refund credit")] {
-                actions.push(&render(Button {
-                    id: &format!("credit-{action}"),
-                    button_type: "button",
-                    event: &format!("ask_credit_{action}"),
-                    body: Html::text(label),
-                    ..Button::default()
-                })?);
+        s: &Scope,
+        action: &str,
+        d: &Document,
+        settlement: &str,
+    ) -> Option<(StatusKind, String)> {
+        let on_invoice = d.kind == "invoice";
+        let refused = |message: &str| Some((StatusKind::Error, message.to_owned()));
+        if !self.allowed {
+            return refused("You do not have permission to apply or refund credit.");
+        }
+        match (action, on_invoice) {
+            ("apply", true) if self.offered.is_empty() => {
+                return refused("This customer has no credit left to apply.");
             }
-        }
-        if events.is_empty() && actions.is_empty() {
-            return Ok(Html::EMPTY);
-        }
-        let mut body=render(SectionHeading{title:"Credit settlements",description:"Applications and refunds retain their original controls and dates. A same-control application changes no ledger entry.",actions,..SectionHeading::default()})?;
-        if let Some((kind, message)) = &self.message {
-            body.push(&render(Alert {
-                id: "credit-message",
-                kind: *kind,
-                body: Html::text(message),
-                ..Alert::default()
-            })?);
-        }
-        let rows = events
-            .iter()
-            .map(|e| {
-                let reversed = events
-                    .iter()
-                    .any(|r| r["reverses_settlement_id"] == e["id"]);
-                let button = if self.allowed && e["kind"] != "reverse" && !reversed {
-                    render(Button {
-                        id: &format!("credit-reverse-{}", e["id"]),
-                        event: "ask_credit_reverse",
-                        name: "settlement_id",
-                        value: &text(&e["id"]),
-                        button_type: "button",
-                        body: Html::text("Reverse"),
-                        ..Button::default()
-                    })?
+            ("apply", false) if !self.can_apply() => {
+                return refused(if self.can_refund() {
+                    "This customer has no unpaid invoice to apply the credit to."
                 } else {
-                    Html::text(if reversed { "Reversed" } else { "" })
-                };
-                Ok(FlexRow::new(text(&e["id"]))
-                    .cell(
-                        "date",
-                        Cell::text(bilibi_finance_ledger::dates::display_text(&text(
-                            &e["effective_date"],
-                        ))),
-                    )
-                    .cell("kind", Cell::text(text(&e["kind"])))
-                    .cell(
-                        "amount",
-                        Cell::text(
-                            text(&e["amount"])
-                                .parse()
-                                .map(|amount| Money::display_decimal(amount, units))
-                                .unwrap_or_else(|_| "—".into()),
-                        ),
-                    )
-                    .cell("target", Cell::text(text(&e["target_document_id"])))
-                    .cell("reference", Cell::text(text(&e["reference"])))
-                    .cell(
-                        "entry",
-                        Cell::text(if e["entry_number"].is_null() {
-                            "No posting".into()
-                        } else {
-                            format!("#{}", e["entry_number"])
-                        }),
-                    )
-                    .slot("reverse", button))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut table = FlexTable::new("credit-settlements", self.columns.flex_columns(), rows);
-        table.event = "credit_grid";
-        table.caption = "Credit settlement history";
-        body.push(&render(table)?);
-        if let Some(d) = &self.draft {
-            let mut form_body = Html::EMPTY;
-            if let Some(review) = &d.review {
-                form_body.push(&review.banner);
-                let f = &review.facts;
-                let mut items = vec![
-                    fact("Action", verb(&d.action)),
-                    fact(
-                        "Credit source",
-                        text(&f["credit"]["source"]["document_reference"]),
-                    ),
-                    fact("Party", text(&f["credit"]["party_name"])),
-                    fact("Target", text(&f["target"]["document_reference"])),
-                    fact(
-                        "Effective date",
-                        bilibi_finance_ledger::dates::display_text(&text(&f["effective_date"])),
-                    ),
-                    fact(
-                        "Posting",
-                        if f["posts"] == true {
-                            "Owned ledger entry"
-                        } else {
-                            "No ledger entry"
-                        },
-                    ),
-                ];
-                if let Some(units) = units {
-                    items.push(fact("Amount", money(&f["amount"], units)));
-                    items.push(fact(
-                        "Available credit",
-                        money(&f["available_credit"], units),
-                    ));
-                    if !f["available_target"].is_null() {
-                        items.push(fact(
-                            "Available invoice or bill",
-                            money(&f["available_target"], units),
-                        ));
-                    }
-                }
-                for account in f["controls"].as_array().into_iter().flatten() {
-                    items.push(fact(
-                        "Account",
-                        format!("{} · {}", text(&account["name"]), text(&account["code"])),
-                    ));
-                }
-                form_body.push(&render(Facts {
-                    id: "credit-review-facts",
-                    items,
-                })?);
-                form_body.push(&render(Fold {
-                    id: "credit-review-details",
-                    title: "Review details",
-                    summary: "Source, posting and approval facts",
-                    body: Html::text(
-                        &serde_json::to_string_pretty(f).map_err(|_| Error::Internal)?,
-                    ),
-                    open: false,
-                })?);
+                    "Nothing is left on this credit."
+                });
+            }
+            ("refund", _) if !self.can_refund() => {
+                return refused("Nothing is left on this credit.");
+            }
+            _ => {}
+        }
+        let mut values = BTreeMap::from([("effective_date".to_owned(), pages.today(s).await)]);
+        if action == "reverse" {
+            values.insert("settlement_id".into(), settlement.to_owned());
+        }
+        let mut draft = Draft {
+            action: action.into(),
+            on_invoice,
+            values,
+            fields: BTreeMap::new(),
+            review: None,
+            filled: String::new(),
+        };
+        // One credit or one unpaid invoice needs no choosing.
+        if action == "apply" {
+            let (key, choices) = if on_invoice {
+                ("credit_document_id", self.offered.as_slice())
             } else {
-                for (key, label) in [
-                    ("effective_date", "Effective date"),
-                    ("amount", "Amount"),
-                    ("reference", "Reference"),
-                    ("override_reason", "Approval exception reason"),
-                ] {
-                    if d.action == "reverse" && key == "amount" {
-                        continue;
-                    }
-                    let mut field = Field::named(format!("credit[{key}]"))
-                        .label(label)
-                        .id(format!("credit-{key}"))
-                        .value(d.values.get(key).cloned().unwrap_or_default())
-                        .errors(d.fields.get(key).cloned().unwrap_or_default());
-                    if key != "override_reason" {
-                        field = field.required();
-                    }
-                    if key == "effective_date" {
-                        field = field.kind(InputKind::Date);
-                    }
-                    form_body.push(&render(field)?);
-                }
-                let key = if d.action == "apply" {
-                    "target_document_id"
-                } else {
-                    "cash_account_id"
-                };
-                if d.action != "reverse" {
-                    if d.action == "apply" {
-                        form_body.push(&render(
-                            Field::named("credit[search]")
-                                .label("Find invoice or bill")
-                                .id("credit-search")
-                                .value(d.values.get("search").cloned().unwrap_or_default()),
-                        )?);
-                    }
-                    let choices = if d.action == "apply" {
-                        self.context["targets"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(|v| {
-                                Choice::new(text(&v["document_reference"]), text(&v["id"])).detail(
-                                    bilibi_finance_ledger::dates::display_text(&text(
-                                        &v["issue_date"],
-                                    )),
-                                )
-                            })
-                            .collect()
-                    } else {
-                        self.context["cash_accounts"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(|v| {
-                                Choice::new(text(&v["name"]), text(&v["id"]))
-                                    .detail(text(&v["code"]))
-                            })
-                            .collect()
-                    };
-                    form_body.push(&render(
-                        Combobox::new(format!("credit-{key}"), format!("credit[{key}]"))
-                            .label(if d.action == "apply" {
-                                "Invoice or bill *"
-                            } else {
-                                "Cash or deposit account *"
-                            })
-                            .aria_label(if d.action == "apply" {
-                                "Invoice or bill"
-                            } else {
-                                "Cash or deposit account"
-                            })
-                            .value(d.values.get(key).cloned().unwrap_or_default())
-                            .options(choices)
-                            .errors(d.fields.get(key).cloned().unwrap_or_default())
-                            .attrs(Attrs {
-                                required: true,
-                                ..Attrs::default()
-                            }),
-                    )?);
-                }
-                let general = d
-                    .fields
-                    .iter()
-                    .filter(|(key, _)| {
-                        ![
-                            "effective_date",
-                            "amount",
-                            "reference",
-                            "override_reason",
-                            "target_document_id",
-                            "cash_account_id",
-                        ]
-                        .contains(&key.as_str())
-                    })
-                    .flat_map(|(_, v)| v.iter().cloned())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if !general.is_empty() {
-                    form_body.push(&render(Alert {
-                        id: "credit-errors",
-                        kind: StatusKind::Error,
-                        body: Html::text(&general),
-                        ..Alert::default()
-                    })?);
-                }
+                (
+                    "target_document_id",
+                    self.context["targets"]
+                        .as_array()
+                        .map_or(&[][..], Vec::as_slice),
+                )
+            };
+            if let [only] = choices {
+                draft.values.insert(key.into(), text(&only["id"]));
             }
-            let mut buttons = render(Button {
-                id: "credit-cancel",
-                button_type: "button",
-                event: "cancel_credit",
-                body: Html::text("Cancel"),
-                ..Button::default()
-            })?;
-            buttons.push(&render(Button {
-                id: "credit-submit",
-                button_type: "button",
-                event: if d.review.is_some() {
-                    "commit_credit"
-                } else {
-                    "preview_credit"
-                },
-                variant: ButtonVariant::Primary,
-                body: Html::text(if d.review.is_some() {
-                    verb(&d.action)
-                } else {
-                    "Review settlement"
-                }),
-                ..Button::default()
-            })?);
-            let form = render(Form {
-                id: "credit-form",
-                event: "change_credit",
-                change: true,
-                class: "mt-4",
-                body: form_body,
-                actions: super::format::actions(buttons)?,
-            })?;
-            body.push(&render(Modal{id:"credit-settlement-modal",title:verb(&d.action),description:"Settle this credit for the current company. Review the dated balances and posting before confirming.",cancel_event:"cancel_credit",width:ModalWidth::Wide,body:form,..Modal::default()})?);
         }
-        let _ = (pages, record);
-        render(Card {
-            id: "credit-settlement-card",
-            body,
-            ..Card::default()
-        })
+        self.fill(&mut draft, d, pages.figures(s).await.units());
+        self.draft = Some(draft);
+        None
     }
+
+    /// The most the chosen credit can pay of the chosen invoice (or refund),
+    /// offered as the amount until the person types their own.
+    fn fill(&self, draft: &mut Draft, d: &Document, units: Option<MinorUnits>) {
+        if draft.action == "reverse" {
+            return;
+        }
+        let current = draft.values.get("amount").cloned().unwrap_or_default();
+        if !current.trim().is_empty() && current != draft.filled {
+            return;
+        }
+        let chosen = |rows: &[Value], key: &str| {
+            let id = draft.values.get(key).cloned().unwrap_or_default();
+            rows.iter()
+                .find(|r| text(&r["id"]) == id)
+                .map(|r| number(&r["available"]))
+        };
+        let offer = match (draft.action.as_str(), draft.on_invoice) {
+            ("apply", true) => chosen(&self.offered, "credit_document_id").map(|credit| {
+                credit.min(d.outstanding.map_or(Decimal::ZERO, |m| m.amount()))
+            }),
+            ("apply", false) => chosen(
+                self.context["targets"]
+                    .as_array()
+                    .map_or(&[][..], Vec::as_slice),
+                "target_document_id",
+            )
+            .map(|owed| owed.min(self.left())),
+            _ => Some(self.left()),
+        };
+        draft.filled = offer
+            .filter(|amount| *amount > Decimal::ZERO)
+            .map(|amount| typed(amount, units))
+            .unwrap_or_default();
+        draft.values.insert("amount".into(), draft.filled.clone());
+    }
+
+    /// One event of the dialog or the history table. The answer is a message
+    /// for the page to flash once the write is done or refused outright.
     pub(super) async fn event(
         &mut self,
         pages: &Pages,
         s: &Scope,
         credential: &str,
         v: &Value,
-        record: i64,
-    ) -> Result<()> {
+        d: &Document,
+    ) -> Result<Option<(StatusKind, String)>> {
         let event = v["type"].as_str().ok_or(Error::Invalid)?;
-        if event == "credit_grid" {
-            self.columns.handle(&bilibi_ui::params::string_values(v));
-            return Ok(());
-        }
-        if event == "cancel_credit" {
-            self.draft = None;
-            return Ok(());
-        }
-        if !pages.allowed(s, POST_PAYMENTS).await? {
-            self.message = Some((
-                StatusKind::Error,
-                "You do not have permission to settle this credit.".into(),
-            ));
-            return Ok(());
+        match event {
+            "credit_grid" => {
+                self.columns.handle(&bilibi_ui::params::string_values(v));
+                return Ok(None);
+            }
+            "cancel_credit" => {
+                self.draft = None;
+                return Ok(None);
+            }
+            "back_credit" => {
+                if let Some(draft) = &mut self.draft {
+                    draft.review = None;
+                }
+                return Ok(None);
+            }
+            _ => {}
         }
         if let Some(action) = event.strip_prefix("ask_credit_") {
-            let mut values = BTreeMap::new();
-            values.insert("effective_date".into(), pages.today(s).await);
-            values.insert("settlement_id".into(), text(&v["settlement_id"]));
-            self.draft = Some(Draft {
-                action: action.into(),
-                values,
-                fields: BTreeMap::new(),
-                review: None,
-            });
-            return Ok(());
+            return Ok(self
+                .ask(pages, s, action, d, &text(&v["settlement_id"]))
+                .await);
         }
-        if event == "change_credit" {
-            let Some(d) = &mut self.draft else {
-                return Ok(());
-            };
-            let before = d.values.get("search").cloned().unwrap_or_default();
-            d.values.extend(bilibi_ui::params::form_values(v, "credit"));
-            d.review = None;
-            let search = d.values.get("search").cloned().unwrap_or_default();
-            if before != search {
-                d.values.remove("target_document_id");
-                self.search(pages, s, record, &search).await?;
-            }
-            return Ok(());
+        if !self.allowed {
+            self.draft = None;
+            return Ok(Some((
+                StatusKind::Error,
+                "You do not have permission to apply or refund credit.".into(),
+            )));
         }
-        if event == "preview_credit" {
-            let Some(d) = &mut self.draft else {
-                return Ok(());
-            };
-            d.values.extend(bilibi_ui::params::form_values(v, "credit"));
-            let mut input = json!({"company_id":s.current_company().ok_or(Error::Unauthorized)?.get(),"credit_document_id":record});
-            for (k, value) in &d.values {
-                if ["search", "settlement_id"].contains(&k.as_str()) {
-                    continue;
-                }
-                if !value.is_empty() {
-                    input[k] = if ["target_document_id", "cash_account_id"].contains(&k.as_str()) {
-                        json!(value.parse::<i64>().ok())
-                    } else {
-                        json!(value.trim())
-                    };
-                }
-            }
-            if d.action == "reverse" {
-                input
-                    .as_object_mut()
-                    .ok_or(Error::Invalid)?
-                    .remove("credit_document_id");
-                input["settlement_id"] = json!(d
+        let units = pages.figures(s).await.units();
+        let Some(mut draft) = self.draft.take() else {
+            return Ok(None);
+        };
+        let message = match event {
+            "change_credit" => {
+                let before = draft.values.get("search").cloned().unwrap_or_default();
+                draft
                     .values
-                    .get("settlement_id")
-                    .and_then(|v| v.parse::<i64>().ok()));
+                    .extend(bilibi_ui::params::form_values(v, "credit"));
+                draft.review = None;
+                let search = draft.values.get("search").cloned().unwrap_or_default();
+                if before != search {
+                    draft.values.remove("target_document_id");
+                    self.search(pages, s, d.id, &search).await;
+                }
+                self.fill(&mut draft, d, units);
+                None
             }
-            let call = Call {
-                scope: s,
-                credential,
-                service: PAGES,
-                event: "preview_credit",
-                contract: contract(&d.action),
-            };
-            match pages.contracts.preview(&call, input.clone()).await {
-                Ok(answer) => {
-                    let result = &answer["results"][0];
-                    if result["valid"] == true {
-                        d.review = Some(Review {
-                            input,
-                            facts: result["preview"]["result"]["changes"].clone(),
-                            banner: pages
-                                .plans
-                                .instance()
-                                .await?
-                                .banner("credit-instance", "")
-                                .map_err(|_| Error::Internal)?,
-                        });
-                    } else {
-                        d.fields=serde_json::from_value(result["error"]["fields"].clone()).unwrap_or_else(|_|BTreeMap::from([("base".into(),vec!["The settlement could not be reviewed. Check access and try again.".into()])]));
+            "preview_credit" => {
+                draft
+                    .values
+                    .extend(bilibi_ui::params::form_values(v, "credit"));
+                draft.fields.clear();
+                let input = Self::input(&draft, d);
+                let call = Call {
+                    scope: s,
+                    credential,
+                    service: PAGES,
+                    event: "preview_credit",
+                    contract: contract(&draft.action),
+                };
+                match pages.contracts.preview(&call, input.clone()).await {
+                    Ok(answer) => {
+                        let result = &answer["results"][0];
+                        if result["valid"] == true {
+                            draft.review = Some(Review {
+                                input,
+                                facts: result["preview"]["result"]["changes"].clone(),
+                                banner: pages
+                                    .plans
+                                    .instance()
+                                    .await?
+                                    .banner("credit-instance", "")
+                                    .map_err(|_| Error::Internal)?,
+                            });
+                        } else {
+                            draft.fields =
+                                serde_json::from_value(result["error"]["fields"].clone())
+                                    .unwrap_or_else(|_| Self::base(TRY_AGAIN));
+                        }
                     }
+                    Err(bilibi_agent_api::Error::InvalidInput(fields)) => draft.fields = fields,
+                    Err(_) => draft.fields = Self::base(TRY_AGAIN),
                 }
-                Err(bilibi_agent_api::Error::InvalidInput(fields)) => d.fields = fields,
-                Err(_) => {
-                    d.fields = BTreeMap::from([(
-                        "base".into(),
-                        vec![
-                            "The settlement could not be reviewed. Check access and try again."
-                                .into(),
-                        ],
-                    )]);
-                }
+                Self::word(&mut draft);
+                None
             }
-            return Ok(());
-        }
-        if event == "commit_credit" {
-            if let Some(d) = &mut self.draft {
-                if let Some(review) = d.review.take() {
+            "commit_credit" => match draft.review.take() {
+                Some(review) => {
                     let call = Call {
                         scope: s,
                         credential,
                         service: PAGES,
                         event: "commit_credit",
-                        contract: contract(&d.action),
+                        contract: contract(&draft.action),
                     };
                     match pages.contracts.commit(&call, review.input).await {
                         Ok(_) => {
-                            self.draft = None;
-                            self.message =
-                                Some((StatusKind::Success, "Credit settlement recorded.".into()));
+                            return Ok(Some((
+                                StatusKind::Success,
+                                match draft.action.as_str() {
+                                    "apply" => "Credit applied.",
+                                    "refund" => "Refund recorded.",
+                                    _ => "Reversed. The credit has the amount back.",
+                                }
+                                .into(),
+                            )));
                         }
-                        Err(bilibi_agent_api::Error::InvalidInput(fields)) => d.fields = fields,
+                        Err(bilibi_agent_api::Error::InvalidInput(fields)) => {
+                            draft.fields = fields;
+                        }
                         Err(_) => {
-                            d.fields.insert("base".into(),vec!["The reviewed details changed or the settlement was refused. Review it again.".into()]);
+                            draft.fields = Self::base(
+                                "The details changed while you were reviewing. Review them again.",
+                            );
                         }
                     }
+                    Self::word(&mut draft);
+                    None
+                }
+                None => None,
+            },
+            _ => return Err(Error::Invalid),
+        };
+        self.draft = Some(draft);
+        Ok(message)
+    }
+
+    fn base(message: &str) -> BTreeMap<String, Vec<String>> {
+        BTreeMap::from([("base".into(), vec![message.to_owned()])])
+    }
+
+    /// Refusals as the dialog words them: each begins with what it is about,
+    /// and the ledger's separation refusal says who must act instead.
+    fn word(draft: &mut Draft) {
+        let action = draft.action.clone();
+        for (key, messages) in &mut draft.fields {
+            for message in messages.iter_mut() {
+                if message.contains("separation of duties") {
+                    *message = format!(
+                        "Someone else must {} because you prepared this credit and the company requires separation of duties. For a one-person company, change Separation of duties on Approval exceptions.",
+                        match action.as_str() {
+                            "apply" => "apply this credit",
+                            "refund" => "record this refund",
+                            _ => "reverse this",
+                        }
+                    );
+                } else if matches!(
+                    key.as_str(),
+                    "amount"
+                        | "effective_date"
+                        | "target_document_id"
+                        | "credit_document_id"
+                        | "cash_account_id"
+                ) {
+                    let label = match key.as_str() {
+                        "amount" => "Amount",
+                        "effective_date" => "Date",
+                        "target_document_id" => "Invoice",
+                        "credit_document_id" => "Credit",
+                        _ => "Paid from",
+                    };
+                    *message = format!("{label} {message}.");
                 }
             }
         }
-        Ok(())
+    }
+
+    /// The contract input the dialog stands for. A choice not made yet is
+    /// left out, so the contract names the missing field itself.
+    fn input(draft: &Draft, d: &Document) -> Value {
+        let value = |key: &str| draft.values.get(key).map_or("", |v| v.trim());
+        let mut input = json!({ "effective_date": value("effective_date") });
+        let mut choose = |key: &str| {
+            if let Ok(id) = value(key).parse::<i64>() {
+                input[key] = json!(id);
+            }
+        };
+        match (draft.action.as_str(), draft.on_invoice) {
+            ("reverse", _) => choose("settlement_id"),
+            ("apply", true) => {
+                choose("credit_document_id");
+                input["target_document_id"] = json!(d.id);
+            }
+            ("apply", false) => {
+                choose("target_document_id");
+                input["credit_document_id"] = json!(d.id);
+            }
+            _ => {
+                choose("cash_account_id");
+                input["credit_document_id"] = json!(d.id);
+            }
+        }
+        if draft.action != "reverse" {
+            input["amount"] = json!(value("amount"));
+        }
+        input
     }
 }
 

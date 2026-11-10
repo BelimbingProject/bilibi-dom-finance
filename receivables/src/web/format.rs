@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub(super) fn kind_label(kind: &str) -> &'static str {
-    if kind == "opening_credit" {
+    if crate::is_credit(kind) {
         "Customer credit"
     } else if kind == "credit_note" {
         "Credit note"
@@ -58,6 +58,28 @@ pub(super) fn status_badge(status: &str) -> Result<Html> {
 /// A document's status as the lists and record pages show it: where the
 /// money is for an issued invoice (Awaiting payment, Part paid, Paid, Overdue
 /// with the days late), the workflow status for anything else.
+/// How much of an issued customer credit is still there to use: Available,
+/// Part used or Nothing left (used up, or removed with its reversed receipt).
+/// `None` for anything that is not an issued customer credit.
+pub(super) fn credit_status(
+    kind: &str,
+    status: &str,
+    total: Money,
+    outstanding: Option<Money>,
+) -> Option<Html> {
+    if !crate::is_credit(kind) || status != "issued" {
+        return None;
+    }
+    let left = outstanding?;
+    Some(if left.is_zero() {
+        bilibi_ui::status_badge(BadgeKind::Neutral, "Nothing left")
+    } else if left < total {
+        bilibi_ui::status_badge(BadgeKind::Warning, "Part used")
+    } else {
+        bilibi_ui::status_badge(BadgeKind::Success, "Available")
+    })
+}
+
 pub(super) fn money_status(
     status: &str,
     replaced: bool,

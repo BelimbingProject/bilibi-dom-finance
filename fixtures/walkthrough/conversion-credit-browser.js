@@ -12,7 +12,11 @@ const exception = "Disposable browser parity proof: the company explicitly permi
 function requireProof(condition, message) {
   if (!condition) throw new Error(message);
 }
+// Receivables names a settlement after its credit and asks for no approval
+// exception reason; Payables still asks for both.
+let plain = false;
 async function fillCredit(name, value) {
+  if (plain && (name === "reference" || name === "override_reason")) return;
   await page.fill("#credit-" + name, value);
   await page.wait(500); // Let the shared Form retain its changed draft.
 }
@@ -24,14 +28,19 @@ async function choose(selector, value) {
 }
 async function reviewAndCommit(posts) {
   await page.click("#credit-submit");
-  await page.wait("#credit-form details");
+  await page.wait(plain ? "#credit-review-facts" : "#credit-form details");
   const review = await page.eval(() => document.querySelector("#credit-form").innerText);
-  requireProof(review.includes(posts ? "Owned ledger entry" : "No ledger entry"), "Unexpected settlement posting review");
-  requireProof(review.includes("Opening credit proof counterparty"), "Review omitted the party");
-  requireProof(review.includes("Account"), "Review omitted the saved controls");
+  if (plain) {
+    requireProof(review.includes("Credit left afterwards"), "Review omitted what is left on the credit");
+    requireProof(review.includes("None needed") !== posts, "Unexpected settlement posting review");
+  } else {
+    requireProof(review.includes(posts ? "Owned ledger entry" : "No ledger entry"), "Unexpected settlement posting review");
+    requireProof(review.includes("Opening credit proof counterparty"), "Review omitted the party");
+    requireProof(review.includes("Account"), "Review omitted the saved controls");
+  }
   await page.click("#credit-submit");
   await page.wait("main:not(:has(#credit-form))");
-  requireProof(await page.eval(() => document.querySelector("main").innerText.includes("Credit settlement recorded.")), "Browser settlement commit refused");
+  requireProof(await page.eval(() => /Credit settlement recorded\.|Credit applied\.|Refund recorded\.|Reversed\./.test(document.querySelector("body").innerText)), "Browser settlement commit refused");
 }
 async function reverse(date, reference, posts) {
   await page.click('button[id^="credit-reverse-"]');
@@ -84,6 +93,7 @@ async function opening(module, source) {
   return { primary: primary.href, historical: historical.href };
 }
 for (const [module, source] of [["receivables", "ar"], ["payables", "ap"]]) {
+  plain = module === "receivables";
   const records = await opening(module, source);
   const target = module === "receivables" ? "OPEN-0001" : "ORIGINAL-INVOICE";
   await page.open(origin + records.primary);

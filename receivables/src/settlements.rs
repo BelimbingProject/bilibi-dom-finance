@@ -1,5 +1,6 @@
-//! Immutable opening-credit settlement. Every door joins this owner path and
-//! rechecks dated capacity while holding the same company lock as the ledger.
+//! Immutable customer-credit settlement, for an opening credit and for the
+//! credit a receipt keeps alike. Every door joins this owner path and rechecks
+//! dated capacity while holding the same company lock as the ledger.
 use crate::*;
 use bilibi_agent_api::OperationClient;
 use bilibi_database::Change;
@@ -15,7 +16,9 @@ pub(super) struct PreparedSettlement {
     entry: Option<NewEntry>,
     options: PostOptions,
     original: Option<Value>,
-    approval: Approval,
+    /// None where nobody's prepared work is being approved: applying the
+    /// credit a receipt kept is an allocation, as the receipt's own are.
+    approval: Option<Approval>,
     existing: Option<Value>,
 }
 fn id(input: &Value, key: &'static str) -> Result<i64> {
@@ -53,7 +56,8 @@ pub(crate) async fn lowest(
     let row = c.query_opt("SELECT min(finance_receivables_residual($1,$2,$3,balance_day,9223372036854775807,9223372036854775807)) FROM (SELECT $4::text::date AS balance_day UNION SELECT effective_date FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2 AND (credit_document_id=$3 OR target_document_id=$3) AND effective_date>$4::text::date UNION SELECT issue_date FROM finance_receivables_documents WHERE tenant_id=$1 AND company_id=$2 AND credited_document_id=$3 AND status='issued' AND issue_date>$4::text::date
  UNION SELECT p.payment_date FROM finance_receivables_payments p JOIN finance_receivables_allocations a ON a.payment_id=p.id AND a.tenant_id=$1 AND a.company_id=$2 WHERE p.tenant_id=$1 AND p.company_id=$2 AND a.document_id=$3 AND p.payment_date>$4::text::date
  UNION SELECT x.reversal_date FROM finance_receivables_payment_reversals x JOIN finance_receivables_allocations a ON a.payment_id=x.payment_id AND a.tenant_id=$1 AND a.company_id=$2 WHERE x.tenant_id=$1 AND x.company_id=$2 AND a.document_id=$3 AND x.reversal_date>$4::text::date
- UNION SELECT e.effective_date FROM finance_receivables_write_off_events e JOIN finance_receivables_write_offs w ON w.id=e.write_off_id AND w.tenant_id=$1 AND w.company_id=$2 WHERE e.tenant_id=$1 AND e.company_id=$2 AND w.document_id=$3 AND e.effective_date>$4::text::date) dates", &[&tenant,&company,&document,&since.to_string()]).await?.ok_or(Error::Internal)?;
+ UNION SELECT e.effective_date FROM finance_receivables_write_off_events e JOIN finance_receivables_write_offs w ON w.id=e.write_off_id AND w.tenant_id=$1 AND w.company_id=$2 WHERE e.tenant_id=$1 AND e.company_id=$2 AND w.document_id=$3 AND e.effective_date>$4::text::date
+ UNION SELECT x.reversal_date FROM finance_receivables_payment_reversals x JOIN finance_receivables_receipt_credits k ON k.payment_id=x.payment_id AND k.tenant_id=$1 AND k.company_id=$2 WHERE x.tenant_id=$1 AND x.company_id=$2 AND k.document_id=$3 AND x.reversal_date>$4::text::date) dates", &[&tenant,&company,&document,&since.to_string()]).await?.ok_or(Error::Internal)?;
     let amount: rust_decimal::Decimal = row.get(0);
     Ok(Money::parse(
         &amount.to_string(),
@@ -167,11 +171,13 @@ impl Receivables {
         if row.get::<_, String>(0) == "archived" {
             return Err(ReceivableError::CompanyArchived);
         }
-        let reference = input["reference"].as_str().unwrap_or("").trim();
-        if reference.is_empty() || reference.chars().count() > 100 || reference.contains('\0') {
+        // A caller's own reference makes a retry safe. Without one the
+        // settlement is named after its credit and its place in the stream.
+        let supplied = input["reference"].as_str().unwrap_or("").trim();
+        if supplied.chars().count() > 100 || supplied.contains('\0') {
             return Err(invalid(
                 "reference",
-                "must contain 1 to 100 characters without null characters",
+                "must contain at most 100 characters without null characters",
             ));
         }
         let day: Date = input["effective_date"]
@@ -183,19 +189,12 @@ impl Receivables {
             return Err(invalid("effective_date", "must be in year 0001 or later"));
         }
         let book = self.ledger.get_book_on(c, s, company).await?;
-        let placeholder = Approval {
-            source: MODULE.into(),
-            action: format!("credit_{action}"),
-            subject_type: "credit_settlement".into(),
-            subject_id: 0,
-            subject: reference.into(),
-            prepared_by: vec![],
-            override_reason: input["override_reason"].as_str().map(str::to_owned),
-        };
-        if let Some(row)=c.query_opt("SELECT to_jsonb(e) FROM finance_receivables_settlements e WHERE tenant_id=$1 AND company_id=$2 AND reference=$3",&[&s.tenant(),&company,&reference]).await? {
-            let event:Value=row.get(0);
-            if event["review"]["input"]!=*input || event["kind"]!=action {return Err(invalid("reference","already identifies different settlement instructions"));}
-            return Ok(PreparedSettlement {review:json!({"already_recorded":true,"event":event}),data:Value::Null,entry:None,options:PostOptions::default(),original:None,approval:placeholder,existing:Some(event)});
+        if !supplied.is_empty() {
+            if let Some(row)=c.query_opt("SELECT to_jsonb(e) FROM finance_receivables_settlements e WHERE tenant_id=$1 AND company_id=$2 AND reference=$3",&[&s.tenant(),&company,&supplied]).await? {
+                let event:Value=row.get(0);
+                if event["review"]["input"]!=*input || event["kind"]!=action {return Err(invalid("reference","already identifies different settlement instructions"));}
+                return Ok(PreparedSettlement {review:json!({"already_recorded":true,"event":event}),data:Value::Null,entry:None,options:PostOptions::default(),original:None,approval:None,existing:Some(event)});
+            }
         }
         let original = if action == "reverse" {
             let number = id(input, "settlement_id")?;
@@ -214,8 +213,35 @@ impl Receivables {
             .as_ref()
             .and_then(|v| v["credit_document_id"].as_i64())
             .unwrap_or(id(input, "credit_document_id").unwrap_or(0));
-        let facts:Value=c.query_opt("SELECT to_jsonb(d)||jsonb_build_object('source',i.source_facts,'item_id',i.id,'batch',jsonb_build_object('id',b.id,'source_reference',b.source_reference,'currency_code',b.currency_code,'conversion_date',b.conversion_date,'entry_id',b.entry_id,'entry_number',b.entry_number,'recorded_by_user_id',b.recorded_by_user_id,'recorded_by_impersonator_id',b.recorded_by_impersonator_id,'recorded_at',b.recorded_at)) FROM finance_receivables_documents d JOIN finance_receivables_opening_items i ON i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3 AND d.kind='opening_credit'",&[&s.tenant(),&company,&credit]).await?.ok_or_else(||invalid("credit_document_id","must identify a customer credit of the current company"))?.get(0);
+        // An opening credit carries its source item and batch; the credit a
+        // receipt kept carries that receipt. Each has exactly one of the two.
+        let facts:Value=c.query_opt("SELECT to_jsonb(d)||jsonb_build_object('source',i.source_facts,'item_id',i.id,'batch',CASE WHEN b.id IS NULL THEN NULL ELSE jsonb_build_object('id',b.id,'source_reference',b.source_reference,'currency_code',b.currency_code,'conversion_date',b.conversion_date,'entry_id',b.entry_id,'entry_number',b.entry_number,'recorded_by_user_id',b.recorded_by_user_id,'recorded_by_impersonator_id',b.recorded_by_impersonator_id,'recorded_at',b.recorded_at) END,'receipt',(SELECT jsonb_build_object('id',p.id,'payment_reference',p.payment_reference,'payment_date',p.payment_date,'recorded_by_user_id',p.recorded_by_user_id,'recorded_by_impersonator_id',p.recorded_by_impersonator_id,'reversed',EXISTS(SELECT 1 FROM finance_receivables_payment_reversals x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.payment_id=p.id)) FROM finance_receivables_receipt_credits k JOIN finance_receivables_payments p ON p.id=k.payment_id AND p.tenant_id=$1 AND p.company_id=$2 WHERE k.tenant_id=$1 AND k.company_id=$2 AND k.document_id=d.id)) FROM finance_receivables_documents d LEFT JOIN finance_receivables_opening_items i ON i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id LEFT JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3 AND d.kind IN ('opening_credit','customer_credit') AND d.status='issued'",&[&s.tenant(),&company,&credit]).await?.ok_or_else(||invalid("credit_document_id","must identify a customer credit of the current company"))?.get(0);
+        if facts["batch"].is_null() == facts["receipt"].is_null() {
+            return Err(Error::Internal.into());
+        }
+        if facts["receipt"]["reversed"] == true {
+            return Err(invalid(
+                "credit_document_id",
+                "is the credit of a reversed receipt, so there is nothing left to use",
+            ));
+        }
+        if day.to_string().as_str() < facts["issue_date"].as_str().unwrap_or("") && facts["batch"].is_null() {
+            return Err(invalid(
+                "effective_date",
+                "cannot precede the date the credit was received",
+            ));
+        }
         crate::opening::settlement_date(c, s, company, credit, day).await?;
+        let next:i64=c.query_opt("SELECT COALESCE(max(settlement_number),0)+1 FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2",&[&s.tenant(),&company]).await?.ok_or(Error::Internal)?.get(0);
+        let derived = format!("{}/{next}", facts["document_reference"].as_str().unwrap_or("credit"));
+        let reference = if supplied.is_empty() {
+            if c.query_opt("SELECT 1 FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2 AND reference=$3",&[&s.tenant(),&company,&derived]).await?.is_some() {
+                return Err(invalid("reference", "is needed: the usual one is already taken"));
+            }
+            derived.as_str()
+        } else {
+            supplied
+        };
         let amount = if let Some(event) = &original {
             Money::parse(
                 &event["amount"]
@@ -250,15 +276,19 @@ impl Receivables {
             .as_i64()
             .ok_or(Error::Internal)?;
         let mut controls = vec![credit_control];
+        // Whoever prepared the credit: the opening batch's recorder, or the
+        // person who recorded the receipt.
+        let opening = !facts["batch"].is_null();
+        let prepared = if opening { &facts["batch"] } else { &facts["receipt"] };
         let mut preparers = vec![Preparer {
-            user_id: facts["batch"]["recorded_by_user_id"]
+            user_id: prepared["recorded_by_user_id"]
                 .as_i64()
                 .ok_or(Error::Internal)?,
-            impersonator_id: facts["batch"]["recorded_by_impersonator_id"].as_i64(),
+            impersonator_id: prepared["recorded_by_impersonator_id"].as_i64(),
         }];
         let mut lines = vec![];
         if let Some(target) = target {
-            target_facts=c.query_opt("SELECT to_jsonb(d) FROM finance_receivables_documents d WHERE tenant_id=$1 AND company_id=$2 AND id=$3 AND kind='invoice' AND status='issued'",&[&s.tenant(),&company,&target]).await?.ok_or_else(||invalid("target_document_id","must identify an issued invoice or posted bill of the current company"))?.get(0);
+            target_facts=c.query_opt("SELECT to_jsonb(d) FROM finance_receivables_documents d WHERE tenant_id=$1 AND company_id=$2 AND id=$3 AND kind='invoice' AND status='issued'",&[&s.tenant(),&company,&target]).await?.ok_or_else(||invalid("target_document_id","must identify an issued invoice of the current company"))?.get(0);
             if target_facts["customer_id"] != facts["customer_id"]
                 || target_facts["currency_code"] != facts["currency_code"]
             {
@@ -289,7 +319,7 @@ impl Receivables {
             if original.is_none() && target_capacity < amount {
                 return Err(invalid(
                     "amount",
-                    "exceeds the target's available balance at this date or a later recorded date",
+                    "is more than the invoice still owes on this date or a later one",
                 ));
             }
             if control != credit_control {
@@ -331,19 +361,29 @@ impl Receivables {
         if original.is_none() && available < amount {
             return Err(invalid(
                 "amount",
-                "exceeds the credit's available balance at this date or a later recorded date",
+                "is more than the credit has left on this date or a later one",
             ));
         }
-        let approval = Approval {
+        // Money leaving the company is someone's prepared work to approve,
+        // and so is every settlement of an opening credit. Applying a
+        // receipt's own credit to an invoice is not.
+        let approval = (opening || cash.is_some()).then(|| Approval {
+            source: MODULE.into(),
+            action: format!("credit_{action}"),
+            subject_type: "credit_settlement".into(),
             subject_id: credit,
+            subject: reference.into(),
             prepared_by: preparers,
-            ..placeholder
+            override_reason: input["override_reason"].as_str().map(str::to_owned),
+        });
+        let approval_facts = match &approval {
+            Some(approval) => {
+                self.ledger
+                    .preview_approval_on(c, s, company, approval)
+                    .await?
+            }
+            None => Value::Null,
         };
-        let approval_facts = self
-            .ledger
-            .preview_approval_on(c, s, company, &approval)
-            .await?;
-        let next:i64=c.query_opt("SELECT COALESCE(max(settlement_number),0)+1 FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2",&[&s.tenant(),&company]).await?.ok_or(Error::Internal)?.get(0);
         let options = PostOptions {
             settlement_account_ids: controls.clone(),
             owner: Some(owner(next)),
@@ -353,7 +393,18 @@ impl Receivables {
         } else {
             Some(NewEntry {
                 entry_date: day,
-                description: format!("Customer credit {action}"),
+                description: match (action, target_facts["document_reference"].as_str()) {
+                    ("refund", _) => format!(
+                        "Refund of customer credit {} to {}",
+                        facts["document_reference"].as_str().unwrap_or_default(),
+                        facts["party_name"].as_str().unwrap_or_default()
+                    ),
+                    (_, Some(invoice)) => format!(
+                        "Customer credit {} applied to {invoice}",
+                        facts["document_reference"].as_str().unwrap_or_default()
+                    ),
+                    _ => format!("Customer credit {action}"),
+                },
                 reference: Some(reference.into()),
                 lines,
             })
@@ -415,9 +466,11 @@ impl Receivables {
         if let Some(event) = prepared.existing {
             return Ok(event);
         }
-        self.ledger
-            .check_approval(tx, s, company, &prepared.approval)
-            .await?;
+        if let Some(approval) = &prepared.approval {
+            self.ledger
+                .check_approval(tx, s, company, approval)
+                .await?;
+        }
         let mut data = prepared.data;
         let entry = if let Some(original) = &prepared.original {
             if let Some(entry) = original["entry_id"].as_i64() {
@@ -484,7 +537,7 @@ impl Receivables {
             .await
             .map_err(crate::refusal)?;
         let credit = id(input, "credit_document_id")?;
-        let source:Value=c.query_opt("SELECT to_jsonb(d) FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3 AND d.kind='opening_credit'",&[&s.tenant(),&company,&credit]).await?.ok_or_else(||invalid("credit_document_id","must identify a customer credit"))?.get(0);
+        let source:Value=c.query_opt("SELECT to_jsonb(d)||jsonb_build_object('available',finance_receivables_outstanding(d.id)) FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3 AND d.kind IN ('opening_credit','customer_credit') AND d.status='issued'",&[&s.tenant(),&company,&credit]).await?.ok_or_else(||invalid("credit_document_id","must identify a customer credit"))?.get(0);
         let search = input["search"].as_str().unwrap_or("");
         let after = input["after_id"].as_i64().unwrap_or(0);
         let rows=c.query("SELECT to_jsonb(d)||jsonb_build_object('available',finance_receivables_residual($1,$2,d.id,'infinity'::date,9223372036854775807,9223372036854775807)) FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.customer_id::text=$3 AND d.currency_code=$4 AND d.kind='invoice' AND d.status='issued' AND d.id>$5 AND (strpos(lower(COALESCE(d.document_reference,'')),lower($6))>0) AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) AND finance_receivables_residual($1,$2,d.id,'infinity'::date,9223372036854775807,9223372036854775807)>0 ORDER BY d.id LIMIT 101",&[&s.tenant(),&company,&source["customer_id"].as_str().map(str::to_owned).unwrap_or_else(||source["customer_id"].to_string()),&source["currency_code"].as_str().ok_or(Error::Internal)?,&after,&search]).await?;
@@ -510,7 +563,29 @@ impl Receivables {
             })
             .collect::<Vec<_>>();
         let book = self.ledger.get_book_on(c, s, company).await?;
-        Ok(json!({"targets":targets,"next_after_id":next,"cash_accounts":accounts,"book":book}))
+        Ok(json!({"credit":source,"targets":targets,"next_after_id":next,"cash_accounts":accounts,"book":book}))
+    }
+}
+
+impl Receivables {
+    /// One customer's credits that still have something left, oldest first,
+    /// and what they add up to: what a page or an agent offers to apply to
+    /// an invoice or refund.
+    pub(super) async fn customer_credits(
+        &self,
+        c: &dyn OperationClient,
+        s: &Scope,
+        company: i64,
+        input: &Value,
+    ) -> Result<Value> {
+        bilibi_company::authorize_work_target(c, s, company, VIEW)
+            .await
+            .map_err(crate::refusal)?;
+        let customer = id(input, "customer_id")?;
+        let rows=c.query("SELECT jsonb_build_object('id',d.id,'kind',d.kind,'document_reference',d.document_reference,'issue_date',d.issue_date,'currency_code',d.currency_code,'total',d.total::text,'available',o.available::text),o.available FROM finance_receivables_documents d CROSS JOIN LATERAL (SELECT finance_receivables_outstanding(d.id) AS available) o WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.customer_id=$3 AND d.kind IN ('opening_credit','customer_credit') AND d.status='issued' AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) AND o.available>0 ORDER BY d.issue_date,d.id LIMIT 200",&[&s.tenant(),&company,&customer]).await?;
+        let available: rust_decimal::Decimal = rows.iter().map(|r| r.get::<_, rust_decimal::Decimal>(1)).sum();
+        let credits: Vec<Value> = rows.iter().map(|r| r.get(0)).collect();
+        Ok(json!({"credits":credits,"available":available.to_string()}))
     }
 }
 
@@ -562,15 +637,15 @@ impl Receivables {
         )
         .await?;
         let day_text = day.to_string();
-        let amount:rust_decimal::Decimal=tx.query_opt("SELECT CASE WHEN d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.batch_id<=$5 AND x.effective_date<=$3::text::date))) THEN finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) ELSE 0 END FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$7 AND d.kind IN ('invoice','opening_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date)))",&[&s.tenant(),&company,&day_text,&entry,&batch,&settlement,&document]).await.map_err(Error::from)?.ok_or(ReceivableError::DocumentNotFound)?.get(0);
+        let amount:rust_decimal::Decimal=tx.query_opt("SELECT CASE WHEN d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.batch_id<=$5 AND x.effective_date<=$3::text::date))) THEN finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) ELSE 0 END FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$7 AND d.kind IN ('invoice','opening_credit','customer_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date)))",&[&s.tenant(),&company,&day_text,&entry,&batch,&settlement,&document]).await.map_err(Error::from)?.ok_or(ReceivableError::DocumentNotFound)?.get(0);
         let mut record = json!(crate::documents::read(&tx, s.tenant(), company, document).await?);
         let units = self.ledger.get_book_on(&tx, s, company).await?.minor_units;
         let amount =
             Money::new(amount, units).map_err(|e| invalid("document_id", e.to_string()))?;
-        let events:Vec<Value>=tx.query("SELECT to_jsonb(e)-'review' FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=$3 OR e.target_document_id=$3) AND e.effective_date<=$4::text::date AND e.settlement_number<=$5 AND (e.entry_number IS NULL OR e.entry_number<=$6) ORDER BY e.settlement_number",&[&s.tenant(),&company,&document,&day_text,&settlement,&entry]).await.map_err(Error::from)?.iter().map(|r|r.get(0)).collect();
+        let events:Vec<Value>=tx.query("SELECT to_jsonb(e)-'review'||jsonb_build_object('credit_reference',(SELECT x.document_reference FROM finance_receivables_documents x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.id=e.credit_document_id),'target_reference',(SELECT x.document_reference FROM finance_receivables_documents x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.id=e.target_document_id)) FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=$3 OR e.target_document_id=$3) AND e.effective_date<=$4::text::date AND e.settlement_number<=$5 AND (e.entry_number IS NULL OR e.entry_number<=$6) ORDER BY e.settlement_number",&[&s.tenant(),&company,&document,&day_text,&settlement,&entry]).await.map_err(Error::from)?.iter().map(|r|r.get(0)).collect();
         let mut receipts: Vec<Payment> = tx
             .query(
-                &format!("{} AND p.payment_date<=$4::text::date AND p.ledger_entry_number<=$5 AND EXISTS(SELECT 1 FROM finance_receivables_allocations a WHERE a.tenant_id=$1 AND a.company_id=$2 AND a.payment_id=p.id AND a.document_id=$3) ORDER BY p.id", crate::posting::PAYMENT_READ),
+                &format!("{} AND p.payment_date<=$4::text::date AND p.ledger_entry_number<=$5 AND EXISTS(SELECT 1 FROM finance_receivables_allocations a WHERE a.tenant_id=$1 AND a.company_id=$2 AND a.payment_id=p.id AND a.document_id=$3) ORDER BY p.id", crate::receipts::PAYMENT_READ),
                 &[&s.tenant(), &company, &document, &day_text, &entry],
             )
             .await

@@ -101,6 +101,29 @@ impl Receivables {
             AccountType::Asset,
         )?;
         v::account(&mut data, "income_account_id", &chart, AccountType::Income)?;
+        // Optional until a receipt first keeps an unapplied amount; once
+        // chosen it is replaced, never cleared, so every credit has a home.
+        let credit_before = old
+            .as_ref()
+            .and_then(|o| o["customer_credit_account_id"].as_i64());
+        if data["customer_credit_account_id"].is_null()
+            || data["customer_credit_account_id"].as_str() == Some("")
+        {
+            if credit_before.is_some() {
+                return Err(invalid(
+                    "customer_credit_account_id",
+                    "can't be blank once it has been chosen",
+                ));
+            }
+            data["customer_credit_account_id"] = Value::Null;
+        } else if data["customer_credit_account_id"].as_i64() != credit_before {
+            v::account(
+                &mut data,
+                "customer_credit_account_id",
+                &chart,
+                AccountType::Liability,
+            )?;
+        }
         let control = data["receivable_account_id"]
             .as_i64()
             .expect("validated account id");
@@ -121,8 +144,12 @@ impl Receivables {
         let accounts = chart
             .into_iter()
             .filter(|a| {
-                ["receivable_account_id", "income_account_id"]
-                    .iter()
+                [
+                    "receivable_account_id",
+                    "income_account_id",
+                    "customer_credit_account_id",
+                ]
+                .iter()
                     .any(|field| data[*field].as_i64() == Some(a.id))
             })
             .collect();
@@ -161,7 +188,7 @@ impl Receivables {
             tx.mutate(move |sql| Box::pin(async move {
                 let mut changes = Vec::new();
                 let new = store::save(sql, SETUPS, tenant, company, old.clone(), data, &mut changes).await?;
-                for field in fields.into_iter().filter(|field| *field != "invoice_layout") {
+                for field in fields.into_iter().filter(|field| *field != "invoice_layout" && !new[*field].is_null()) {
                     store::save(sql, HISTORY, tenant, company, None, json!({"field": field, "old_value": old.as_ref().map(|o| &o[field]), "new_value": new[field], "changed_by_user_id": actor, "changed_by_impersonator_id": impersonator}), &mut changes).await?;
                 }
                 Ok((new, changes))

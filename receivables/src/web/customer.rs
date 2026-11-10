@@ -49,6 +49,8 @@ pub(super) struct Customer {
     company_name: String,
     documents: Vec<Document>,
     payments: Vec<Payment>,
+    /// The customer's credits that still have something left (`credit.list`).
+    credits: Vec<Value>,
     can_edit: bool,
     can_invoice: bool,
     can_receive: bool,
@@ -70,6 +72,7 @@ impl Customer {
             company_name: String::new(),
             documents: vec![],
             payments: vec![],
+            credits: vec![],
             can_edit: false,
             can_invoice: false,
             can_receive: false,
@@ -156,6 +159,17 @@ impl Customer {
                 )
                 .await?
                 .0;
+            self.credits = self
+                .pages
+                .read(
+                    scope,
+                    "finance.receivables.credit.list",
+                    json!({"customer_id": self.id}),
+                )
+                .await
+                .ok()
+                .and_then(|answer| answer["credits"].as_array().cloned())
+                .unwrap_or_default();
             self.documents.reverse();
             self.payments.reverse();
             self.invoices.load(&self.documents, |d| d.id.to_string());
@@ -419,6 +433,46 @@ impl Customer {
                 },
             ),
         ];
+        // Money the customer has paid that no invoice has used yet: each
+        // credit opens its own page, where it is applied or refunded.
+        if !self.credits.is_empty() {
+            let text = |value: &Value| value.as_str().map(str::to_owned).unwrap_or_default();
+            let left = |credit: &Value| {
+                text(&credit["available"])
+                    .parse::<rust_decimal::Decimal>()
+                    .unwrap_or_default()
+            };
+            let total: rust_decimal::Decimal = self.credits.iter().map(left).sum();
+            let mut value = Html::text(&format!(
+                "{} {} · ",
+                self.figures.decimal(total),
+                text(&self.credits[0]["currency_code"])
+            ));
+            for (i, credit) in self.credits.iter().enumerate() {
+                if i > 0 {
+                    value.push(&Html::text(", "));
+                }
+                value.push(&f::link(
+                    &format!("{INVOICES}/{}", credit["id"]),
+                    &if self.credits.len() == 1 {
+                        format!("Credit {}", text(&credit["document_reference"]))
+                    } else {
+                        format!(
+                            "{} ({})",
+                            text(&credit["document_reference"]),
+                            self.figures.decimal(left(credit))
+                        )
+                    },
+                )?);
+            }
+            items.push(f::fact_html("Credit", value));
+            if !owed.is_zero() {
+                items.push(f::fact(
+                    "Owed after credit",
+                    &format!("{} {currency}", self.figures.decimal(owed - total)),
+                ));
+            }
+        }
         let mut summary = render(Facts {
             id: "receivables-customer-summary",
             items: std::mem::take(&mut items),
@@ -461,16 +515,30 @@ impl Customer {
                 )
                 .cell(
                     "due_date",
-                    Cell::text(bilibi_finance_ledger::dates::display_text(f::optional(
-                        &d.due_date,
-                    ))),
+                    Cell::text(if crate::is_credit(&d.kind) {
+                        "—".to_owned()
+                    } else {
+                        bilibi_finance_ledger::dates::display_text(f::optional(&d.due_date))
+                    }),
                 )
                 .slot("total", f::tabular(&self.figures.money(d.total))?)
                 .slot(
                     "outstanding",
-                    f::tabular(&self.figures.optional(d.outstanding))?,
+                    f::tabular(&match d.outstanding {
+                        Some(left) if crate::is_credit(&d.kind) && left.is_positive() => {
+                            format!("{} credit", self.figures.money(left))
+                        }
+                        Some(_) if crate::is_credit(&d.kind) => "—".into(),
+                        left => self.figures.optional(left),
+                    })?,
                 )
-                .slot("status", f::status_badge(&d.status)?),
+                .slot(
+                    "status",
+                    match f::credit_status(&d.kind, &d.status, d.total, d.outstanding) {
+                        Some(credit) => credit,
+                        None => f::status_badge(&d.status)?,
+                    },
+                ),
             );
         }
         let mut receipt_rows = Vec::new();
@@ -497,14 +565,14 @@ impl Customer {
             inner_class: "p-0",
             body: {
                 let mut b = render(SectionHeading {
-                    title: "Invoices and credit notes",
+                    title: "Invoices and credits",
                     class: "p-5 pb-0",
                     ..SectionHeading::default()
                 })?;
                 b.push(&f::table(
                     &self.invoices,
                     "invoices_grid",
-                    "Invoices and credit notes",
+                    "Invoices, credit notes and customer credits",
                     invoice_rows,
                     "Nothing has been invoiced to this customer yet.",
                 )?);

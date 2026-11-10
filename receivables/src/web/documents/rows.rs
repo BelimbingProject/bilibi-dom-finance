@@ -3,7 +3,7 @@
 //! payment, overdue, drafts) that open the list narrowed to them.
 use super::{f, DocumentPageRow, Documents, INVOICES, RECEIPTS};
 use bilibi_database::Result;
-use bilibi_finance_ledger::{OwedFigure, OwedSummary, RecordAction, RecordActions, Tally};
+use bilibi_finance_ledger::{Owed, OwedFigure, OwedSummary, RecordAction, RecordActions, Tally};
 use bilibi_ui::Html;
 
 impl Documents {
@@ -54,6 +54,35 @@ impl Documents {
             &Self::page_reference(d),
             items,
         )
+    }
+
+    /// What an issued invoice still owes. A customer credit is owed the
+    /// other way, so its amount left reads "300.00 credit".
+    pub(super) fn owed(&self, d: &DocumentPageRow) -> String {
+        if d.status != "issued" {
+            return "—".into();
+        }
+        match d.outstanding {
+            Some(left) if crate::is_credit(&d.kind) && left.is_positive() => {
+                format!("{} credit", self.figures.money(left))
+            }
+            Some(_) if crate::is_credit(&d.kind) => "—".into(),
+            left if d.kind == "invoice" => self.figures.optional(left),
+            _ => "—".into(),
+        }
+    }
+
+    /// Where the money is for an invoice, what is left of a customer credit,
+    /// the workflow status for anything else.
+    pub(super) fn status(&self, d: &DocumentPageRow) -> Result<Html> {
+        match f::credit_status(&d.kind, &d.status, d.total, d.outstanding) {
+            Some(credit) => Ok(credit),
+            None => f::money_status(
+                &d.status,
+                d.replaced,
+                Owed::read(d.payment_status, d.days_overdue),
+            ),
+        }
     }
 
     /// The type, and where the document came from when that is not the

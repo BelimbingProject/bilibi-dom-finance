@@ -31,6 +31,10 @@ use std::collections::{HashMap, HashSet};
 /// The chart of accounts page, where an account the setup needs is added.
 const CHART: &str = "/finance/ledger/accounts";
 
+/// The setup field of the account that holds what customers have paid and
+/// not yet used.
+const CREDIT_ACCOUNT: &str = "customer_credit_account_id";
+
 /// The series kinds every company needs before its first invoice, credit note
 /// and receipt, in the order the page names them.
 const SERIES_KINDS: [(&str, &str); 3] = [
@@ -243,6 +247,7 @@ impl Settings {
     fn default_of(&self, key: &'static str) -> Option<i64> {
         match &self.setup {
             Some(setup) if key == "receivable_account_id" => Some(setup.receivable_account_id),
+            Some(setup) if key == CREDIT_ACCOUNT => setup.customer_credit_account_id,
             Some(setup) => Some(setup.income_account_id),
             None => self.pending.get(key).copied(),
         }
@@ -267,11 +272,16 @@ impl Settings {
         .status(self.statuses.get(key));
         field.id_value = "setup".into();
         field.save_event = "configure".into();
-        if !self.can_manage {
+        // The customer credit account is chosen once the two accounts every
+        // invoice needs are saved; it is optional until a receipt needs it.
+        let later = key == CREDIT_ACCOUNT && self.setup.is_none();
+        if !self.can_manage || later {
             field = field.readonly();
         }
         let waiting = self.setup.is_none() && current.is_some();
-        field = field.hint(if waiting {
+        field = field.hint(if later {
+            format!("{hint} Choose the receivable account and the default income account first.")
+        } else if waiting {
             format!(
                 "Chosen. Both accounts are saved together once the {} is chosen too.",
                 if key == "receivable_account_id" {
@@ -289,7 +299,7 @@ impl Settings {
         });
         let display = match current {
             Some(id) => super::account_html(&self.accounts, id)?,
-            None if self.can_manage => Html::text("Choose an account"),
+            None if self.can_manage && !later => Html::text("Choose an account"),
             None => Html::text("Not set"),
         };
         let editor = Combobox::new(format!("receivables-{key}-input"), key)
@@ -481,6 +491,12 @@ impl Settings {
                     "Default income account",
                     "income",
                     "Used for an invoice line that names no account.",
+                )?,
+                self.default_fact(
+                    CREDIT_ACCOUNT,
+                    "Customer credit account",
+                    "liability",
+                    "Holds money a customer has paid that is not applied to an invoice yet: a deposit, or an overpayment. Needed only when a receipt keeps such an amount.",
                 )?,
             ],
         })?);
@@ -742,10 +758,10 @@ impl Settings {
                 )
                 .cell(
                     "field",
-                    Cell::text(if c.field == "income_account_id" {
-                        "Default income account"
-                    } else {
-                        "Receivable account"
+                    Cell::text(match c.field.as_str() {
+                        "income_account_id" => "Default income account",
+                        CREDIT_ACCOUNT => "Customer credit account",
+                        _ => "Receivable account",
                     }),
                 )
                 .slot(
@@ -960,12 +976,13 @@ impl Settings {
         let key: &'static str = match v["field"].as_str() {
             Some("receivable_account_id") => "receivable_account_id",
             Some("income_account_id") => "income_account_id",
+            Some(CREDIT_ACCOUNT) => CREDIT_ACCOUNT,
             _ => return Err(Error::Invalid),
         };
-        let label = if key == "receivable_account_id" {
-            "Receivable account"
-        } else {
-            "Default income account"
+        let label = match key {
+            "receivable_account_id" => "Receivable account",
+            CREDIT_ACCOUNT => "Customer credit account",
+            _ => "Default income account",
         };
         let submitted = v["value"].as_str().ok_or(Error::Invalid)?.trim().to_owned();
         let Ok(id) = submitted.parse::<i64>() else {
@@ -1001,6 +1018,15 @@ impl Settings {
                 .await?;
             self.statuses
                 .put(key, f::commit_status(&written, key, label, &chosen));
+            return Ok(());
+        }
+        if key == CREDIT_ACCOUNT {
+            self.statuses.put(
+                key,
+                CommitStatus::Error(
+                    "Choose the receivable account and the default income account first.".into(),
+                ),
+            );
             return Ok(());
         }
         self.pending.insert(key, id);

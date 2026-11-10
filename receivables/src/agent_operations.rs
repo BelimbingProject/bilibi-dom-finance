@@ -142,7 +142,7 @@ impl Write {
                 "Issue this saved invoice or credit note permanently: freeze party and due date, number it and post its owned entry."
             }
             Self::Payment => {
-                "Number and post a receipt allocated in full to these invoices using their original control accounts."
+                "Number and post a receipt: allocations settle these invoices on their original control accounts, and any amount applied to no invoice is kept as the customer's credit."
             }
             Self::Reverse => {
                 "Correct the receipt once with a dated mirror entry; retain its original record and allocations."
@@ -233,7 +233,7 @@ impl Write {
                     .ledger
                     .preview_post_entry_on(client, scope, company, &p.entry, &p.options)
                     .await?;
-                json!({"after":p.after,"allocations":p.allocations,"facts":p.facts,"posting":posting})
+                json!({"after":p.after,"allocations":p.allocations,"kept_as_credit":p.credit.as_ref().map(|c| json!({"amount":c.amount,"account_id":c.account_id})),"facts":p.facts,"posting":posting})
             }
             Self::Reverse => {
                 let p = service
@@ -531,7 +531,7 @@ impl ReadHandler for Read {
                     },
                     Self::DocumentPage => crate::document_page::page(client, service, scope, company, input).await?,
                     Self::DocumentSummary => crate::document_page::summary(client, tenant, company, input).await?,
-                    Self::Payment => json!(posting::read_payment(client,tenant,company,id(input,"payment_id")?).await?),
+                    Self::Payment => json!(receipts::read_payment(client,tenant,company,id(input,"payment_id")?).await?),
                     Self::History | Self::Documents | Self::Payments => {
                         let customer = input["customer_id"].as_i64();
                         let kind = input["kind"].as_str();
@@ -539,8 +539,8 @@ impl ReadHandler for Read {
                         let source = input["source"].as_str();
                         let (sql,params): (String,Vec<&(dyn tokio_postgres::types::ToSql+Sync)>) = match self {
                             Self::History => (format!("SELECT to_jsonb(r) FROM {} r WHERE tenant_id=$1 AND company_id=$2 AND id>$3 ORDER BY id LIMIT $4",HISTORY.name),vec![&tenant,&company,&after,&(limit)]),
-                            Self::Documents => (format!("{} AND d.id>$3 AND ($4::bigint IS NULL OR d.customer_id=$4) AND ($5::text IS NULL OR d.kind=$5) AND ($6::text IS NULL OR d.status=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7",documents::READ),vec![&tenant,&company,&after,&customer,&kind,&status,&limit,&source]),
-                            _ => (format!("{} AND p.id>$3 AND ($4::bigint IS NULL OR p.customer_id=$4) ORDER BY p.id LIMIT $5",posting::PAYMENT_READ),vec![&tenant,&company,&after,&customer,&limit]),
+                            Self::Documents => (format!("{} AND d.id>$3 AND ($4::bigint IS NULL OR d.customer_id=$4) AND ($5::text IS NULL OR d.kind=$5 OR ($5='customer_credit' AND d.kind='opening_credit')) AND ($6::text IS NULL OR d.status=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7",documents::READ),vec![&tenant,&company,&after,&customer,&kind,&status,&limit,&source]),
+                            _ => (format!("{} AND p.id>$3 AND ($4::bigint IS NULL OR p.customer_id=$4) ORDER BY p.id LIMIT $5",receipts::PAYMENT_READ),vec![&tenant,&company,&after,&customer,&limit]),
                         };
                         let records:Vec<Value> = client.query(&sql,&params).await?.iter().map(|r| {
                             if matches!(self,Self::History) {store::decode::<SetupChange>(r.get(0)).map(|r|json!(r))}
@@ -596,7 +596,7 @@ fn target() -> Value {
 fn configure() -> Value {
     schema(
         &[],
-        json!({"receivable_account_id":identifier(),"income_account_id":identifier(),"invoice_layout":object(&[], json!({"company_name":string(200),"registration_number":string(100),"address":string(2000),"contact":string(500),"footer":string(4000)}))}),
+        json!({"receivable_account_id":identifier(),"income_account_id":identifier(),"customer_credit_account_id":identifier(),"invoice_layout":object(&[], json!({"company_name":string(200),"registration_number":string(100),"address":string(2000),"contact":string(500),"footer":string(4000)}))}),
     )
 }
 fn series_create() -> Value {
@@ -696,7 +696,6 @@ fn payment_record() -> Value {
             "payment_date",
             "amount",
             "deposit_account_id",
-            "allocations",
         ],
         json!({"series_id":identifier(),"customer_id":identifier(),"payment_date":day(),"amount":string(40),"deposit_account_id":identifier(),"reference":string(100),"description":string(500),"allocations":{"type":"array","items":object(&["document_id","amount"],json!({"document_id":identifier(),"amount":string(40)}))}}),
     )
@@ -747,7 +746,7 @@ fn history() -> Value {
 fn documents() -> Value {
     let mut p = page_fields();
     p["source"] = choice(&["ordinary", "opening", "sales_order"]);
-    p["kind"] = choice(&["invoice", "credit_note", "opening_credit"]);
+    p["kind"] = choice(&["invoice", "credit_note", "opening_credit", "customer_credit"]);
     p["status"] = choice(&["draft", "issued", "discarded"]);
     p["customer_id"] = identifier();
     schema(&[], p)
@@ -757,7 +756,7 @@ fn document_page() -> Value {
         &[],
         json!({
             "source":choice(&["ordinary","opening","sales_order"]),
-            "kind":choice(&["invoice","credit_note","opening_credit"]),
+            "kind":choice(&["invoice","credit_note","opening_credit","customer_credit"]),
             "status":{"type":"string","enum":["draft","issued","unpaid","overdue","paid","discarded"],"description":"unpaid: issued invoices still owed, overdue ones included. overdue: unpaid and due before as_of. paid: issued invoices with nothing owed."},
             "as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."},
             "customer_id":identifier(),
@@ -795,20 +794,20 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.write_off.reject",title:"Reject a bad-debt journal",summary:"Keep the proposed journal and rejection reason without posting.",keywords:&[],capability:APPROVE_WRITE_OFFS,input:write_off_decide,output,handler:Handler::SafeWrite(&Write::BadDebt("reject")),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.write_off.reverse",title:"Reverse a bad-debt journal",summary:"Restore the invoice balance with an owned mirror journal before recording any recovery receipt. Also requires a different reviewer.",keywords:&[],capability:APPROVE_WRITE_OFFS,input:write_off_reverse,output,handler:Handler::SafeWrite(&Write::BadDebt("reverse")),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.book_figures.get",title:"Read how amounts are written",summary:"Read the company's currency code and decimal places so amounts display correctly. Needs only receivables view, not ledger view; nothing else of the book is returned.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::BookFigures),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.setup.get",title:"Read receivables setup",summary:"Read default accounts and the invoice layout; setup is null until configured.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::Setup),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.setup.get",title:"Read receivables setup",summary:"Read the default accounts, the customer credit account (null until chosen) and the invoice layout; setup is null until configured.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::Setup),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.setup.changes",title:"Read setup history",summary:"Read account-default changes in ascending identifier order.",keywords:&[],capability:VIEW,input:history,output,handler:Handler::Read(&Read::History),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.list",title:"List numbering series",summary:"Read active and inactive series in code order with a bounded cursor.",keywords:&[],capability:VIEW,input:codes,output,handler:Handler::Read(&Read::Codes(SERIES)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.tax_code.list",title:"List tax codes",summary:"Read code, frozen rate, posting account and active flag in code order.",keywords:&[],capability:VIEW,input:codes,output,handler:Handler::Read(&Read::Codes(TAX)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.customer.list",title:"List customers",summary:"Read customers by ID cursor: Core Company or Person code and facts, payment terms and availability.",keywords:&[],capability:VIEW,input:customers,output,handler:Handler::Read(&Read::Codes(CUSTOMERS)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.customer.get",title:"Read a customer",summary:"Read one customer with its linked company (name, status, tax ID, registration number, email, phone as you may see them) and its own payment terms and availability.",keywords:&[],capability:VIEW,input:customer,output,handler:Handler::Read(&Read::Customer),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.document.list",title:"List receivables documents",summary:"Read drafts, issued invoices and credit notes, or discarded drafts by identifier with optional filters.",keywords:&[],capability:VIEW,input:documents,output,handler:Handler::Read(&Read::Documents),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.list",title:"List receivables documents",summary:"Read drafts, issued invoices, credit notes and customer credits, or discarded drafts by identifier with optional filters. kind customer_credit reads every customer credit (opening credits and amounts receipts kept); opening_credit only those from the opening register.",keywords:&[],capability:VIEW,input:documents,output,handler:Handler::Read(&Read::Documents),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.page",title:"Read invoices page",summary:"Read a bounded invoices page after applying source, type, status, customer and search filters, stable sorting, count and offset in SQL. Each issued invoice says where its money is: payment_status (awaiting_payment, part_paid, paid) and days_overdue.",keywords:&["opening","overdue","unpaid","paid"],capability:VIEW,input:document_page,output,handler:Handler::Read(&Read::DocumentPage),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.summary",title:"Read what customers owe in three figures",summary:"Read the count and amount of draft invoices, of issued invoices still owed, and of those past their due date with the oldest days late.",keywords:&["overdue","unpaid","awaiting payment"],capability:VIEW,input:document_summary,output,handler:Handler::Read(&Read::DocumentSummary),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.get",title:"Read a receivables document",summary:"Read saved lines, tax and party snapshots, and either current or pinned outstanding and activity.",keywords:&[],capability:VIEW,input:dated_document,output,handler:Handler::Read(&Read::Document),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.list",title:"List receipts",summary:"Read numbered receipts with allocations and reversal, by identifier and optional customer.",keywords:&[],capability:VIEW,input:payments,output,handler:Handler::Read(&Read::Payments),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.payment.get",title:"Read a receipt",summary:"Read the original receipt, its allocations and optional dated reversal.",keywords:&[],capability:VIEW,input:payment,output,handler:Handler::Read(&Read::Payment),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.payment.get",title:"Read a receipt",summary:"Read the original receipt, its allocations, the customer credit its unapplied amount became (with what is left of it) and optional dated reversal.",keywords:&[],capability:VIEW,input:payment,output,handler:Handler::Read(&Read::Payment),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.aging.get",title:"Read receivables aging",summary:"Read customer residuals at a date and posting pin. Invoices age from their due dates; unapplied credits age from their source dates. Also requires ledger view.",keywords:&[],capability:VIEW,input:aging,output,handler:Handler::Read(&Read::Aging),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.setup.configure",title:"Configure receivables",summary:"Choose default accounts or update invoice layout text. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:configure,output,handler:Handler::SafeWrite(&Write::Configure),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.setup.configure",title:"Configure receivables",summary:"Choose the receivable, income and customer credit accounts or update invoice layout text. The customer credit account is an active liability account; receipts keep unapplied amounts there. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:configure,output,handler:Handler::SafeWrite(&Write::Configure),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.create",title:"Create a numbering series",summary:"Create an invoice, credit note or payment series with a unique code and prefix.",keywords:&[],capability:MANAGE_SETUP,input:series_create,output,handler:Handler::SafeWrite(&Write::Code(SERIES,None)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.update",title:"Change a numbering series",summary:"Change name or active flag; never change its code, kind, prefix or width.",keywords:&[],capability:MANAGE_SETUP,input:series_update,output,handler:Handler::SafeWrite(&Write::Code(SERIES,Some("series_id"))),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.tax_code.create",title:"Create a tax code",summary:"Create a percentage tax code on an active liability account. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:tax_create,output,handler:Handler::SafeWrite(&Write::Code(TAX,None)),channels:Channels::Every,step_up:&[]},
@@ -819,8 +818,8 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.draft.update",title:"Change a receivables draft",summary:"Change header or atomically replace lines; omit lines to keep snapshots. Also requires ledger view.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_update,output,handler:Handler::SafeWrite(&Write::Draft(true)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.discard",title:"Discard a receivables draft",summary:"Keep the draft and its lines permanently as discarded, without numbering or posting.",keywords:&[],capability:MANAGE_DOCUMENTS,input:document,output,handler:Handler::SafeWrite(&Write::Discard),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.issue",title:"Issue an invoice or credit note",summary:"Freeze the saved draft, number it and post its owned entry atomically. Also requires ledger view and entries.post.",keywords:&[],capability:ISSUE,input:document,output,handler:Handler::SafeWrite(&Write::Issue),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.payment.record",title:"Record a receipt",summary:"Number and post a fully allocated payment using each invoice's original control. Also requires ledger view and entries.post.",keywords:&[],capability:POST_PAYMENTS,input:payment_record,output,handler:Handler::SafeWrite(&Write::Payment),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.payment.reverse",title:"Reverse a receipt",summary:"Correct a payment once with a dated owned mirror entry and reason. Also requires ledger entries.post, not ledger view.",keywords:&[],capability:POST_PAYMENTS,input:payment_reverse,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.payment.record",title:"Record a receipt",summary:"Number and post a payment. Allocations settle invoices on their original controls; an amount applied to no invoice (a deposit or an overpayment) is kept as a customer credit on the setup's customer credit account, to apply or refund later. Also requires ledger view and entries.post.",keywords:&[],capability:POST_PAYMENTS,input:payment_record,output,handler:Handler::SafeWrite(&Write::Payment),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.payment.reverse",title:"Reverse a receipt",summary:"Correct a payment once with a dated owned mirror entry and reason; its unused customer credit goes with it, and a credit already applied or refunded must be reversed first. Also requires ledger entries.post, not ledger view.",keywords:&[],capability:POST_PAYMENTS,input:payment_reverse,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},
     ],
     guides:&[Guide {key:"finance.receivables",title:"Receivables drafts, issuance and receipts",summary:"Configure, draft, review and issue invoices or credit notes; settle and correct receipts without editing posted evidence.",keywords:&[],capability:VIEW,body:include_str!("../guide.md")}],
 }) }

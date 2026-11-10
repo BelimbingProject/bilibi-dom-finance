@@ -15,7 +15,7 @@ use crate::{
     VIEW,
 };
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{Owed, OwedSummary};
+use bilibi_finance_ledger::OwedSummary;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -55,7 +55,10 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         filters: [
             (
                 "kind".into(),
-                Filter::one_of(&["", "invoice", "credit_note", "opening_credit"], ""),
+                Filter::one_of(
+                    &["", "invoice", "credit_note", "opening_credit", "customer_credit"],
+                    "",
+                ),
             ),
             (
                 "status".into(),
@@ -495,7 +498,7 @@ impl Documents {
                             ("All types", ""),
                             ("Invoices", "invoice"),
                             ("Credit notes", "credit_note"),
-                            ("Customer credits", "opening_credit"),
+                            ("Customer credits", "customer_credit"),
                         ]
                         .map(|(l, v)| Choice::new(l, v))
                         .to_vec(),
@@ -567,31 +570,15 @@ impl Documents {
                 )
                 .cell(
                     "due_date",
-                    Cell::text(if d.kind == "opening_credit" {
+                    Cell::text(if crate::is_credit(&d.kind) {
                         "—".to_owned()
                     } else {
                         bilibi_finance_ledger::dates::display_text(f::optional(&d.due_date))
                     }),
                 )
                 .slot("total", f::tabular(&self.figures.money(d.total))?)
-                .slot(
-                    "outstanding",
-                    f::tabular(&if d.status == "issued"
-                        && matches!(d.kind.as_str(), "invoice" | "opening_credit")
-                    {
-                        self.figures.optional(d.outstanding)
-                    } else {
-                        "—".into()
-                    })?,
-                )
-                .slot(
-                    "status",
-                    f::money_status(
-                        &d.status,
-                        d.replaced,
-                        Owed::read(d.payment_status, d.days_overdue),
-                    )?,
-                );
+                .slot("outstanding", f::tabular(&self.owed(d))?)
+                .slot("status", self.status(d)?);
             row.actions = self.row_actions(d)?;
             rows.push(row);
         }

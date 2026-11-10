@@ -44,6 +44,7 @@ WALKTHROUGHS=(
   'bad-debt|bad-debt|'
   'chart-templates|chart-templates|'
   'conversion|conversion|||slow'
+  'customer-credit|customer-credit|'
   'engagement-access|engagement-access|'
   'fixed-assets|fixed-assets|'
   'fixed-assets-runs|fixed-assets-runs|'

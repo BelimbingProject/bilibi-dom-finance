@@ -1,5 +1,6 @@
 //! One receipt: who paid, how much and where it went, the invoices it settles,
-//! the ledger entries, and its reversal if it has one. Reads `payment.get`;
+//! the amount it kept as the customer's credit, the ledger entries, and its
+//! reversal if it has one. Reads `payment.get`;
 //! Reverse calls `payment.reverse`, which posts a dated mirror entry and keeps
 //! the original receipt as it was.
 use super::{
@@ -200,9 +201,32 @@ impl Payment {
             || format!("Customer #{}", p.customer_id),
             |c| c.name.clone(),
         );
-        let facts = render(Facts {
-            id: "receivables-receipt-facts",
-            items: vec![
+        // What the receipt applied to no invoice, and how much of that credit
+        // is still there to use.
+        let kept = match &p.credit {
+            Some(credit) => {
+                let mut value = Html::text(&format!(
+                    "{} · ",
+                    self.figures.with_currency(credit.amount, &p.currency_code)
+                ));
+                value.push(&f::link(
+                    &format!("{INVOICES}/{}", credit.document_id),
+                    &format!("Credit {}", p.payment_reference),
+                )?);
+                value.push(&Html::text(&if p.reversal.is_some() {
+                    " (removed when the receipt was reversed)".to_owned()
+                } else if credit.outstanding.is_zero() {
+                    " (used in full)".to_owned()
+                } else if credit.outstanding == credit.amount {
+                    " (not used yet)".to_owned()
+                } else {
+                    format!(" ({} left)", self.figures.money(credit.outstanding))
+                }));
+                Some(f::fact_html("Kept as credit", value))
+            }
+            None => None,
+        };
+        let mut facts = vec![
                 f::fact_html(
                     "Customer",
                     f::link(&format!("{CUSTOMERS}/{}", p.customer_id), &customer_name)?,
@@ -219,9 +243,15 @@ impl Payment {
                     "Deposited to",
                     super::account_html(&self.accounts, p.deposit_account_id)?,
                 ),
-                f::fact("Reference", f::optional(&p.reference)),
-                f::fact("Description", f::optional(&p.description)),
-            ],
+        ];
+        facts.extend(kept);
+        facts.extend([
+            f::fact("Reference", f::optional(&p.reference)),
+            f::fact("Description", f::optional(&p.description)),
+        ]);
+        let facts = render(Facts {
+            id: "receivables-receipt-facts",
+            items: facts,
         })?;
         self.allocations
             .load(&p.allocations, |a| a.document_id.to_string());
@@ -287,7 +317,11 @@ impl Payment {
                     "allocations_grid",
                     "Invoices this receipt settles",
                     rows,
-                    "This receipt settles no invoice.",
+                    if p.credit.is_some() {
+                        "This receipt pays no invoice. The whole amount is kept as the customer's credit."
+                    } else {
+                        "This receipt settles no invoice."
+                    },
                 )?);
                 b
             },
@@ -414,9 +448,6 @@ impl Payment {
                 .required()
                 .errors(errors.under("reason", "Reason (1 to 500 characters)")),
         )?);
-        for message in errors.base() {
-            body.push(&Html::text(&message));
-        }
         let mut actions = render(Button {
             id: "receivables-reverse-cancel",
             button_type: "button",
@@ -443,7 +474,11 @@ impl Payment {
         f::modal(
             "receivables-reverse",
             "Reverse this receipt",
-            "The invoices it settled owe their money again. This is recorded with your name and cannot be undone.",
+            if p.credit.is_some() {
+                "The invoices it settled owe their money again, and the credit it kept is removed. This is recorded with your name and cannot be undone."
+            } else {
+                "The invoices it settled owe their money again. This is recorded with your name and cannot be undone."
+            },
             "cancel_reverse",
             ModalWidth::Narrow,
             &self.flash,
@@ -506,7 +541,7 @@ impl LiveState<Scope, Error> for Payment {
                                 self.reversing = None;
                                 self.flash.set(
                                     StatusKind::Success,
-                                    "Receipt reversed. Its invoices owe their money again.",
+                                    "Receipt reversed. Its invoices owe their money again, and any credit it kept is removed.",
                                 );
                             }
                             Written::Invalid(fields) => {

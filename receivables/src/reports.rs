@@ -182,10 +182,10 @@ fn window(from: Option<Date>, to: Option<Date>, through: Option<i64>) -> Result<
 // Correlated aggregates keep independent credit and allocation children apart.
 // $1 tenant, $2 company, $3 inclusive event date, $4 inclusive posting pin.
 const BALANCES: &str = "SELECT d.*, d.issue_date::text issue_day, d.due_date::text due_day,
- ($3::text::date-CASE WHEN d.kind='opening_credit' THEN d.issue_date ELSE d.due_date END)::bigint days_overdue,
+ ($3::text::date-CASE WHEN d.kind IN ('opening_credit','customer_credit') THEN d.issue_date ELSE d.due_date END)::bigint days_overdue,
  finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) AS outstanding, 0::numeric AS written_off
  FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2
- AND d.kind IN ('invoice','opening_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4
+ AND d.kind IN ('invoice','opening_credit','customer_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4
  AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.id=i.batch_id AND b.tenant_id=$1 AND b.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR ($5::bigint IS NOT NULL AND b.id>$5) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions own WHERE own.tenant_id=$1 AND own.company_id=$2 AND own.batch_id=b.id AND own.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.effective_date<=$3::text::date AND ($5::bigint IS NULL OR x.batch_id<=$5))))";
 
 async fn balances(
@@ -354,7 +354,7 @@ impl Receivables {
                 days_overdue: days.max(0),
                 bucket,
             };
-            if document.kind == "opening_credit" {
+            if crate::is_credit(&document.kind) {
                 customer.credit_total += outstanding;
                 customer.total -= outstanding;
                 customer.credits.push(document);
@@ -631,7 +631,7 @@ impl Receivables {
         )
         .await?
         {
-            let sign = if d.get::<_, String>("kind") == "opening_credit" {
+            let sign = if crate::is_credit(&d.get::<_, String>("kind")) {
                 -Decimal::ONE
             } else {
                 Decimal::ONE
@@ -639,7 +639,7 @@ impl Receivables {
             *subledger.entry(d.get("receivable_account_id")).or_default() +=
                 sign * (d.get::<_, Decimal>("outstanding") - d.get::<_, Decimal>("written_off"));
         }
-        let controls=client.query("SELECT receivable_account_id FROM finance_receivables_documents WHERE tenant_id=$1 AND company_id=$2 AND status='issued' AND receivable_account_id IS NOT NULL UNION SELECT receivable_account_id FROM finance_receivables_setups WHERE tenant_id=$1 AND company_id=$2",&[&scope.tenant(),&company]).await.map_err(Error::from)?;
+        let controls=client.query("SELECT receivable_account_id FROM finance_receivables_documents WHERE tenant_id=$1 AND company_id=$2 AND status='issued' AND receivable_account_id IS NOT NULL UNION SELECT receivable_account_id FROM finance_receivables_setups WHERE tenant_id=$1 AND company_id=$2 UNION SELECT customer_credit_account_id FROM finance_receivables_setups WHERE tenant_id=$1 AND company_id=$2 AND customer_credit_account_id IS NOT NULL",&[&scope.tenant(),&company]).await.map_err(Error::from)?;
         let mut ids: BTreeSet<i64> = controls.iter().map(|r| r.get(0)).collect();
         ids.extend(subledger.keys());
         let mut accounts = Vec::new();

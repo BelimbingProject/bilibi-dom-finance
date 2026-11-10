@@ -227,6 +227,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, Provenance { module: 
         ("ask_issue", "finance.receivables.document.issue"),
         ("issue", "finance.receivables.document.issue"),
         ("save_receipt", "finance.receivables.payment.record"),
+        ("save_receipt", "finance.receivables.setup.configure"),
         ("reverse", "finance.receivables.payment.reverse"),
         ("configure", "finance.receivables.setup.configure"),
         ("save_layout", "finance.receivables.setup.configure"),

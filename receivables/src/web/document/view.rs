@@ -85,7 +85,10 @@ impl Document {
             ),
             _ => None,
         };
-        let status = f::money_status(&d.status, replaced, owed)?;
+        let status = match f::credit_status(&d.kind, &d.status, d.total, d.outstanding) {
+            Some(credit) => credit,
+            None => f::money_status(&d.status, replaced, owed)?,
+        };
 
         let mut body = f::announce(d.id)?;
         body.push(&render(Header {
@@ -104,18 +107,11 @@ impl Document {
             &display,
             &people,
         )?);
-        document.push(
-            &self
-                .credit_actions
-                .body(
-                    &self.pages,
-                    d.id,
-                    &d.kind,
-                    &d.settlements,
-                    self.figures.units(),
-                )
-                .await?,
-        );
+        document.push(&self.credit_actions.history(
+            &d,
+            &self.accounts,
+            self.figures.units(),
+        )?);
         let mut summary = self.summary_card(&d, status, owed, &display, &people)?;
         if let Some(applied) = self.applied_card(&d)? {
             summary.push(&applied);
@@ -166,6 +162,11 @@ impl Document {
                     &here,
                     "discard",
                 ));
+            }
+        }
+        if issued && !historical {
+            if let Some(apply) = self.credit_actions.header_actions(d, owed, &here, &mut items)? {
+                primary = Some(apply);
             }
         }
         if issued && !historical && d.kind == "invoice" {
@@ -260,25 +261,40 @@ impl Document {
                 )?,
             ));
         }
+        // The credit a receipt kept: where it came from and when. It has no
+        // due date; nobody owes it to the company.
+        let kept = d.kind == "customer_credit";
+        if let Some(receipt) = d.receipt.as_ref().filter(|_| kept) {
+            let mut from = f::link(
+                &format!("{RECEIPTS}/{}", receipt["id"]),
+                receipt["payment_reference"].as_str().unwrap_or("Receipt"),
+            )?;
+            if receipt["reversed"] == true {
+                from.push(&Html::text(" (reversed)"));
+            }
+            items.push(f::fact_html("From receipt", from));
+        }
         items.push(date_fact(
             "issue_date",
-            "Issue date",
+            if kept { "Received" } else { "Issue date" },
             d.issue_date.as_deref().unwrap_or(""),
             "The day you issue it",
         )?);
-        items.push(date_fact(
-            "due_date",
-            "Due date",
-            if d.kind == "opening_credit" {
-                d.opening
-                    .as_ref()
-                    .and_then(|v| v["due_date"].as_str())
-                    .unwrap_or("—")
-            } else {
-                d.due_date.as_deref().unwrap_or("")
-            },
-            "From the customer's payment terms",
-        )?);
+        if !kept {
+            items.push(date_fact(
+                "due_date",
+                "Due date",
+                if d.kind == "opening_credit" {
+                    d.opening
+                        .as_ref()
+                        .and_then(|v| v["due_date"].as_str())
+                        .unwrap_or("—")
+                } else {
+                    d.due_date.as_deref().unwrap_or("")
+                },
+                "From the customer's payment terms",
+            )?);
+        }
         if self.draft() {
             items.push(f::fact(
                 "Series",
@@ -522,7 +538,8 @@ impl Document {
             ));
         }
         let issued = d.status == "issued";
-        if issued && matches!(d.kind.as_str(), "invoice" | "opening_credit") {
+        let credit = crate::is_credit(&d.kind);
+        if issued && (d.kind == "invoice" || credit) {
             let mut due = self
                 .figures
                 .with_currency_opt(d.outstanding, &d.currency_code);
@@ -530,13 +547,16 @@ impl Document {
                 due = format!("{due} · {late}");
             }
             items.push(f::fact(
-                if d.kind == "opening_credit" {
+                if credit {
                     "Available credit"
                 } else {
                     "Amount due"
                 },
                 &due,
             ));
+        }
+        if issued && self.balance_pins.is_null() {
+            items.extend(self.credit_actions.offer_fact(d, &self.figures)?);
         }
         items.push(f::fact(
             "Total",
@@ -550,7 +570,11 @@ impl Document {
                 ));
                 if let Some(id) = d.receivable_account_id {
                     items.push(f::fact_html(
-                        "Receivable account",
+                        if credit {
+                            "Credit account"
+                        } else {
+                            "Receivable account"
+                        },
                         account_html(&self.accounts, id)?,
                     ));
                 }
@@ -646,6 +670,10 @@ impl Document {
                 .slot("status", f::status_badge(&c.status)?),
             );
         }
+        applied.extend(super::super::credits::applied_rows(
+            d,
+            self.figures.units(),
+        )?);
         let mut b = render(SectionHeading {
             id: "receivables-invoice-applied-heading",
             title: "Receipts and credits",
@@ -675,6 +703,14 @@ impl Document {
             .dialog(&self.accounts, &self.flash, &self.figures)?
         {
             return Ok(Some(dialog));
+        }
+        if let Some(d) = &self.record {
+            if let Some(dialog) =
+                self.credit_actions
+                    .dialog(d, &self.accounts, self.figures.units())?
+            {
+                return Ok(Some(dialog));
+            }
         }
         if let Some(editing) = &self.editing {
             return Ok(Some(self.lines_dialog(editing)?));

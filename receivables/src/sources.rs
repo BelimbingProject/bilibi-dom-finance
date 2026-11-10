@@ -48,7 +48,7 @@ async fn read(
     let sql = if payment {
         "SELECT 'Payment ' || payment_number::text, to_char(payment_date,'YYYY-MM-DD'), true FROM finance_receivables_payments WHERE tenant_id=$1 AND company_id=$2 AND id=$3"
     } else {
-        "SELECT CASE kind WHEN 'invoice' THEN 'Invoice' WHEN 'opening_credit' THEN 'Customer credit' ELSE 'Credit note' END || ' ' || COALESCE(document_number::text,'(draft ' || id::text || ')'), to_char(COALESCE(issue_date,inserted_at::date),'YYYY-MM-DD'), status <> 'draft' FROM finance_receivables_documents WHERE tenant_id=$1 AND company_id=$2 AND id=$3"
+        "SELECT CASE kind WHEN 'invoice' THEN 'Invoice' WHEN 'opening_credit' THEN 'Customer credit' WHEN 'customer_credit' THEN 'Customer credit' ELSE 'Credit note' END || ' ' || COALESCE(document_number::text,'(draft ' || id::text || ')'), to_char(COALESCE(issue_date,inserted_at::date),'YYYY-MM-DD'), status <> 'draft' FROM finance_receivables_documents WHERE tenant_id=$1 AND company_id=$2 AND id=$3"
     };
     let row = client
         .query_opt(sql, &[&scope.tenant(), &company_id, &id])

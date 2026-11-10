@@ -281,12 +281,16 @@ impl WriteHandler for Credit {
                 .settle_credit_on(tx, s, company, self.0, input)
                 .await
                 .map_err(failure)?;
-            Ok(json!({"record":record}).into())
+            let path = format!(
+                "/finance/receivables/invoices/{}",
+                record["credit_document_id"]
+            );
+            Ok(json!({"record":record,"path":path}).into())
         })
     }
 }
 fn credit_schema(action: &str) -> Value {
-    let mut required = vec!["company_id", "effective_date", "reference"];
+    let mut required = vec!["company_id", "effective_date"];
     if action == "reverse" {
         required.push("settlement_id");
     } else {
@@ -306,13 +310,13 @@ fn credit_schema(action: &str) -> Value {
         "cash_account_id":{"type":"integer","minimum":1},
         "effective_date":{"type":"string","format":"date"},
         "amount":{"type":"string","description":"Positive amount in book minor units."},
-        "reference":{"type":"string","maxLength":100},
+        "reference":{"type":"string","maxLength":100,"description":"Your own reference, to make a retry safe. Without one the settlement is named after its credit."},
         "override_reason":{"type":"string","maxLength":500}
     }})
 }
 inventory::submit! {Contribution::new(DEFINITIONS,"finance/receivables.credit",Provenance{module:MODULE,source:file!(),line:line!()},&Definitions{operations:&[
- Operation{key:"finance.receivables.credit.apply",title:"Apply customer credit",summary:"Apply a retained customer credit to the same party's invoice or bill. Same-control application posts no entry; different controls transfer the amount between saved controls. Rechecks every dated residual.",keywords:&["credit","conversion"],capability:POST_PAYMENTS,input:||credit_schema("apply"),output,handler:Handler::SafeWrite(&Credit("apply")),channels:Channels::Every,step_up:&[]},
- Operation{key:"finance.receivables.credit.refund",title:"Refund customer credit",summary:"Record the refund of a retained customer credit with its owned cash and control entry, approval and source evidence in one transaction.",keywords:&["credit","refund"],capability:POST_PAYMENTS,input:||credit_schema("refund"),output,handler:Handler::SafeWrite(&Credit("refund")),channels:Channels::Every,step_up:&[]},
+ Operation{key:"finance.receivables.credit.apply",title:"Apply customer credit",summary:"Apply a customer credit (an opening credit, or the amount a receipt kept) to an invoice of the same customer. Same-control application posts no entry; different controls transfer the amount between saved controls. Rechecks every dated residual.",keywords:&["credit","conversion"],capability:POST_PAYMENTS,input:||credit_schema("apply"),output,handler:Handler::SafeWrite(&Credit("apply")),channels:Channels::Every,step_up:&[]},
+ Operation{key:"finance.receivables.credit.refund",title:"Refund customer credit",summary:"Record the refund of a customer credit (an opening credit, or the amount a receipt kept) with its owned cash and control entry and approval in one transaction. Whoever recorded the credit cannot refund it while the company requires separation of duties.",keywords:&["credit","refund"],capability:POST_PAYMENTS,input:||credit_schema("refund"),output,handler:Handler::SafeWrite(&Credit("refund")),channels:Channels::Every,step_up:&[]},
  Operation{key:"finance.receivables.settlement.reverse",title:"Reverse credit settlement",summary:"Append a dated reversal of an application or refund and reverse its owned entry when present. Keep the original event and restore its item balances.",keywords:&["credit","reversal"],capability:POST_PAYMENTS,input:||credit_schema("reverse"),output,handler:Handler::SafeWrite(&Credit("reverse")),channels:Channels::Every,step_up:&[]}
 ],guides:&[]})}
 
@@ -339,6 +343,31 @@ impl ReadHandler for CreditContext {
 }
 inventory::submit! {Contribution::new(DEFINITIONS,"finance/receivables.credit-context",Provenance{module:MODULE,source:file!(),line:line!()},&Definitions{operations:&[
  Operation{key:"finance.receivables.credit.context",title:"Read credit settlement choices",summary:"Read eligible same-party targets and cash accounts. Search document references and page with next_after_id.",keywords:&["credit"],capability:VIEW,input:||{let mut schema=credit_schema("apply");schema["required"]=json!(["company_id","credit_document_id"]);schema["properties"]["search"]=json!({"type":"string","maxLength":100});schema["properties"]["after_id"]=json!({"type":"integer","minimum":0});schema},output,handler:Handler::Read(&CreditContext),channels:Channels::Every,step_up:&[]}
+],guides:&[bilibi_agent_api::Guide {key:"finance.receivables.credits",title:"Customer credits",summary:"Keep a receipt's unapplied amount as a customer credit, then apply it to an invoice, refund it or reverse a settlement.",keywords:&["credit","deposit","overpayment","refund"],capability:VIEW,body:include_str!("../credit-guide.md")}]})}
+
+struct CustomerCredits;
+impl ReadHandler for CustomerCredits {
+    fn owner(&self) -> &'static str {
+        MODULE
+    }
+    fn call<'a>(
+        &'a self,
+        c: &'a dyn OperationClient,
+        s: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            Ok(owner()
+                .map_err(failure)?
+                .customer_credits(c, s, company(input).map_err(failure)?, input)
+                .await
+                .map_err(failure)?
+                .into())
+        })
+    }
+}
+inventory::submit! {Contribution::new(DEFINITIONS,"finance/receivables.credit-list",Provenance{module:MODULE,source:file!(),line:line!()},&Definitions{operations:&[
+ Operation{key:"finance.receivables.credit.list",title:"List a customer's unused credits",summary:"Read one customer's credits that still have an amount left (opening credits and amounts receipts kept), oldest first, with each amount available and their total. Apply one with credit.apply or refund it with credit.refund.",keywords:&["credit","deposit","overpayment"],capability:VIEW,input:||json!({"type":"object","required":["company_id","customer_id"],"properties":{"company_id":{"type":"integer","minimum":1},"customer_id":{"type":"integer","minimum":1}}}),output,handler:Handler::Read(&CustomerCredits),channels:Channels::Every,step_up:&[]}
 ],guides:&[]})}
 
 struct ControlTieOut;

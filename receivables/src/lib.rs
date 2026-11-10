@@ -16,6 +16,7 @@ mod order_operations;
 mod orders;
 mod pdf;
 mod posting;
+mod receipts;
 mod records;
 mod reports;
 mod settlements;
@@ -34,7 +35,7 @@ pub use orders::SalesOrder;
 pub use pdf::PdfFile;
 pub use records::{
     Allocation, Customer, Document, DocumentLine, DocumentQuery, InvoiceLayout, Page, Payment,
-    PaymentQuery, PaymentReversal, Series, Setup, SetupChange, TaxCode, TaxLine,
+    PaymentCredit, PaymentQuery, PaymentReversal, Series, Setup, SetupChange, TaxCode, TaxLine,
 };
 pub use reports::{
     AgedCustomer, AgedDocument, AgedReceivables, AgingBucket, AgingOptions, BalancePins,
@@ -63,7 +64,8 @@ inventory::submit! {
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
             ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql")),
             ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql")),
-            ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql"))],
+            ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql")),
+            ("finance-receivables-012-receipt-credits", include_str!("../migrations/012-receipt-credits.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -150,6 +152,12 @@ pub(crate) fn invalid(field: &str, message: impl Into<String>) -> ReceivableErro
         line: None,
         message: message.into(),
     }])
+}
+
+/// A customer credit of either source: an opening balance, or the amount a
+/// receipt did not apply to an invoice. Both are settled the same way.
+pub(crate) fn is_credit(kind: &str) -> bool {
+    matches!(kind, "opening_credit" | "customer_credit")
 }
 
 fn refusal(error: Error) -> ReceivableError {

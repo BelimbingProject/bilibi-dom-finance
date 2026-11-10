@@ -19,6 +19,7 @@ pub(crate) const SETUPS: Table = Table {
     columns: &[
         "receivable_account_id",
         "income_account_id",
+        "customer_credit_account_id",
         "invoice_layout",
     ],
     timestamps: true,
@@ -105,6 +106,14 @@ pub(crate) const TAX_LINES: Table = Table {
     timestamps: false,
 };
 
+/// The link from a receipt to the customer credit its unapplied amount became.
+pub(crate) const RECEIPT_CREDITS: Table = Table {
+    name: "finance_receivables_receipt_credits",
+    kind: "finance.receivables.receipt_credit",
+    columns: &["payment_id", "document_id", "amount"],
+    timestamps: false,
+};
+
 pub(crate) fn decode<T: DeserializeOwned>(value: Value) -> Result<T> {
     // JSON numeric -> Decimal must never pass through serde's f64 visitor.
     // Keep the Platform's arbitrary-precision token as decimal text instead.
@@ -130,6 +139,7 @@ pub(crate) fn decode<T: DeserializeOwned>(value: Value) -> Result<T> {
                         "write_offs",
                         "events",
                         "allocations",
+                        "credit",
                     ]
                     .contains(&key.as_str())
                     {

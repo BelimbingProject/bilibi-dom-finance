@@ -24,10 +24,11 @@ pub(super) struct Prepared {
 // A single statement gives headers and children the same MVCC snapshot.
 pub(crate) const READ: &str = "SELECT to_jsonb(d) || jsonb_build_object(
  'sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),
- 'settlements',COALESCE((SELECT jsonb_agg(to_jsonb(e)-'review' ORDER BY e.settlement_number) FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=d.id OR e.target_document_id=d.id)),'[]'::jsonb),
+ 'settlements',COALESCE((SELECT jsonb_agg(to_jsonb(e)-'review'||jsonb_build_object('credit_reference',(SELECT x.document_reference FROM finance_receivables_documents x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.id=e.credit_document_id),'target_reference',(SELECT x.document_reference FROM finance_receivables_documents x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.id=e.target_document_id)) ORDER BY e.settlement_number) FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=d.id OR e.target_document_id=d.id)),'[]'::jsonb),
  'opening',(SELECT i.source_facts || jsonb_build_object('source_reference',b.source_reference,'conversion_date',b.conversion_date::text,'batch_id',b.id,'replaced_by_batch_id',(SELECT x.batch_id FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id)) FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.id=i.batch_id AND b.tenant_id=$1 AND b.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),
  'write_offs',COALESCE((SELECT jsonb_agg(to_jsonb(w) || jsonb_build_object('events',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM finance_receivables_write_off_events e WHERE e.write_off_id=w.id AND e.tenant_id=$1 AND e.company_id=$2),'[]'::jsonb)) ORDER BY w.id) FROM finance_receivables_write_offs w WHERE w.document_id=d.id AND w.tenant_id=$1 AND w.company_id=$2),'[]'::jsonb),
- 'outstanding',CASE WHEN EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) THEN 0 WHEN d.kind IN ('invoice','opening_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,
+ 'outstanding',CASE WHEN EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_decisions x ON x.replaces_batch_id=i.batch_id AND x.tenant_id=$1 AND x.company_id=$2 WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id) THEN 0 WHEN d.kind IN ('invoice','opening_credit','customer_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,
+ 'receipt',(SELECT jsonb_build_object('id',p.id,'payment_reference',p.payment_reference,'reversed',EXISTS(SELECT 1 FROM finance_receivables_payment_reversals x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.payment_id=p.id)) FROM finance_receivables_receipt_credits k JOIN finance_receivables_payments p ON p.id=k.payment_id AND p.tenant_id=$1 AND p.company_id=$2 WHERE k.tenant_id=$1 AND k.company_id=$2 AND k.document_id=d.id),
  'lines',COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY line_number) FROM finance_receivables_document_lines l WHERE l.tenant_id=$1 AND l.company_id=$2 AND l.document_id=d.id),'[]'::jsonb),
  'tax_lines',COALESCE((SELECT jsonb_agg(to_jsonb(t) ORDER BY tax_code) FROM finance_receivables_document_tax_lines t WHERE t.tenant_id=$1 AND t.company_id=$2 AND t.document_id=d.id),'[]'::jsonb))
  FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2";
@@ -117,7 +118,9 @@ impl Receivables {
         if query
             .kind
             .as_deref()
-            .is_some_and(|s| !["invoice", "credit_note", "opening_credit"].contains(&s))
+            .is_some_and(|s| {
+                !["invoice", "credit_note", "opening_credit", "customer_credit"].contains(&s)
+            })
             || query
                 .status
                 .as_deref()
@@ -131,7 +134,7 @@ impl Receivables {
             return Err(R::InvalidOption);
         }
         let sql = format!(
-            "{READ} AND d.id>$3 AND ($4::text IS NULL OR d.kind=$4) AND ($5::text IS NULL OR d.status=$5) AND ($6::bigint IS NULL OR d.customer_id=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7"
+            "{READ} AND d.id>$3 AND ($4::text IS NULL OR d.kind=$4 OR ($4='customer_credit' AND d.kind='opening_credit')) AND ($5::text IS NULL OR d.status=$5) AND ($6::bigint IS NULL OR d.customer_id=$6) AND ($8::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$8) ORDER BY d.id LIMIT $7"
         );
         client
             .query(

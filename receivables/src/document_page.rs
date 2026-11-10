@@ -42,7 +42,9 @@ pub(crate) async fn page(
     let page_size = input["page_size"].as_i64().unwrap_or(25);
     let sort = input["sort"].as_str().unwrap_or("number");
     let direction = input["direction"].as_str().unwrap_or("desc");
-    if kind.is_some_and(|value| !["invoice", "credit_note", "opening_credit"].contains(&value))
+    if kind.is_some_and(|value| {
+        !["invoice", "credit_note", "opening_credit", "customer_credit"].contains(&value)
+    })
         || status.is_some_and(|value| {
             !matches!(
                 value,
@@ -59,7 +61,7 @@ pub(crate) async fn page(
     {
         return Err(ReceivableError::InvalidOption);
     }
-    let filters_sql = format!(" FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND ($3::text IS NULL OR d.kind=$3) AND ($4::text IS NULL OR ($4 IN ('unpaid','overdue','paid') AND d.kind='invoice' AND d.status='issued' AND NOT {REPLACED} AND CASE $4 WHEN 'paid' THEN finance_receivables_outstanding(d.id)<=0 WHEN 'overdue' THEN finance_receivables_outstanding(d.id)>0 AND d.due_date<$7::text::date ELSE finance_receivables_outstanding(d.id)>0 END) OR ($4 NOT IN ('unpaid','overdue','paid') AND d.status=$4)) AND ($5::bigint IS NULL OR d.customer_id=$5) AND ($6::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$6)");
+    let filters_sql = format!(" FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND ($3::text IS NULL OR d.kind=$3 OR ($3='customer_credit' AND d.kind='opening_credit')) AND ($4::text IS NULL OR ($4 IN ('unpaid','overdue','paid') AND d.kind='invoice' AND d.status='issued' AND NOT {REPLACED} AND CASE $4 WHEN 'paid' THEN finance_receivables_outstanding(d.id)<=0 WHEN 'overdue' THEN finance_receivables_outstanding(d.id)>0 AND d.due_date<$7::text::date ELSE finance_receivables_outstanding(d.id)>0 END) OR ($4 NOT IN ('unpaid','overdue','paid') AND d.status=$4)) AND ($5::bigint IS NULL OR d.customer_id=$5) AND ($6::text IS NULL OR finance_receivables_document_source($1,$2,d.id)=$6)");
     let filter_params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] =
         [&tenant, &company, &kind, &status, &customer, &source, &day];
     let mut matching_customers = Vec::new();
@@ -106,7 +108,7 @@ pub(crate) async fn page(
         ("number", "asc") => "d.id ASC",
         _ => "d.id DESC",
     };
-    let rows_sql = format!("SELECT jsonb_build_object('sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),'opening',EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),'id',d.id,'kind',d.kind,'status',d.status,'customer_id',d.customer_id,'issue_date',d.issue_date,'due_date',d.due_date,'description',d.description,'total',d.total,'outstanding',CASE WHEN {REPLACED} THEN 0 WHEN d.kind IN ('invoice','opening_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,'replaced',{REPLACED},'document_reference',d.document_reference,'party_code',d.party_code,'party_name',d.party_name){where_sql} ORDER BY {order} LIMIT $10 OFFSET $11");
+    let rows_sql = format!("SELECT jsonb_build_object('sales_order',(SELECT to_jsonb(o) FROM finance_receivables_sales_orders o WHERE o.tenant_id=$1 AND o.company_id=$2 AND o.document_id=d.id),'opening',EXISTS (SELECT 1 FROM finance_receivables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id),'id',d.id,'kind',d.kind,'status',d.status,'customer_id',d.customer_id,'issue_date',d.issue_date,'due_date',d.due_date,'description',d.description,'total',d.total,'outstanding',CASE WHEN {REPLACED} THEN 0 WHEN d.kind IN ('invoice','opening_credit','customer_credit') AND d.status='issued' THEN finance_receivables_outstanding(d.id) ELSE NULL END,'replaced',{REPLACED},'document_reference',d.document_reference,'party_code',d.party_code,'party_name',d.party_name){where_sql} ORDER BY {order} LIMIT $10 OFFSET $11");
     let mut row_params = params.to_vec();
     row_params.push(&page_size);
     row_params.push(&offset);

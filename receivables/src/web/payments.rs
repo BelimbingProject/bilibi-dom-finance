@@ -1,23 +1,26 @@
 //! The receipts list and its Record receipt dialog. Reads `payment.list`,
 //! `customer.list`, `series.list`, `document.list` and the ledger's account
-//! list; recording calls `payment.record`. A receipt is allocated in full to
-//! issued invoices of one customer, so the dialog lists that customer's open
-//! invoices and asks how much of the receipt goes to each.
+//! list; recording calls `payment.record`. A receipt pays issued invoices of
+//! one customer, so the dialog lists that customer's open invoices and asks
+//! how much of the receipt goes to each. What goes to no invoice (a deposit
+//! or an overpayment) is kept as the customer's credit, and the dialog says
+//! how much that is while the amounts are typed.
+mod dialog;
+
 use super::{
-    documents::reference,
     format::{self as f, Errors},
     render, Account, Flash, Pages, Written, DENIED, RECEIPTS,
 };
-use crate::{Customer, Document, Payment, Series, POST_PAYMENTS};
+use crate::{Customer, Document, Payment, Series, MANAGE_SETUP, POST_PAYMENTS};
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Attrs, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome,
-    Combobox, CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form,
-    Header, Html, InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant,
-    Pagination, RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params, BadgeKind, BuiltinColumn, Cell, Choice, ColumnsOutcome, CreateButton, EmptyState,
+    Filter, FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns, ListSpec, ListState,
+    PageCounts, PageVariant, Pagination, RecordLink, SortDir, StatusKind, TableEmpty,
+    ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde_json::json;
@@ -67,16 +70,6 @@ struct Draft {
     errors: Errors,
 }
 
-#[derive(askama::Template)]
-#[template(
-    source = r#"<p id="{{ id }}" class="text-xs text-ink-muted">{{ text }}</p>"#,
-    ext = "html"
-)]
-struct Note<'a> {
-    id: &'a str,
-    text: &'a str,
-}
-
 pub(super) struct Payments {
     pages: Pages,
     list: ListState,
@@ -86,6 +79,11 @@ pub(super) struct Payments {
     series: Vec<Series>,
     accounts: Vec<Account>,
     control: Option<i64>,
+    /// Whether the company has chosen where customer credits are held; a
+    /// receipt can keep an unapplied amount only once it has.
+    keeps_credit: bool,
+    /// The person may choose that account, so the dialog offers it in place.
+    can_setup: bool,
     figures: f::Figures,
     cut: bool,
     can_record: bool,
@@ -123,6 +121,8 @@ impl Payments {
             series: vec![],
             accounts: vec![],
             control: None,
+            keeps_credit: false,
+            can_setup: false,
             figures: f::Figures::default(),
             cut: false,
             can_record: false,
@@ -241,14 +241,20 @@ impl Payments {
             .await?
             .0;
         self.accounts = self.pages.accounts(scope).await;
-        self.control = self
+        let setup = self
             .pages
             .read(scope, "finance.receivables.setup.get", json!({}))
             .await
-            .ok()
+            .ok();
+        self.control = setup
+            .as_ref()
             .and_then(|v| v["setup"]["receivable_account_id"].as_i64());
+        self.keeps_credit = setup
+            .as_ref()
+            .is_some_and(|v| v["setup"]["customer_credit_account_id"].as_i64().is_some());
         self.figures = self.pages.figures(scope).await;
         self.can_record = self.pages.allowed(scope, POST_PAYMENTS).await?;
+        self.can_setup = self.pages.allowed(scope, MANAGE_SETUP).await?;
         Ok(())
     }
 
@@ -421,7 +427,7 @@ impl Payments {
         let mut empty = if self.all.is_empty() {
             EmptyState::missing(
                 "No receipts yet",
-                "Each receipt is applied to the invoices it settles.",
+                "Record money a customer paid. It pays their invoices, and anything left over is kept as their credit.",
             )
         } else {
             EmptyState::missing(
@@ -469,258 +475,6 @@ impl Payments {
             &self.flash,
             body,
             modal,
-        )
-    }
-
-    fn dialog(&self, draft: &Draft) -> Result<Html> {
-        let value = |key: &str| draft.values.get(key).cloned().unwrap_or_default();
-        let mut labels = vec![
-            (
-                "customer_id".to_owned(),
-                "receivables-receipt-customer_id".to_owned(),
-                "Customer".to_owned(),
-            ),
-            (
-                "series_id".into(),
-                "receivables-receipt-series_id".into(),
-                "Series".into(),
-            ),
-            (
-                "payment_date".into(),
-                "receivables-receipt-payment_date".into(),
-                "Date received".into(),
-            ),
-            (
-                "amount".into(),
-                "receivables-receipt-amount".into(),
-                "Amount received".into(),
-            ),
-            (
-                "deposit_account_id".into(),
-                "receivables-receipt-deposit_account_id".into(),
-                "Deposited to".into(),
-            ),
-        ];
-        labels.push((
-            "allocations".into(),
-            "receivables-receipt-total".into(),
-            "The amounts applied".into(),
-        ));
-        for (i, d) in draft.open.iter().enumerate() {
-            labels.push((
-                format!("allocations.{i}.amount"),
-                format!("receivables-receipt-alloc-{}", d.id),
-                format!("Amount for {}", reference(d)),
-            ));
-        }
-        let mut body = render(draft.errors.summary("receivables-receipt-errors", &labels))?;
-        let customers: Vec<Choice> = self
-            .customers
-            .iter()
-            .map(|c| Choice::new(&c.name, c.id.to_string()).detail(&c.code))
-            .collect();
-        let series: Vec<Choice> = self
-            .series
-            .iter()
-            .filter(|s| s.kind == "payment" && s.active)
-            .map(|s| Choice::new(format!("{} ({})", s.name, s.code), s.id.to_string()))
-            .collect();
-        let deposits: Vec<Choice> = self
-            .accounts
-            .iter()
-            .filter(|a| a.postable() && a.account_type == "asset" && Some(a.id) != self.control)
-            .map(Account::choice)
-            .collect();
-        let mut who = Html::EMPTY;
-        who.push(&render(
-            Combobox::new("receivables-receipt-customer_id", "receipt[customer_id]")
-                .label("Customer *")
-                .aria_label("Customer")
-                .placeholder("Choose a customer")
-                .options(customers)
-                .value(value("customer_id"))
-                .errors(draft.errors.under("customer_id", "Customer"))
-                .attrs(Attrs {
-                    required: true,
-                    ..Attrs::default()
-                }),
-        )?);
-        who.push(&render(
-            Field::in_form("receipt", "series_id")
-                .id("receivables-receipt-series_id")
-                .label("Series")
-                .kind(InputKind::Select)
-                .prompt(if series.is_empty() {
-                    "No receipt series yet — add one in Settings"
-                } else {
-                    "Choose a series"
-                })
-                .options(series)
-                .value(value("series_id"))
-                .required()
-                .errors(draft.errors.under("series_id", "Series")),
-        )?);
-        body.push(&f::two(who)?);
-        let mut money = Html::EMPTY;
-        money.push(&render(
-            Field::in_form("receipt", "payment_date")
-                .id("receivables-receipt-payment_date")
-                .label("Date received")
-                .kind(InputKind::Date)
-                .value(value("payment_date"))
-                .required()
-                .hint("A receipt cannot settle an invoice dated after it.")
-                .errors(draft.errors.under("payment_date", "Date received")),
-        )?);
-        money.push(&render(
-            Field::in_form("receipt", "amount")
-                .id("receivables-receipt-amount")
-                .label("Amount received")
-                .attr("inputmode", "decimal")
-                .value(value("amount"))
-                .required()
-                .errors(draft.errors.under("amount", "Amount received")),
-        )?);
-        body.push(&f::two(money)?);
-        let mut deposit = Html::EMPTY;
-        deposit.push(&render(
-            Combobox::new(
-                "receivables-receipt-deposit_account_id",
-                "receipt[deposit_account_id]",
-            )
-            .label("Deposited to *")
-            .aria_label("Deposited to")
-            .placeholder("Choose the bank or cash account")
-            .options(deposits)
-            .value(value("deposit_account_id"))
-            .errors(draft.errors.under("deposit_account_id", "Deposited to"))
-            .attrs(Attrs {
-                required: true,
-                ..Attrs::default()
-            }),
-        )?);
-        deposit.push(&render(
-            Field::in_form("receipt", "reference")
-                .id("receivables-receipt-reference")
-                .label("Reference")
-                .attr("maxlength", "100")
-                .hint("A cheque or transfer number, if there is one.")
-                .value(value("reference"))
-                .errors(draft.errors.under("reference", "Reference")),
-        )?);
-        body.push(&f::two(deposit)?);
-        body.push(&render(
-            Field::in_form("receipt", "description")
-                .id("receivables-receipt-description")
-                .label("Description")
-                .attr("maxlength", "500")
-                .value(value("description"))
-                .errors(draft.errors.under("description", "Description")),
-        )?);
-        body.push(&render(SectionHeading {
-            title: "Apply to invoices",
-            description: "The whole receipt must be applied. Give each invoice it settles an amount, up to what it still owes.",
-            ..SectionHeading::default()
-        })?);
-        if value("customer_id").is_empty() {
-            body.push(&render(Note {
-                id: "receivables-receipt-pick",
-                text: "Choose a customer to see what they owe.",
-            })?);
-        } else if draft.open.is_empty() {
-            body.push(&render(Note {
-                id: "receivables-receipt-none",
-                text: "This customer has no issued invoice that is still owed.",
-            })?);
-        }
-        for d in &draft.open {
-            body.push(&render(
-                Field::in_form("receipt", &format!("alloc_{}", d.id))
-                    .id(format!("receivables-receipt-alloc-{}", d.id))
-                    .label(format!(
-                        "{} · due {} · {} unpaid",
-                        reference(d),
-                        bilibi_finance_ledger::dates::display_text(
-                            d.due_date.as_deref().unwrap_or("—")
-                        ),
-                        self.figures.optional(d.outstanding)
-                    ))
-                    .attr("inputmode", "decimal")
-                    .value(value(&format!("alloc_{}", d.id))),
-            )?);
-        }
-        let (applied, received) = self.totals(draft);
-        body.push(&render(Note {
-            id: "receivables-receipt-total",
-            text: &format!(
-                "Applied {} of {} received.",
-                self.figures.decimal(applied),
-                self.figures.decimal(received)
-            ),
-        })?);
-        let form = render(Form {
-            id: "receivables-receipt-form",
-            event: "receipt_change",
-            change: true,
-            class: "mt-4",
-            body,
-            actions: Html::EMPTY,
-        })?;
-        let mut buttons = render(Button {
-            id: "receivables-receipt-fill",
-            button_type: "button",
-            event: "apply_oldest",
-            body: Html::text("Apply to oldest first"),
-            ..Button::default()
-        })?;
-        buttons.push(&render(Button {
-            id: "receivables-receipt-cancel",
-            button_type: "button",
-            event: "cancel_record",
-            class: "ml-auto",
-            body: Html::text("Cancel"),
-            ..Button::default()
-        })?);
-        buttons.push(&render(Button {
-            id: "receivables-receipt-save",
-            button_type: "button",
-            event: "save_receipt",
-            variant: ButtonVariant::Primary,
-            working: "Recording…",
-            body: Html::text("Record receipt"),
-            ..Button::default()
-        })?);
-        let mut inner = form;
-        inner.push(&f::buttons(buttons)?);
-        f::modal(
-            "receivables-receipt-modal",
-            "Record receipt",
-            "Recording numbers the receipt and posts it to the ledger.",
-            "cancel_record",
-            ModalWidth::Wide,
-            &self.flash,
-            inner,
-        )
-    }
-
-    /// What the typed allocations add up to, and the amount received.
-    fn totals(&self, draft: &Draft) -> (Decimal, Decimal) {
-        let number = |text: &str| text.trim().parse::<Decimal>().unwrap_or(Decimal::ZERO);
-        let applied = draft
-            .open
-            .iter()
-            .map(|d| {
-                number(
-                    draft
-                        .values
-                        .get(&format!("alloc_{}", d.id))
-                        .map_or("", String::as_str),
-                )
-            })
-            .sum();
-        (
-            applied,
-            number(draft.values.get("amount").map_or("", String::as_str)),
         )
     }
 
@@ -847,10 +601,55 @@ impl Payments {
                         })
                         .collect();
                     input["allocations"] = json!(allocations);
+                    // The customer credit account chosen in this dialog, when
+                    // the receipt keeps an amount and the company has none yet.
+                    let (applied, received) = Self::totals(draft);
+                    let mut credit_account = None;
+                    if received > applied && !self.keeps_credit && self.can_setup {
+                        match f::posted(&draft.values, "credit_account_id").parse::<i64>() {
+                            Ok(id) if id > 0 => credit_account = Some(id),
+                            _ => local
+                                .0
+                                .entry("customer_credit_account_id".into())
+                                .or_default()
+                                .push("can't be blank".into()),
+                        }
+                    }
                     if !local.is_empty() {
                         draft.errors = local;
                     } else {
                         let mut draft = self.draft.take().ok_or(Error::Internal)?;
+                        if let Some(id) = credit_account {
+                            match self
+                                .pages
+                                .write(
+                                    scope,
+                                    credential,
+                                    "save_receipt",
+                                    "finance.receivables.setup.configure",
+                                    json!({"customer_credit_account_id": id}),
+                                )
+                                .await?
+                            {
+                                Written::Done(_) => self.keeps_credit = true,
+                                Written::Invalid(fields) => {
+                                    draft.errors = Errors(fields);
+                                    self.draft = Some(draft);
+                                    return self.answer(None);
+                                }
+                                Written::Refused(message) => {
+                                    self.flash.set(
+                                        StatusKind::Error,
+                                        super::worded(
+                                            message,
+                                            "You do not have permission to choose the customer credit account.",
+                                        ),
+                                    );
+                                    self.draft = Some(draft);
+                                    return self.answer(None);
+                                }
+                            }
+                        }
                         match self
                             .pages
                             .write(
@@ -865,7 +664,11 @@ impl Payments {
                             Written::Done(record) => {
                                 self.flash.set(
                                     StatusKind::Success,
-                                    "Receipt recorded and posted to the ledger.",
+                                    if record["credit"].is_null() {
+                                        "Receipt recorded and posted to the ledger."
+                                    } else {
+                                        "Receipt recorded and posted to the ledger. The amount not applied to an invoice is kept as the customer's credit."
+                                    },
                                 );
                                 if let Some(id) = record["id"].as_i64() {
                                     redirect = Some(format!("{RECEIPTS}/{id}"));
@@ -889,6 +692,11 @@ impl Payments {
             }
             _ => return Err(Error::Invalid),
         }
+        self.answer(redirect)
+    }
+
+    /// The page after an event, carrying its flash across a redirect.
+    fn answer(&mut self, redirect: Option<String>) -> Result<LiveBody> {
         let flash = redirect.is_some().then(|| self.flash.0.take()).flatten();
         Ok(LiveBody {
             html: self.body()?,

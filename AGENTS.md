@@ -314,6 +314,7 @@ they govern this code and are not copied here.
   changes and commit its record with the owned entry. Read dated figures with
   the report facade at its entry, opening-batch and settlement pins (`report.pins()`), never
   the unbounded document outstanding.
+- A receipt keeps what it applies to no invoice (a deposit, an overpayment) as a customer credit: a `customer_credit` document issued in `record_payment`'s own write on the setup's customer credit account and linked in `finance_receivables_receipt_credits`. Use or pay it back only through `Receivables::apply_credit` / `refund_credit` / `reverse_settlement` (`credit.apply`, `credit.refund`, `settlement.reverse`), the one settlement stream opening credits also use; never a second credit table, a journal or a later allocation on the receipt. Test for a credit of either source with `crate::is_credit(kind)`, not `kind == "opening_credit"`. A page offers Apply, Refund and Reverse through `Credits` (`receivables/src/web/credits.rs`) on the document page and reads a customer's unused credit from `finance.receivables.credit.list`.
 - Validate a document to issue with `Draft::validate` (the shape every
   authority shares, then `Authority::validate`), never with checks of your own
   on the facade: it derives every amount and answers `FieldError`s at the

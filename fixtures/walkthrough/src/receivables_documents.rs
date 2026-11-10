@@ -526,10 +526,16 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             "document_id",
             "is allocated twice",
         ),
+        // No customer credit account is chosen here, so nothing may be left over.
         (
             payment("2026-09-10", "2", json!([allocation(first.id, "1")])),
             "allocations",
-            "do not add up to the payment amount",
+            "first choose the customer credit account",
+        ),
+        (
+            payment("2026-09-10", "1", json!([allocation(first.id, "2")])),
+            "allocations",
+            "add up to more than the payment amount",
         ),
         (
             payment("2026-09-10", "111", json!([allocation(first.id, "111")])),
@@ -1232,7 +1238,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         "boundaries: due-today bucket zero; tax entry pins; competing settlements/reversals serialize; received-tax fractions stay unrounded"
     );
     let datasets = Receivables::evidence_datasets();
-    assert_eq!(datasets.len(), 20);
+    assert_eq!(datasets.len(), 21);
     for dataset in datasets {
         let mut after = None;
         let mut count = 0;
@@ -1274,6 +1280,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
                         | "sales_order"
                         | "sales_order_part"
                         | "settlement"
+                        | "receipt_credit"
                 ),
             "empty evidence {dataset}"
         );

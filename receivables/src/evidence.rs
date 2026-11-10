@@ -42,6 +42,18 @@ const DATASETS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
+        "receipt_credit",
+        "finance_receivables_receipt_credits",
+        &[
+            "id",
+            "tenant_id",
+            "company_id",
+            "payment_id",
+            "document_id",
+            "amount",
+        ],
+    ),
+    (
         "settlement",
         "finance_receivables_settlements",
         &[

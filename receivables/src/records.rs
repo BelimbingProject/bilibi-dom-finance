@@ -10,6 +10,10 @@ pub struct Setup {
     pub company_id: i64,
     pub receivable_account_id: i64,
     pub income_account_id: i64,
+    /// The liability account that holds what customers have paid and not yet
+    /// used; none until a company chooses one.
+    #[serde(default)]
+    pub customer_credit_account_id: Option<i64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetupChange {
@@ -86,6 +90,10 @@ pub struct Document {
     pub settlements: Vec<serde_json::Value>,
     #[serde(default)]
     pub opening: Option<serde_json::Value>,
+    /// The receipt a customer credit came from (`id`, `payment_reference`,
+    /// `reversed`); absent on every other document.
+    #[serde(default)]
+    pub receipt: Option<serde_json::Value>,
     pub id: i64,
     pub kind: String,
     pub status: String,
@@ -243,7 +251,20 @@ pub struct Payment {
     pub recorded_by_impersonator_id: Option<i64>,
     pub recorded_at: String,
     pub allocations: Vec<Allocation>,
+    /// The part of the receipt applied to no invoice, kept as a customer credit.
+    #[serde(default)]
+    pub credit: Option<PaymentCredit>,
     pub reversal: Option<PaymentReversal>,
+}
+/// A receipt's unapplied amount: the customer credit document it became, and
+/// how much of that credit is still unused (zero once the receipt is reversed).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentCredit {
+    pub document_id: i64,
+    #[serde(deserialize_with = "money")]
+    pub amount: Money,
+    #[serde(deserialize_with = "money")]
+    pub outstanding: Money,
 }
 
 // Storage has already enforced numeric(20,4); arithmetic uses the actual

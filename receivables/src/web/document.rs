@@ -183,6 +183,18 @@ impl Document {
                     )
                     .await?
             }
+            "apply_credit" | "refund_credit" => {
+                if let Some(d) = self.record.clone() {
+                    let action = action.trim_end_matches("_credit");
+                    if let Some((kind, message)) = self
+                        .credit_actions
+                        .ask(&self.pages, scope, action, &d, "")
+                        .await
+                    {
+                        self.flash.set(kind, message);
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -226,9 +238,7 @@ impl Document {
         }
         let Some(d) = &self.record else { return Ok(()) };
         if !historical {
-            self.credit_actions
-                .load(&self.pages, scope, d.id, &d.kind)
-                .await?;
+            self.credit_actions.load(&self.pages, scope, d).await?;
         }
         let customer_id = d.customer_id;
         let series_id = d.series_id;
@@ -447,10 +457,17 @@ impl Document {
         }
         match event {
             "ask_credit_apply" | "ask_credit_refund" | "ask_credit_reverse" | "cancel_credit"
-            | "change_credit" | "preview_credit" | "commit_credit" | "credit_grid" => {
-                self.credit_actions
-                    .event(&self.pages, scope, credential, v, self.id)
-                    .await?;
+            | "back_credit" | "change_credit" | "preview_credit" | "commit_credit"
+            | "credit_grid" => {
+                if let Some(d) = self.record.clone() {
+                    if let Some((kind, message)) = self
+                        .credit_actions
+                        .event(&self.pages, scope, credential, v, &d)
+                        .await?
+                    {
+                        self.flash.set(kind, message);
+                    }
+                }
             }
 
             "ask_submit_write_off"
