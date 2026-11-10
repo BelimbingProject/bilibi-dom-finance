@@ -15,7 +15,8 @@ use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_finance_ledger::{
-    AccountName, DocumentLayout, EntryLink, MinorUnits, People, RecordAction, RecordActions,
+    AccountName, DocumentLayout, DocumentTotals, EntryLink, MinorUnits, Owed, People, RecordAction,
+    RecordActions,
 };
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
@@ -89,6 +90,35 @@ impl Bill {
         }
         let people = self.pages.people(scope, mentioned).await?;
         let units = self.units;
+        // Where the money is today; a balance read as of an earlier date
+        // keeps the plain status, since "overdue" would be about today.
+        let replaced = d
+            .opening
+            .as_ref()
+            .is_some_and(|o| !o["replaced_by_batch_id"].is_null());
+        let owed = match d.outstanding {
+            Some(outstanding)
+                if !historical
+                    && !replaced
+                    && d.document_type == "bill"
+                    && d.status == "posted" =>
+            {
+                Some(Owed::of(
+                    d.total.amount(),
+                    outstanding.amount(),
+                    Some(d.due_date),
+                    self.pages.today(scope).await?,
+                ))
+            }
+            _ => None,
+        };
+        let status = match owed {
+            Some(owed) => owed.badges(),
+            None if replaced && d.status == "posted" => {
+                f::badge("Replaced", BadgeKind::Neutral, true)?
+            }
+            None => f::status(&d.status)?,
+        };
 
         let mut document = self.document_card(d)?;
         document.push(&self.lines_card(d, units)?);
@@ -104,7 +134,7 @@ impl Bill {
                 .body(&self.pages, d.id, &d.document_type, &d.settlements, units)
                 .await?,
         );
-        let mut summary = self.summary_card(d, units, &display, &people)?;
+        let mut summary = self.summary_card(d, status.clone(), owed, units, &display, &people)?;
         summary.push(&render(AttachmentsSlot)?);
 
         let mut parts = Vec::new();
@@ -116,7 +146,7 @@ impl Bill {
             document,
             summary,
         )?);
-        let mut title_actions = f::status(&d.status)?;
+        let mut title_actions = status;
         if let Some(status) = d.match_status.as_deref() {
             title_actions.push(&f::match_badge(status, "Match: ")?);
         }
@@ -350,16 +380,14 @@ impl Bill {
             ..SectionHeading::default()
         })?;
         b.push(&table(&self.lines, "lines_grid", "Lines", rows)?);
-        b.push(&render(Padded {
-            body: render(Facts {
-                id: "payables-bill-totals",
-                items: vec![
-                    f::fact("Net", &amount(d.total_net.display(units), &d.currency_code)),
-                    f::fact("Tax", &amount(d.total_tax.display(units), &d.currency_code)),
-                    f::fact("Total", &amount(d.total.display(units), &d.currency_code)),
-                ],
-            })?,
-        })?);
+        b.push(&DocumentTotals::render(
+            "payables-bill-totals",
+            vec![
+                ("Net", d.total_net.display(units)),
+                ("Tax", d.total_tax.display(units)),
+                ("Total", amount(d.total.display(units), &d.currency_code)),
+            ],
+        )?);
         render(Card {
             id: "payables-bill-lines",
             role: "region",
@@ -511,6 +539,8 @@ impl Bill {
     fn summary_card(
         &self,
         d: &Document,
+        status: Html,
+        owed: Option<Owed>,
         units: Option<MinorUnits>,
         display: &DisplayContext,
         people: &People,
@@ -529,7 +559,7 @@ impl Bill {
         };
         let mut items = vec![Fact {
             title: "Status",
-            value: f::status(&d.status)?,
+            value: status,
             ..Fact::default()
         }];
         if let Some(pins) = self.balance_pins.as_object() {
@@ -541,13 +571,17 @@ impl Bill {
             ));
         }
         if let Some(outstanding) = d.outstanding {
+            let mut due = amount(outstanding.display(units), &d.currency_code);
+            if let Some(late) = owed.and_then(|o| o.overdue_by()) {
+                due = format!("{due} · {late}");
+            }
             items.push(f::fact(
                 if d.document_type == "opening_credit" {
                     "Available credit"
                 } else {
                     "Amount due"
                 },
-                &amount(outstanding.display(units), &d.currency_code),
+                &due,
             ));
         }
         items.push(f::fact(
@@ -685,12 +719,6 @@ struct View<'a> {
     actions: Html,
     parts: Vec<Html>,
     dialog: Option<Html>,
-}
-
-#[derive(Template)]
-#[template(source = r#"<div class="p-5">{{ body|safe }}</div>"#, ext = "html")]
-struct Padded {
-    body: Html,
 }
 
 #[derive(Template)]

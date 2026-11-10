@@ -809,6 +809,7 @@ enum Read {
     Document,
     Documents,
     DocumentPage,
+    DocumentSummary,
     Request,
     Requests,
     Payment,
@@ -865,7 +866,9 @@ impl ReadHandler for Read {
                         source:opt(v,"source"), document_type:opt(v,"document_type"), status:opt(v,"status"),
                         search:opt(v,"search").unwrap_or_default(), page:v["page"].as_i64().unwrap_or(1),
                         page_size:v["page_size"].as_i64().unwrap_or(25),
+                        as_of:v.get("as_of").filter(|d|!d.is_null()).map(|_|date(v,"as_of")).transpose()?,
                     }).await?),
+                    Self::DocumentSummary=>json!(owner()?.summarize_documents_on(c,s,company,v.get("as_of").filter(|d|!d.is_null()).map(|_|date(v,"as_of")).transpose()?).await?),
                     Self::Document=>{
                         if !v["as_of"].is_null()||["through_entry_number","through_opening_batch_id","through_settlement_number"].iter().any(|key|!v[key].is_null()) {
                             let (document,pins)=owner()?.document_at(s,company,id(v,"document_id")?,v).await?;
@@ -1032,11 +1035,18 @@ fn document_page_schema() -> Value {
         &[],
         json!({
             "source":{"type":"string","enum":["ordinary","opening"]},
-            "status":{"type":"string","enum":["draft","approved","held","posted","voided"]},
+            "status":{"type":"string","enum":["draft","approved","held","posted","unpaid","overdue","paid","voided"],"description":"unpaid: posted bills still owed, overdue ones included. overdue: unpaid and due before as_of. paid: posted bills with nothing owed."},
+            "as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."},
             "document_type":{"type":"string","enum":["bill","debit_note","opening_credit"]},
             "search":string(255), "page":{"type":"integer","minimum":1},
             "page_size":{"type":"integer","enum":[25,50,100]}
         }),
+    )
+}
+fn document_summary_schema() -> Value {
+    schema(
+        &[],
+        json!({"as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."}}),
     )
 }
 fn list_schema(kind: &str) -> Value {
@@ -1072,7 +1082,8 @@ inventory::submit! {Contribution::new(DEFINITIONS,"finance/payables.operations",
         Operation {key:"finance.payables.settings.get",title:"Read payables settings",summary:"Read the control account and matching tolerances; null before configuration.",keywords:&[],capability:VIEW,input:||schema(&[],json!({})),output,handler:Handler::Read(&Read::Settings),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.tax_code.list",title:"List payables tax codes",summary:"Read configured tax codes by ID with a bounded cursor.",keywords:&[],capability:VIEW,input:||list_schema("tax"),output,handler:Handler::Read(&Read::Taxes),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.document.get",title:"Read a payable document",summary:"Read a bill or debit note with immutable snapshots and either current or pinned outstanding and activity.",keywords:&[],capability:VIEW,input:dated_document,output,handler:Handler::Read(&Read::Document),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.payables.document.page",title:"Read bills page",summary:"Read bills and debit notes with source and status filters, search, SQL totals and bounded page offsets.",keywords:&["opening"],capability:VIEW,input:document_page_schema,output,handler:Handler::Read(&Read::DocumentPage),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.payables.document.page",title:"Read bills page",summary:"Read bills and debit notes with source and status filters, search, SQL totals and bounded page offsets. Each posted bill says where its money is: due_date, outstanding, payment_status (awaiting_payment, part_paid, paid) and days_overdue.",keywords:&["opening","overdue","unpaid","paid"],capability:VIEW,input:document_page_schema,output,handler:Handler::Read(&Read::DocumentPage),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.payables.document.summary",title:"Read what is owed to suppliers in three figures",summary:"Read the count and amount of bills not posted yet, of posted bills still owed, and of those past their due date with the oldest days late.",keywords:&["overdue","unpaid","awaiting payment"],capability:VIEW,input:document_summary_schema,output,handler:Handler::Read(&Read::DocumentSummary),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.document.list",title:"List payable documents",summary:"Read bills and debit notes by ID, optionally filtered by source, party, type and status.",keywords:&[],capability:VIEW,input:||list_schema("document"),output,handler:Handler::Read(&Read::Documents),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.payment_request.get",title:"Read a payment request",summary:"Read retained allocations, submitter, decision and posted payment ID.",keywords:&[],capability:VIEW,input:request_id,output,handler:Handler::Read(&Read::Request),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.payment_request.list",title:"List payment requests",summary:"Read requests by ID, oldest first or with newest_first newest first, with party and status filters and a bounded cursor.",keywords:&[],capability:VIEW,input:||list_schema("request"),output,handler:Handler::Read(&Read::Requests),channels:Channels::Every,step_up:&[]},

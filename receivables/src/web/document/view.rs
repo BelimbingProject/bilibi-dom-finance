@@ -13,7 +13,7 @@ use super::{
 use bilibi_database::Result;
 use bilibi_datetime::DisplayContext;
 use bilibi_finance_ledger::{
-    DocumentLayout, EntryLink, Money, People, RecordAction, RecordActions,
+    DocumentLayout, DocumentTotals, EntryLink, Money, Owed, People, RecordAction, RecordActions,
 };
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
@@ -67,11 +67,30 @@ impl Document {
             .or_else(|| self.customer.as_ref().map(|c| c.name.clone()))
             .unwrap_or_default();
         let name = reference(&d);
+        // Where the money is today; a balance read as of an earlier date
+        // keeps the plain status, since "overdue" would be about today.
+        let replaced = d
+            .opening
+            .as_ref()
+            .is_some_and(|o| !o["replaced_by_batch_id"].is_null());
+        let owed = match self.pages.today(scope).await.parse::<jiff::civil::Date>() {
+            Ok(today) if !self.balance_pins.is_object() => crate::records::owed(
+                &d.kind,
+                &d.status,
+                replaced,
+                d.total,
+                d.outstanding,
+                d.due_date.as_deref(),
+                today,
+            ),
+            _ => None,
+        };
+        let status = f::money_status(&d.status, replaced, owed)?;
 
         let mut body = f::announce(d.id)?;
         body.push(&render(Header {
             title: Html::text(&name),
-            title_actions: f::status_badge(&d.status)?,
+            title_actions: status.clone(),
             subtitle: &format!("{kind} for {customer_name}"),
             actions: self.header_actions(&d, back)?,
         })?);
@@ -97,7 +116,7 @@ impl Document {
                 )
                 .await?,
         );
-        let mut summary = self.summary_card(&d, &display, &people)?;
+        let mut summary = self.summary_card(&d, status, owed, &display, &people)?;
         if let Some(applied) = self.applied_card(&d)? {
             summary.push(&applied);
         }
@@ -166,18 +185,17 @@ impl Document {
                 ));
             }
             if owed && self.write_offs.can_propose() {
-                items.push(RecordAction::here(
-                    "document-minus",
+                // Rare and serious, so in the menu, not a one-click icon.
+                items.push(RecordAction::link(
                     "Write off",
-                    &here,
-                    "write_off",
+                    format!("{here}?{}=write_off", bilibi_finance_ledger::RECORD_DO),
                 ));
             }
         }
         if issued && d.opening.is_none() && matches!(d.kind.as_str(), "invoice" | "credit_note") {
             items.push(RecordAction::local(
                 "printer",
-                "Print / download PDF",
+                "Print",
                 format!("{INVOICES}/{}/pdf", d.id),
             ));
         }
@@ -225,10 +243,14 @@ impl Document {
             }
             Ok(f::fact_html(label, render(InlineEdit { field })?))
         };
-        let mut items = vec![f::fact_html(
-            "Customer",
-            f::link(&format!("{CUSTOMERS}/{}", d.customer_id), customer)?,
-        )];
+        // An issued document names its customer under "Billed to".
+        let mut items = Vec::new();
+        if d.status != "issued" {
+            items.push(f::fact_html(
+                "Customer",
+                f::link(&format!("{CUSTOMERS}/{}", d.customer_id), customer)?,
+            ));
+        }
         if let Some(credited) = d.credited_document_id {
             items.push(f::fact_html(
                 "Credits invoice",
@@ -311,7 +333,10 @@ impl Document {
             b.push(&render(Facts {
                 id: "receivables-invoice-party",
                 items: vec![
-                    f::fact("Name", f::optional(&d.party_name)),
+                    f::fact_html(
+                        "Name",
+                        f::link(&format!("{CUSTOMERS}/{}", d.customer_id), customer)?,
+                    ),
                     f::fact("Tax ID", f::optional(&d.party_tax_identifier)),
                     f::fact(
                         "Registration number",
@@ -414,7 +439,11 @@ impl Document {
                 id: "receivables-invoice-edit-lines",
                 button_type: "button",
                 event: "edit_lines",
-                body: Html::text("Edit lines"),
+                body: Html::text(if d.lines.is_empty() {
+                    "Add lines"
+                } else {
+                    "Edit lines"
+                }),
                 ..Button::default()
             })?
         } else {
@@ -433,7 +462,7 @@ impl Document {
             "Lines",
             line_rows,
             if self.draft() {
-                "No lines yet. Use Edit lines to add what you are invoicing."
+                "No lines yet."
             } else {
                 "This document has no lines."
             },
@@ -452,23 +481,17 @@ impl Document {
                 "",
             )?);
         }
-        b.push(&f::padded(render(Facts {
-            id: "receivables-invoice-totals",
-            items: vec![
-                f::fact(
-                    "Subtotal",
-                    &self.figures.with_currency(d.subtotal, &d.currency_code),
-                ),
-                f::fact(
-                    "Tax",
-                    &self.figures.with_currency(d.tax_total, &d.currency_code),
-                ),
-                f::fact(
+        b.push(&DocumentTotals::render(
+            "receivables-invoice-totals",
+            vec![
+                ("Subtotal", self.figures.money(d.subtotal)),
+                ("Tax", self.figures.money(d.tax_total)),
+                (
                     "Total",
-                    &self.figures.with_currency(d.total, &d.currency_code),
+                    self.figures.with_currency(d.total, &d.currency_code),
                 ),
             ],
-        })?)?);
+        )?);
         render(Card {
             id: "receivables-invoice-lines",
             role: "region",
@@ -484,10 +507,12 @@ impl Document {
     fn summary_card(
         &self,
         d: &crate::Document,
+        status: Html,
+        owed: Option<Owed>,
         display: &DisplayContext,
         people: &People,
     ) -> Result<Html> {
-        let mut items = vec![f::fact_html("Status", f::status_badge(&d.status)?)];
+        let mut items = vec![f::fact_html("Status", status)];
         if let Some(pins) = self.balance_pins.as_object() {
             items.push(f::fact(
                 "Balance as of",
@@ -498,15 +523,19 @@ impl Document {
         }
         let issued = d.status == "issued";
         if issued && matches!(d.kind.as_str(), "invoice" | "opening_credit") {
+            let mut due = self
+                .figures
+                .with_currency_opt(d.outstanding, &d.currency_code);
+            if let Some(late) = owed.and_then(|o| o.overdue_by()) {
+                due = format!("{due} · {late}");
+            }
             items.push(f::fact(
                 if d.kind == "opening_credit" {
                     "Available credit"
                 } else {
                     "Amount due"
                 },
-                &self
-                    .figures
-                    .with_currency_opt(d.outstanding, &d.currency_code),
+                &due,
             ));
         }
         items.push(f::fact(

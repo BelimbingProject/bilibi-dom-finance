@@ -5,6 +5,7 @@ mod agent_operations;
 mod companies;
 mod configuration;
 mod contributions;
+mod document_page;
 mod documents;
 mod evidence;
 mod opening;

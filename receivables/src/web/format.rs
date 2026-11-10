@@ -55,6 +55,23 @@ pub(super) fn status_badge(status: &str) -> Result<Html> {
     ))
 }
 
+/// A document's status as the lists and record pages show it: where the
+/// money is for an issued invoice (Awaiting payment, Part paid, Paid, Overdue
+/// with the days late), the workflow status for anything else.
+pub(super) fn money_status(
+    status: &str,
+    replaced: bool,
+    owed: Option<bilibi_finance_ledger::Owed>,
+) -> Result<Html> {
+    match owed {
+        Some(owed) => Ok(owed.badges()),
+        None if replaced && status == "issued" => {
+            Ok(bilibi_ui::status_badge(BadgeKind::Neutral, "Replaced"))
+        }
+        None => status_badge(status),
+    }
+}
+
 pub(super) fn optional(text: &Option<String>) -> &str {
     text.as_deref().filter(|t| !t.is_empty()).unwrap_or("—")
 }
@@ -475,17 +492,6 @@ pub(super) fn announce(record: i64) -> Result<Html> {
 )]
 struct Two {
     body: Html,
-}
-
-#[derive(askama::Template)]
-#[template(source = r#"<div class="p-5">{{ body|safe }}</div>"#, ext = "html")]
-struct Padded {
-    body: Html,
-}
-
-/// Facts under a table in a flat card, at the card's own padding.
-pub(super) fn padded(body: Html) -> Result<Html> {
-    render(Padded { body })
 }
 
 /// Fields in two columns on a wide screen, one on a phone.

@@ -3,6 +3,7 @@
 //! dialog is `documents/invoice_form.rs`; `documents/new_draft.rs` opens it.
 mod invoice_form;
 mod new_draft;
+mod rows;
 
 use super::opening::Opening;
 use super::{
@@ -14,7 +15,7 @@ use crate::{
     VIEW,
 };
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{RecordAction, RecordActions};
+use bilibi_finance_ledger::{Owed, OwedSummary};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -58,7 +59,18 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             ),
             (
                 "status".into(),
-                Filter::one_of(&["", "draft", "issued", "unpaid", "discarded"], ""),
+                Filter::one_of(
+                    &[
+                        "",
+                        "draft",
+                        "unpaid",
+                        "overdue",
+                        "paid",
+                        "issued",
+                        "discarded",
+                    ],
+                    "",
+                ),
             ),
             ("customer".into(), Filter::string("")),
             (
@@ -97,6 +109,8 @@ pub(super) struct Documents {
     customers: Vec<Customer>,
     series: Vec<Series>,
     figures: f::Figures,
+    /// The three figures above the list; absent when they cannot be read.
+    summary: Option<OwedSummary>,
     total: u64,
     can_add: bool,
     can_receive: bool,
@@ -132,8 +146,7 @@ impl Documents {
             BuiltinColumn::new("total", "Total")
                 .sortable("total")
                 .right(),
-            BuiltinColumn::new("outstanding", "Outstanding").right(),
-            BuiltinColumn::new("source", "Source"),
+            BuiltinColumn::new("outstanding", "Owed").right(),
             BuiltinColumn::new("status", "Status"),
         ];
         Ok(Self {
@@ -159,6 +172,7 @@ impl Documents {
             customers: vec![],
             series: vec![],
             figures: f::Figures::default(),
+            summary: None,
             total: 0,
             can_add: false,
             can_receive: false,
@@ -191,7 +205,7 @@ impl Documents {
     }
 
     async fn load_page(&mut self, scope: &Scope) -> Result<()> {
-        let mut input = json!({"search":self.list.search,"page":self.list.page,"page_size":self.list.page_size});
+        let mut input = json!({"search":self.list.search,"page":self.list.page,"page_size":self.list.page_size,"as_of":self.pages.today(scope).await});
         for (key, input_key) in [
             ("source", "source"),
             ("kind", "kind"),
@@ -380,6 +394,16 @@ impl Documents {
             .await?
             .0;
         self.figures = self.pages.figures(scope).await;
+        self.summary = self
+            .pages
+            .read(
+                scope,
+                "finance.receivables.document.summary",
+                json!({"as_of":self.pages.today(scope).await}),
+            )
+            .await
+            .ok()
+            .and_then(|summary| serde_json::from_value(summary).ok());
         self.can_add = self.pages.allowed(scope, MANAGE_DOCUMENTS).await?;
         self.can_receive = self.pages.allowed(scope, POST_PAYMENTS).await?;
         self.can_write_off = self.pages.allowed(scope, crate::SUBMIT_WRITE_OFFS).await?;
@@ -412,61 +436,6 @@ impl Documents {
             .or(customer.map(|c| c.name.as_str()))
             .unwrap_or("Customer unavailable");
         name.to_owned()
-    }
-
-    /// A row's local icons and non-local menu: what its record page offers for its state.
-    fn row_actions(&self, d: &DocumentPageRow) -> Result<Html> {
-        let here = format!("{INVOICES}/{}", d.id);
-        let mut items = Vec::new();
-        let issued = d.status == "issued";
-        if issued && d.kind == "invoice" {
-            if self.can_receive && d.outstanding.is_some_and(|m| m.is_positive()) {
-                items.push(RecordAction::link(
-                    "Record receipt",
-                    format!("{RECEIPTS}?receive={}", d.id),
-                ));
-            }
-            if self.can_add {
-                items.push(RecordAction::link(
-                    "New credit note",
-                    format!("{INVOICES}?credit={}", d.id),
-                ));
-            }
-            if self.can_write_off && d.outstanding.is_some_and(|m| m.is_positive()) {
-                items.push(RecordAction::here(
-                    "document-minus",
-                    "Write off",
-                    &here,
-                    "write_off",
-                ));
-            }
-        }
-        if issued && !d.opening && matches!(d.kind.as_str(), "invoice" | "credit_note") {
-            items.push(RecordAction::local(
-                "printer",
-                "Print / download PDF",
-                format!("{here}/pdf"),
-            ));
-        }
-        if d.status == "draft" && self.can_add {
-            items.push(RecordAction::here(
-                "trash",
-                "Discard draft",
-                &here,
-                "discard",
-            ));
-        }
-        RecordActions::row(
-            &format!("receivables-invoice-{}-actions", d.id),
-            &Self::page_reference(d),
-            items,
-        )
-    }
-
-    fn page_reference(d: &DocumentPageRow) -> String {
-        d.document_reference
-            .clone()
-            .unwrap_or_else(|| format!("Draft #{}", d.id))
     }
 
     async fn body(&mut self, scope: &Scope) -> Result<String> {
@@ -504,7 +473,8 @@ impl Documents {
                 .iter()
                 .map(|c| Choice::new(&c.name, c.id.to_string())),
         );
-        let mut content = render(FilterToolbar {
+        let mut content = self.strips()?;
+        content.push(&render(FilterToolbar {
             event: "filter",
             ..FilterToolbar::new(
                 "receivables-invoices-filters",
@@ -552,8 +522,10 @@ impl Documents {
                         [
                             ("All statuses", ""),
                             ("Draft", "draft"),
+                            ("Awaiting payment", "unpaid"),
+                            ("Overdue", "overdue"),
+                            ("Paid", "paid"),
                             ("Issued", "issued"),
-                            ("Unpaid", "unpaid"),
                             ("Discarded", "discarded"),
                         ]
                         .map(|(l, v)| Choice::new(l, v))
@@ -568,7 +540,7 @@ impl Documents {
                     ),
                 ],
             )
-        })?;
+        })?);
         let mut rows = Vec::new();
         for d in &self.documents {
             let mut row = FlexRow::new(d.id.to_string());
@@ -585,7 +557,7 @@ impl Documents {
                         body: Html::text(&Self::page_reference(d)),
                     })?,
                 )
-                .cell("kind", Cell::text(f::kind_label(&d.kind)))
+                .cell("kind", Cell::text(Self::kind(d)))
                 .cell("customer", Cell::text(self.page_customer_name(d)))
                 .cell(
                     "issue_date",
@@ -612,22 +584,14 @@ impl Documents {
                         "—".into()
                     })?,
                 )
-                .cell(
-                    "source",
-                    Cell::text(
-                        d.sales_order
-                            .as_ref()
-                            .map(|o| format!("Sales order {}", o.order_number))
-                            .unwrap_or_else(|| {
-                                if d.opening {
-                                    "Opening".into()
-                                } else {
-                                    "Ordinary".into()
-                                }
-                            }),
-                    ),
-                )
-                .slot("status", f::status_badge(&d.status)?);
+                .slot(
+                    "status",
+                    f::money_status(
+                        &d.status,
+                        d.replaced,
+                        Owed::read(d.payment_status, d.days_overdue),
+                    )?,
+                );
             row.actions = self.row_actions(d)?;
             rows.push(row);
         }

@@ -71,6 +71,7 @@ pub(super) struct Customers {
     columns: ListColumns,
     all: Vec<Customer>,
     cut: bool,
+    owing: super::owing::Owing,
     can_add: bool,
     /// Each row's actions menu: what other pages offer for its party.
     actions: Actions,
@@ -87,6 +88,8 @@ impl Customers {
             BuiltinColumn::new("company", "Contact status"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
+            BuiltinColumn::new("owed", "Owed").right(),
+            BuiltinColumn::new("overdue", "Overdue").right(),
             BuiltinColumn::new("terms", "Terms").right(),
             BuiltinColumn::new("status", "Status"),
         ];
@@ -98,6 +101,7 @@ impl Customers {
                 .map_err(|_| Error::Internal)?,
             all: vec![],
             cut: false,
+            owing: Default::default(),
             can_add: false,
             actions: Actions::default(),
             create: None,
@@ -223,6 +227,7 @@ impl Customers {
                 ("after", "next_after_id"),
             )
             .await?;
+        self.owing = super::owing::Owing::read(&self.pages, scope).await;
         self.can_add = self.pages.allowed(scope, crate::MANAGE_CUSTOMERS).await?;
         self.actions = Actions::read(&self.pages.records, scope).await?;
         Ok(())
@@ -313,6 +318,7 @@ impl Customers {
             let mut row = FlexRow::new(c.id.to_string());
             row.dom_id = Some(format!("receivables-customer-{}", c.id));
             self.actions.attach(c, &mut row)?;
+            let (owed, overdue) = self.owing.cells(c.id)?;
             flex_rows.push(
                 row.slot(
                     "code",
@@ -329,6 +335,8 @@ impl Customers {
                 .slot("company", company_badge(c)?)
                 .cell("email", Cell::text(f::optional(&email(c).cloned())))
                 .cell("phone", Cell::text(f::optional(&phone(c).cloned())))
+                .slot("owed", owed)
+                .slot("overdue", overdue)
                 .slot(
                     "terms",
                     f::tabular(&if c.payment_terms_days == 0 {

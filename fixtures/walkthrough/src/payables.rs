@@ -558,6 +558,72 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .documents
         .windows(2)
         .all(|d| (d[0].document_date.as_str(), d[0].id) > (d[1].document_date.as_str(), d[1].id)));
+    // Where the money is: every bill still owed is overdue against a far
+    // future day and none against a past one, a row says so, and the three
+    // figures above the list count the same bills the filters return.
+    let narrowed = |status: &'static str, as_of: jiff::civil::Date| DocumentPageQuery {
+        status: Some(status.into()),
+        as_of: Some(as_of),
+        ..Default::default()
+    };
+    let (late, early) = (date(2999, 1, 1), date(1900, 1, 1));
+    let unpaid = p
+        .page_documents(&manager, COMPANY, &narrowed("unpaid", late))
+        .await?;
+    let overdue = p
+        .page_documents(&manager, COMPANY, &narrowed("overdue", late))
+        .await?;
+    assert!(unpaid.total > 0);
+    assert_eq!(overdue.total, unpaid.total);
+    assert!(overdue.documents.iter().all(|d| {
+        d.status == "posted"
+            && d.outstanding.is_some_and(|owed| owed > Decimal::ZERO)
+            && d.payment_status.is_some()
+            && d.days_overdue.is_some_and(|days| days > 0)
+    }));
+    assert_eq!(
+        p.page_documents(&manager, COMPANY, &narrowed("overdue", early))
+            .await?
+            .total,
+        0
+    );
+    assert!(p
+        .page_documents(&manager, COMPANY, &narrowed("paid", late))
+        .await?
+        .documents
+        .iter()
+        .all(
+            |d| d.payment_status == Some(bilibi_finance_ledger::PaymentStatus::Paid)
+                && d.days_overdue.is_none()
+        ));
+    assert!(page
+        .documents
+        .iter()
+        .filter(|d| d.status != "posted")
+        .all(|d| d.payment_status.is_none() && d.outstanding.is_none()));
+    let summary = p.summarize_documents(&manager, COMPANY, Some(late)).await?;
+    assert_eq!(summary.awaiting_payment.count, unpaid.total);
+    assert_eq!(summary.overdue.count, unpaid.total);
+    assert_eq!(summary.overdue.amount, summary.awaiting_payment.amount);
+    assert!(summary.oldest_days_overdue.is_some_and(|days| days > 0));
+    let summary = p
+        .summarize_documents(&manager, COMPANY, Some(early))
+        .await?;
+    assert_eq!(summary.overdue.count, 0);
+    assert_eq!(summary.oldest_days_overdue, None);
+    refused(
+        "an unknown bills status filter",
+        p.page_documents(
+            &manager,
+            COMPANY,
+            &DocumentPageQuery {
+                status: Some("late".into()),
+                ..Default::default()
+            },
+        )
+        .await,
+        |e| matches!(e, PayablesError::InvalidOption),
+    )?;
     let first = p
         .list_documents(
             &manager,

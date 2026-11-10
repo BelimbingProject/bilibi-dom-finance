@@ -1,6 +1,6 @@
 {#- The source documents of one record (Bilimbi `Finance.Attachments.Web.Panel`
-    render): the standing attachments with a download link each, an upload form
-    for the next and, while the record is not final, replace and remove per
+    render): the standing attachments with a download link each, one "Attach file"
+    button that attaches the file as soon as it is chosen and, while the record is not final, replace and remove per
     attachment. The root carries the panel's id and `data-target`, so every
     control inside reaches this panel. -#}
 {%- import "components.html" as ui -%}
@@ -36,7 +36,6 @@
 <form id="{{ panel }}-form" data-event="attach" class="mt-4 space-y-3">
 {% if replacing %}<p id="{{ panel }}-replacing" class="text-sm">The file you choose replaces the one selected; the old one stays in the record's history. {% call ui::button(button_type="button", event="cancel_action") %}Keep it instead{% endcall %}</p>{% endif %}
 {{ input|safe }}
-{% call ui::button(id=submit_id, button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Keeping…") %}{% if replacing %}Replace file{% else %}Attach file{% endif %}{% endcall %}
 </form>
 {% endif %}
 {% endcall %}
