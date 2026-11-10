@@ -68,6 +68,7 @@ pub(super) struct Document {
     email_enabled: bool,
     /// The email a person is writing in the Send dialog.
     sending: Option<send::Sending>,
+    subscribed: bool,
     /// Where to go once this event is answered: the page itself after an
     /// issue, so the browser tab takes the document's new name.
     redirect: Option<String>,
@@ -112,6 +113,7 @@ impl Document {
             issuing: None,
             email_enabled: false,
             sending: None,
+            subscribed: false,
             redirect: None,
             editing: None,
             lines_cols: f::columns(
@@ -748,6 +750,15 @@ impl LiveState<Scope, Error> for Document {
                 ..LiveBody::default()
             })
         })
+    }
+
+    /// A settled send (the delivery job's outcome) reads the page again, so
+    /// History turns from Sending to Sent without a reload.
+    fn subscriptions(&mut self) -> Vec<bilibi_ui::page::Subscription> {
+        if std::mem::replace(&mut self.subscribed, true) {
+            return vec![];
+        }
+        vec![crate::email_delivery::settled()]
     }
 
     fn panels(&self) -> Vec<PanelSpec> {

@@ -532,7 +532,7 @@ impl Receivables {
                         .as_str()
                         .filter(|e| !e.is_empty())
                         .map(str::to_owned),
-                    no_address: "This customer has no email address, so the invoice cannot be emailed from here. Add one to the customer first, or issue without sending.",
+                    no_address: "This customer has no email address. Issue the invoice, then type an address under Send by email.",
                 },
                 &json!({}),
             )

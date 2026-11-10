@@ -7,7 +7,7 @@ use crate::{
     email::{RECORD, WORKER},
     store, DocumentEmail, ReceivableError as R, Receivables, ISSUE, VIEW,
 };
-use bilibi_database::{Change, Error};
+use bilibi_database::{Change as Audited, Error};
 use bilibi_mail::{Address, Attachment, Message};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
@@ -15,9 +15,25 @@ use bilibi_queue::{
 };
 use bilibi_tenancy::Scope;
 use serde_json::Value;
-use std::sync::Arc;
+use bilibi_ui::page::{Change, Subscription};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::broadcast;
 
 pub(crate) const JOB_SERVICE: &str = "finance/receivables.invoice-email";
+
+/// Told once a send is settled, so an open invoice page reads again and its
+/// History turns from Sending to Sent. Process-local, as the Platform's page
+/// broadcasts are: a page served by another process shows it on its next read.
+static SETTLED: OnceLock<broadcast::Sender<Change>> = OnceLock::new();
+fn settled_sender() -> &'static broadcast::Sender<Change> {
+    SETTLED.get_or_init(|| broadcast::channel(16).0)
+}
+/// A page's subscription to settled sends.
+pub(crate) fn settled() -> Subscription {
+    Subscription {
+        receiver: settled_sender().subscribe(),
+    }
+}
 
 fn arguments(args: Value) -> bilibi_database::Result<Value> {
     let object = args.as_object().ok_or(Error::Invalid)?;
@@ -231,7 +247,7 @@ impl SendInvoice {
                     .get(0);
                 Ok((
                     (),
-                    vec![Change {
+                    vec![Audited {
                         kind: RECORD.into(),
                         id: request,
                         old: old.get(0),
@@ -241,6 +257,8 @@ impl SendInvoice {
             })
         })
         .await?;
-        tx.commit().await
+        tx.commit().await?;
+        let _ = settled_sender().send(Change { tenant, user: None });
+        Ok(())
     }
 }

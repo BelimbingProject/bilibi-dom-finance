@@ -8,6 +8,8 @@
 //! queue worker then delivers the mail into the Platform's development
 //! mailbox (`BILIBI_MAIL_DIR`, no `MAIL_HOST`), and the proof reads the
 //! message back: recipient, sender name, reply address, subject and the PDF.
+//! `launcher-desk` (after `./bilibi start` on the same database) gives the
+//! launcher's administrator a desk in Company 001 for a browser walkthrough.
 use bilibi_agent_api::{Handler, Registry};
 use bilibi_database::{pool, Db, MutationBoundary};
 use bilibi_finance_receivables::Receivables;
@@ -82,6 +84,18 @@ async fn main() -> Proof<()> {
     bilibi_database::migrate(&db, &bilibi_module_registry::discover()?).await?;
     let app = bilibi_web::App::new(db.clone(), &origin)?;
     bilibi_finance_walkthrough_fixture::without_step_up(&app.services)?;
+    if std::env::args().any(|arg| arg == "launcher-desk") {
+        // Browser proof on this disposable database, after the Platform
+        // launcher has seeded its administrator: a desk in Company 001, so
+        // that person can open the invoices this proof left there.
+        let client = db.get().await?;
+        let row = client
+            .query_one("SELECT u.tenant_id,u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE i.email='ai@agent.my'", &[])
+            .await?;
+        bilibi_finance_walkthrough_fixture::give_desk(&db, row.get(0), row.get(1), COMPANY).await?;
+        println!("The launcher's administrator has a desk in Company 001.");
+        return Ok(());
+    }
     let installed = install(&db, &app.services).await?;
     let services = &app.services;
     let scope = sign_in(&db, services, 1, 1).await?;
