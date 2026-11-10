@@ -45,6 +45,7 @@ const ISSUED: Table = Table {
         "document_number",
         "document_reference",
         "receivable_account_id",
+        "issue_date",
         "due_date",
         "party_code",
         "party_name",
@@ -164,12 +165,25 @@ impl Receivables {
         let series = store::find(client, SERIES, tenant, company, Some(draft.series_id))
             .await?
             .ok_or(R::SeriesNotFound)?;
-        let date: Date = draft
-            .issue_date
-            .as_deref()
-            .ok_or_else(|| invalid("issue_date", "can't be blank"))?
-            .parse()
-            .map_err(|_| invalid("issue_date", "is invalid"))?;
+        // A draft saved without an issue date is issued today, in the
+        // company's own time. The review shows the date before anyone confirms.
+        let date: Date = match draft.issue_date.as_deref() {
+            Some(text) => text
+                .parse()
+                .map_err(|_| invalid("issue_date", "is invalid"))?,
+            None => {
+                let today = self.today(client, scope, company).await?;
+                if draft
+                    .due_date
+                    .as_deref()
+                    .is_some_and(|due| due < today.to_string().as_str())
+                {
+                    return Err(invalid("due_date", "cannot be before the issue date"));
+                }
+                data["issue_date"] = json!(today.to_string());
+                today
+            }
+        };
         if draft.kind == "invoice" {
             Self::invoiceable(&customer)?;
         }
@@ -298,6 +312,30 @@ impl Receivables {
             // unrelated defaults cannot change this saved draft's entry.
             facts: json!({"draft":draft,"customer":customer,"party":customer.party,"series":series,"credited_invoice":credited}),
         })
+    }
+
+    /// Today's date where the company is, from its time zone setting.
+    async fn today(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company: i64,
+    ) -> Result<Date> {
+        let zone = self
+            .settings
+            .get(
+                client,
+                scope,
+                bilibi_settings::Target::Company(company.try_into().map_err(|_| Error::Invalid)?),
+                bilibi_datetime::TIMEZONE_KEY,
+            )
+            .await?;
+        let zone = zone
+            .value
+            .as_str()
+            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+            .unwrap_or(jiff::tz::TimeZone::UTC);
+        Ok(jiff::Timestamp::now().to_zoned(zone).date())
     }
 
     pub(super) async fn issue_document_on(

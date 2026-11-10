@@ -1,47 +1,36 @@
 //! One invoice or credit note: header, party, lines, tax and posting status,
 //! the receipts and credits applied to it, and its source documents. A draft
-//! edits in place (dates and description) and its lines open in a dialog; it
-//! is issued or discarded after a confirmation. Reads `document.get`; writes
-//! call `draft.update`, `draft.discard` and `document.issue`. The page is
-//! drawn in `document/view.rs`; an address with `?do=discard` or
-//! `?do=write_off` (its local icon buttons) opens that dialog.
+//! edits in place (dates through the shared date box, and the description)
+//! and its lines open in a dialog (`lines.rs`, the editor New invoice uses);
+//! it is issued (`issue.rs`) or discarded after a confirmation. Reads
+//! `document.get`; writes call `draft.update`, `draft.discard` and
+//! `document.issue`. The page is drawn in `document/view.rs`; an address with
+//! `?do=discard` or `?do=write_off` (its local icon buttons) opens that dialog.
 mod view;
 
 use super::{
     format::{self as f, Errors},
-    render, Account, Flash, Pages, Written,
+    issue::{self, Asked, Issue},
+    lines::Lines,
+    render, Account, Flash, Pages, Written, INVOICES,
 };
 use crate::{
     Customer, Document as Record, Payment, Series, TaxCode, ISSUE, MANAGE_DOCUMENTS, POST_PAYMENTS,
 };
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{PartyReview, RecordActions};
+use bilibi_finance_ledger::RecordActions;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, Button, ButtonVariant, Choice, Combobox, CommitStates, CommitStatus, Field, Form, Html,
-    InputKind, ListColumns, ModalWidth, SectionHeading, StatusKind,
+    params, Button, ButtonVariant, CommitStates, CommitStatus, Form, Html, ListColumns, ModalWidth,
+    StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-enum Dialog {
-    Issue,
-    Discard,
-}
-
-/// One line of the lines dialog, as typed.
-#[derive(Clone, Default)]
-struct Line {
-    description: String,
-    quantity: String,
-    unit_price: String,
-    account_id: String,
-    tax_code_id: String,
-}
-
-struct Lines {
-    rows: Vec<Line>,
+/// The draft's lines being edited, and what the last save was refused for.
+struct Editing {
+    lines: Lines,
     errors: Errors,
 }
 
@@ -68,10 +57,13 @@ pub(super) struct Document {
     requested: Option<String>,
     statuses: CommitStates,
     flash: Flash,
-    dialog: Option<Dialog>,
-    issue_review: Option<Value>,
-    issue_banner: Html,
-    editing: Option<Lines>,
+    discarding: bool,
+    /// The reviewed issue that waits for the person's confirmation.
+    issuing: Option<Issue>,
+    /// Where to go once this event is answered: the page itself after an
+    /// issue, so the browser tab takes the document's new name.
+    redirect: Option<String>,
+    editing: Option<Editing>,
     lines_cols: ListColumns,
     tax_cols: ListColumns,
     applied_cols: ListColumns,
@@ -107,9 +99,9 @@ impl Document {
             requested: RecordActions::requested(query),
             statuses: CommitStates::default(),
             flash: Flash::default(),
-            dialog: None,
-            issue_review: None,
-            issue_banner: Html::default(),
+            discarding: false,
+            issuing: None,
+            redirect: None,
             editing: None,
             lines_cols: f::columns(
                 "receivables-invoice-lines-table",
@@ -177,9 +169,7 @@ impl Document {
     async fn open(&mut self, scope: &Scope, action: &str) -> Result<()> {
         match action {
             "discard" => {
-                if self.editable() {
-                    self.dialog = Some(Dialog::Discard);
-                }
+                self.discarding = self.editable();
             }
             "write_off" => {
                 self.write_offs
@@ -344,200 +334,52 @@ impl Document {
         )
     }
 
-    fn lines_dialog(&self, lines: &Lines) -> Result<Html> {
-        let mut labels = vec![];
-        for i in 0..lines.rows.len() {
-            for (key, label) in [
-                ("description", "Description"),
-                ("quantity", "Quantity"),
-                ("unit_price", "Unit price"),
-                ("account_id", "Account"),
-                ("tax_code_id", "Tax code"),
-            ] {
-                labels.push((
-                    format!("lines.{i}.{key}"),
-                    format!("receivables-line-{key}-{i}"),
-                    format!("Line {} {}", i + 1, label.to_lowercase()),
-                ));
-            }
-        }
-        let mut body = render(lines.errors.summary("receivables-lines-errors", &labels))?;
-        let accounts: Vec<Choice> = self
-            .accounts
-            .iter()
-            .filter(|a| a.postable() && a.account_type == "income")
-            .map(Account::choice)
-            .collect();
-        let taxes: Vec<Choice> = self
-            .tax_codes
-            .iter()
-            .filter(|t| t.active)
-            .map(|t| {
-                Choice::new(
-                    format!("{} ({}%)", t.code, f::decimal(t.rate)),
-                    t.id.to_string(),
-                )
-            })
-            .collect();
-        for (i, line) in lines.rows.iter().enumerate() {
-            let err =
-                |key: &str, label: &str| lines.errors.under(&format!("lines.{i}.{key}"), label);
-            body.push(&render(SectionHeading {
-                title: &format!("Line {}", i + 1),
-                actions: render(Button {
-                    id: &format!("receivables-line-remove-{i}"),
-                    button_type: "button",
-                    event: "remove_line",
-                    name: "index",
-                    value: &i.to_string(),
-                    body: Html::text("Remove"),
-                    ..Button::default()
-                })?,
-                ..SectionHeading::default()
-            })?);
-            body.push(&render(
-                Field::in_form("line", &format!("description_{i}"))
-                    .id(format!("receivables-line-description-{i}"))
-                    .label("Description")
-                    .attr("maxlength", "500")
-                    .value(line.description.clone())
-                    .errors(err("description", "Description")),
-            )?);
-            let mut row = Html::EMPTY;
-            row.push(&render(
-                Field::in_form("line", &format!("quantity_{i}"))
-                    .id(format!("receivables-line-quantity-{i}"))
-                    .label("Quantity")
-                    .attr("inputmode", "decimal")
-                    .value(line.quantity.clone())
-                    .errors(err("quantity", "Quantity")),
-            )?);
-            row.push(&render(
-                Field::in_form("line", &format!("unit_price_{i}"))
-                    .id(format!("receivables-line-unit_price-{i}"))
-                    .label("Unit price")
-                    .attr("inputmode", "decimal")
-                    .value(line.unit_price.clone())
-                    .errors(err("unit_price", "Unit price")),
-            )?);
-            row.push(&render(
-                Combobox::new(
-                    format!("receivables-line-account_id-{i}"),
-                    format!("line[account_id_{i}]"),
-                )
-                .label("Account")
-                .placeholder("Company default")
-                .options(accounts.clone())
-                .value(line.account_id.clone())
-                .errors(err("account_id", "Account")),
-            )?);
-            row.push(&render(
-                Field::in_form("line", &format!("tax_code_id_{i}"))
-                    .id(format!("receivables-line-tax_code_id-{i}"))
-                    .label("Tax code")
-                    .kind(InputKind::Select)
-                    .prompt("No tax")
-                    .options(taxes.clone())
-                    .value(line.tax_code_id.clone())
-                    .errors(err("tax_code_id", "Tax code")),
-            )?);
-            body.push(&f::four(row)?);
-        }
-        let form = render(Form {
-            id: "receivables-lines-form",
-            event: "lines_change",
-            change: true,
-            class: "mt-4",
-            body,
-            actions: Html::EMPTY,
-        })?;
-        let mut buttons = render(Button {
-            id: "receivables-lines-add",
-            button_type: "button",
-            event: "add_line",
-            body: Html::text("Add line"),
-            ..Button::default()
-        })?;
-        buttons.push(&render(Button {
+    fn lines_dialog(&self, editing: &Editing) -> Result<Html> {
+        let mut body = render(
+            editing
+                .errors
+                .summary("receivables-lines-errors", &editing.lines.labels()),
+        )?;
+        body.push(&editing.lines.body(
+            &editing.errors,
+            &self.accounts,
+            &self.tax_codes,
+            &self.figures,
+        )?);
+        let mut actions = render(Button {
             id: "receivables-lines-cancel",
             button_type: "button",
             event: "cancel_lines",
-            class: "ml-auto",
             body: Html::text("Cancel"),
             ..Button::default()
-        })?);
-        buttons.push(&render(Button {
+        })?;
+        actions.push(&render(Button {
             id: "receivables-lines-save",
-            button_type: "button",
-            event: "save_lines",
+            button_type: "submit",
             variant: ButtonVariant::Primary,
             working: "Saving…",
             body: Html::text("Save lines"),
             ..Button::default()
         })?);
-        let mut inner = form;
-        inner.push(&f::buttons(buttons)?);
+        let form = Form {
+            id: "receivables-lines-form",
+            event: "lines_change",
+            change: true,
+            class: "mt-4",
+            body,
+            actions: f::actions(actions)?,
+        }
+        .submit_event("save_lines")
+        .map_err(|_| Error::Internal)?;
         f::modal(
             "receivables-lines",
             "Edit lines",
-            "Each line is quantity times unit price, rounded to the book's smallest unit. Saving replaces all the lines.",
+            "",
             "cancel_lines",
             ModalWidth::Wide,
             &self.flash,
-            inner,
+            form,
         )
-    }
-
-    /// Fold the dialog's typed values into the draft lines.
-    fn take_lines(&mut self, v: &Value) {
-        let Some(editing) = &mut self.editing else {
-            return;
-        };
-        let form = params::form_values(v, "line");
-        for (i, line) in editing.rows.iter_mut().enumerate() {
-            let get = |key: &str| form.get(&format!("{key}_{i}")).cloned();
-            if let Some(t) = get("description") {
-                line.description = t
-            }
-            if let Some(t) = get("quantity") {
-                line.quantity = t
-            }
-            if let Some(t) = get("unit_price") {
-                line.unit_price = t
-            }
-            if let Some(t) = get("account_id") {
-                line.account_id = t
-            }
-            if let Some(t) = get("tax_code_id") {
-                line.tax_code_id = t
-            }
-        }
-    }
-
-    fn lines_input(&self) -> Value {
-        let rows = self
-            .editing
-            .as_ref()
-            .map(|e| e.rows.as_slice())
-            .unwrap_or(&[]);
-        let lines: Vec<Value> = rows
-            .iter()
-            .map(|l| {
-                let mut line = json!({
-                    "description": l.description.trim(),
-                    "quantity": l.quantity.trim(),
-                    "unit_price": l.unit_price.trim(),
-                });
-                if let Ok(id) = l.account_id.parse::<i64>() {
-                    line["account_id"] = json!(id)
-                }
-                if let Ok(id) = l.tax_code_id.parse::<i64>() {
-                    line["tax_code_id"] = json!(id)
-                }
-                line
-            })
-            .collect();
-        json!({"document_id": self.id, "lines": lines})
     }
 
     async fn save_field(&mut self, scope: &Scope, credential: &str, v: &Value) -> Result<()> {
@@ -589,6 +431,20 @@ impl Document {
         {
             return Err(Error::Invalid);
         }
+        // A message answers the action before it: it does not follow the
+        // person into the next dialog or the next action.
+        if !matches!(
+            event,
+            "clear-flash"
+                | "lines_grid"
+                | "tax_grid"
+                | "applied_grid"
+                | "write_off_grid"
+                | "credit_grid"
+                | "lines_change"
+        ) {
+            self.flash.0 = None;
+        }
         match event {
             "ask_credit_apply" | "ask_credit_refund" | "ask_credit_reverse" | "cancel_credit"
             | "change_credit" | "preview_credit" | "commit_credit" | "credit_grid" => {
@@ -627,40 +483,14 @@ impl Document {
             }
             "save_draft" => self.save_field(scope, credential, v).await?,
             "cancel_dialog" => {
-                self.dialog = None;
-                self.issue_review = None;
+                self.discarding = false;
+                self.issuing = None;
             }
             "ask_issue" => {
                 if self.can_issue && self.draft() {
-                    let mut input = json!({"document_id":self.id});
-                    input["company_id"] = json!(Pages::company(scope));
-                    match self
-                        .pages
-                        .party_picker()
-                        .review_core(
-                            scope,
-                            credential,
-                            "ask_issue",
-                            "finance.receivables.document.issue",
-                            input,
-                        )
-                        .await?
-                    {
-                        PartyReview::Valid { review } => {
-                            self.issue_banner = self
-                                .pages
-                                .plans
-                                .instance()
-                                .await?
-                                .banner("receivables-issue-instance", "mb-4")
-                                .map_err(|_| Error::Internal)?;
-                            self.issue_review = Some(review);
-                            self.dialog = Some(Dialog::Issue);
-                        }
-                        PartyReview::Invalid(fields) => {
-                            self.flash.set(StatusKind::Error, f::sentences(&fields))
-                        }
-                        PartyReview::Refused(message) => self.flash.set(StatusKind::Error, message),
+                    match Issue::ask(&self.pages, scope, credential, "ask_issue", self.id).await? {
+                        Asked::Ready(issuing) => self.issuing = Some(issuing),
+                        Asked::Refused(message) => self.flash.set(StatusKind::Error, message),
                     }
                 } else {
                     self.flash.set(
@@ -671,7 +501,7 @@ impl Document {
             }
             "ask_discard" => {
                 if self.editable() {
-                    self.dialog = Some(Dialog::Discard);
+                    self.discarding = true;
                 } else {
                     self.flash.set(
                         StatusKind::Error,
@@ -680,51 +510,38 @@ impl Document {
                 }
             }
             "issue" | "discard" => {
-                let issue = v["type"] == "issue";
-                self.dialog = None;
-                let (event, contract) = if issue {
-                    ("issue", "finance.receivables.document.issue")
-                } else {
-                    ("discard", "finance.receivables.draft.discard")
-                };
+                let issue = event == "issue";
+                self.discarding = false;
                 let written = if issue {
-                    let Some(_) = self.issue_review.take() else {
+                    let Some(issuing) = self.issuing.take() else {
                         self.flash
                             .set(StatusKind::Error, "Review this invoice before issuing it.");
                         return Ok(());
                     };
-                    let input = json!({"company_id":Pages::company(scope),"document_id":self.id});
-                    let answer = self
-                        .pages
-                        .contracts
-                        .commit(&Pages::call(scope, credential, event, contract), input)
-                        .await
-                        .map(|mut value| value["results"][0]["result"].take());
-                    Pages::written(contract, event, answer)?
+                    issuing
+                        .commit(&self.pages, scope, credential, "issue")
+                        .await?
                 } else {
                     self.pages
                         .write(
                             scope,
                             credential,
-                            event,
-                            contract,
+                            "discard",
+                            "finance.receivables.draft.discard",
                             json!({"document_id":self.id}),
                         )
                         .await?
                 };
                 match written {
                     Written::Done(record) => {
-                        self.flash.set(
-                            StatusKind::Success,
-                            if issue {
-                                match record["document_reference"].as_str() {
-                                    Some(r) => format!("Issued as {r} and posted to the ledger."),
-                                    None => "Issued and posted to the ledger.".into(),
-                                }
-                            } else {
-                                "Draft discarded.".to_owned()
-                            },
-                        );
+                        if issue {
+                            // The page is opened again under its new name, so
+                            // the browser tab says INV-00006, not "Draft #9".
+                            self.redirect = Some(format!("{INVOICES}/{}", self.id));
+                            self.flash.set(StatusKind::Success, issue::issued(&record));
+                        } else {
+                            self.flash.set(StatusKind::Success, "Draft discarded.");
+                        }
                     }
                     Written::Invalid(fields) => {
                         let message = f::sentences(&fields);
@@ -752,22 +569,8 @@ impl Document {
             }
             "edit_lines" => {
                 if let Some(d) = self.record.as_ref().filter(|_| self.editable()) {
-                    let mut rows: Vec<Line> = d
-                        .lines
-                        .iter()
-                        .map(|l| Line {
-                            description: l.description.clone(),
-                            quantity: f::decimal(l.quantity),
-                            unit_price: f::price(l.unit_price),
-                            account_id: l.account_id.to_string(),
-                            tax_code_id: l.tax_code_id.map(|i| i.to_string()).unwrap_or_default(),
-                        })
-                        .collect();
-                    if rows.is_empty() {
-                        rows.push(Line::default());
-                    }
-                    self.editing = Some(Lines {
-                        rows,
+                    self.editing = Some(Editing {
+                        lines: Lines::of(&d.lines),
                         errors: Errors::default(),
                     });
                 } else {
@@ -777,24 +580,21 @@ impl Document {
                     );
                 }
             }
-            "lines_change" => self.take_lines(v),
-            "add_line" => {
-                if let Some(e) = &mut self.editing {
-                    e.rows.push(Line::default());
+            "lines_change" => {
+                if let Some(editing) = &mut self.editing {
+                    editing.lines.read(v);
                 }
             }
-            "remove_line" => {
-                let index = v["index"].as_str().and_then(|i| i.parse::<usize>().ok());
-                if let (Some(e), Some(i)) = (&mut self.editing, index) {
-                    if i < e.rows.len() {
-                        e.rows.remove(i);
-                    }
+            "add_line" | "remove_line" | "paste_open" | "paste_close" | "paste_lines" => {
+                if let Some(editing) = &mut self.editing {
+                    editing.lines.event(v);
                 }
             }
             "cancel_lines" => self.editing = None,
             "save_lines" => {
-                if self.editing.is_some() {
-                    let input = self.lines_input();
+                if let Some(editing) = &mut self.editing {
+                    editing.lines.read(v);
+                    let input = json!({"document_id": self.id, "lines": editing.lines.input()});
                     match self
                         .pages
                         .write(
@@ -810,11 +610,7 @@ impl Document {
                             self.editing = None;
                             self.flash.set(StatusKind::Success, "Lines saved.");
                         }
-                        Written::Invalid(fields) => {
-                            if let Some(e) = &mut self.editing {
-                                e.errors = Errors(fields);
-                            }
-                        }
+                        Written::Invalid(fields) => editing.errors = Errors(fields),
                         Written::Refused(message) => {
                             self.editing = None;
                             self.flash.set(
@@ -867,9 +663,13 @@ impl LiveState<Scope, Error> for Document {
                 self.flash
                     .set(StatusKind::Error, "That document is no longer available.");
             }
+            let redirect = self.redirect.take();
+            let flash = redirect.is_some().then(|| self.flash.0.take()).flatten();
             Ok(LiveBody {
                 html: self.body(r.scope).await?,
                 query: super::credits::balance_params(&self.balance_pins),
+                redirect,
+                flash,
                 ..LiveBody::default()
             })
         })
@@ -891,15 +691,4 @@ impl LiveState<Scope, Error> for Document {
             query: HashMap::new(),
         }]
     }
-}
-
-#[derive(askama::Template)]
-#[template(
-    source = r#"{% import "dialog.html" as ui %}{% call ui::confirm_dialog(id="receivables-invoice-issue-confirm", consequence=consequence, detail=detail, confirm="Issue", working="Issuing…", confirm_event="issue", cancel_event="cancel_dialog", body=body) %}{% endcall %}"#,
-    ext = "html"
-)]
-struct IssueConfirmation {
-    consequence: String,
-    detail: String,
-    body: Html,
 }

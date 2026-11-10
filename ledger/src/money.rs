@@ -44,7 +44,7 @@ pub struct Money(Decimal);
 /// shows beside the field.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MoneyError {
-    #[error("is invalid")]
+    #[error("must be a number, like 1,250.00")]
     Unparsable,
     #[error("has more than {0} decimal places")]
     TooFine(MinorUnits),
@@ -73,10 +73,45 @@ impl Money {
     pub(crate) fn stored(amount: Decimal) -> Self {
         Self(amount.normalize())
     }
-    /// An amount written in decimal notation (`"12.50"`, `"-3"`).
+    /// An amount as a person types or pastes it: decimal notation (`"12.50"`,
+    /// `"-3"`), with or without thousands commas (`"1,250.00"`, the way
+    /// [`Money::display`] writes it).
     pub fn parse(text: &str, units: MinorUnits) -> Result<Self, MoneyError> {
-        let amount = Decimal::from_str_exact(text.trim()).map_err(|_| MoneyError::Unparsable)?;
+        let plain = Self::ungrouped(text).ok_or(MoneyError::Unparsable)?;
+        let amount = Decimal::from_str_exact(&plain).map_err(|_| MoneyError::Unparsable)?;
         Self::new(amount, units)
+    }
+    /// A typed figure without its thousands commas (`"1,250.00"` is
+    /// `"1250.00"`), for a parser of a module's own (a quantity, a unit price).
+    /// `None` when a comma is anything but a thousands separator (`"1,25"`,
+    /// `"12,3456"`, `"1.5,000"`): a decimal comma is refused, never read as a
+    /// larger number.
+    pub fn ungrouped(text: &str) -> Option<String> {
+        let text = text.trim();
+        if !text.contains(',') {
+            return Some(text.to_owned());
+        }
+        let digits = text.strip_prefix(['-', '+']).unwrap_or(text);
+        let sign = &text[..text.len() - digits.len()];
+        let (whole, rest) = match digits.find('.') {
+            Some(at) => digits.split_at(at),
+            None => (digits, ""),
+        };
+        let mut groups = whole.split(',');
+        let first = groups.next()?;
+        let numeric = |group: &str| group.bytes().all(|b| b.is_ascii_digit());
+        if first.is_empty() || first.len() > 3 || !numeric(first) || rest.contains(',') {
+            return None;
+        }
+        let mut plain = format!("{sign}{first}");
+        for group in groups {
+            if group.len() != 3 || !numeric(group) {
+                return None;
+            }
+            plain.push_str(group);
+        }
+        plain.push_str(rest);
+        Some(plain)
     }
     /// A page amount with thousands separators and the book's decimal places.
     /// `shown` remains plain decimal notation for editable values and contracts.

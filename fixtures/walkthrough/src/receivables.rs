@@ -197,7 +197,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         )
         .await,
         "rate",
-        "is invalid",
+        "Enter the rate as a number, like 6.",
     );
     let unchanged = ar
         .update_tax_code(

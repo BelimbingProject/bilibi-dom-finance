@@ -4,13 +4,12 @@
 //! a row dropped on the page raises `drop_records`. Both open the New invoice
 //! dialog with that customer chosen, as if it had been picked there; nothing
 //! is saved until the person saves the draft through `draft.create`.
-use super::{Documents, Draft, Errors};
-use crate::{web::INVOICE_TARGET, MANAGE_DOCUMENTS};
+use super::{Documents, InvoiceForm};
+use crate::{web::INVOICE_TARGET, ISSUE, MANAGE_DOCUMENTS};
 use bilibi_database::Result;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{Html, StatusKind};
 use serde_json::json;
-use std::collections::HashMap;
 
 impl Documents {
     /// Opens the New invoice or New credit note dialog, as its button does.
@@ -33,16 +32,25 @@ impl Documents {
                 .await?
                 .0;
         }
-        let mut values = HashMap::new();
+        self.accounts = self.pages.accounts(scope).await;
+        self.tax_codes = self
+            .pages
+            .read_all(
+                scope,
+                "finance.receivables.tax_code.list",
+                json!({}),
+                ("after_code", "next_after_code"),
+            )
+            .await?
+            .0;
+        self.can_issue = self.pages.allowed(scope, ISSUE).await?;
         let mut open = self.series.iter().filter(|s| s.kind == kind && s.active);
-        if let (Some(only), None) = (open.next(), open.next()) {
-            values.insert("series_id".into(), only.id.to_string());
-        }
-        self.create = Some(Draft {
-            kind,
-            values,
-            errors: Errors::default(),
-        });
+        let only = match (open.next(), open.next()) {
+            (Some(only), None) => Some(only.id),
+            _ => None,
+        };
+        self.issuing = None;
+        self.create = Some(InvoiceForm::new(kind, self.pages.today(scope).await, only));
         Ok(true)
     }
 
@@ -64,13 +72,9 @@ impl Documents {
                     .iter()
                     .find(|d| d.id == invoice)
                     .map(|d| d.customer_id);
-                if let (Some(draft), Some(customer)) = (self.create.as_mut(), customer) {
-                    draft
-                        .values
-                        .insert("credited_document_id".into(), invoice.to_string());
-                    draft
-                        .values
-                        .insert("customer_id".into(), customer.to_string());
+                if let (Some(form), Some(customer)) = (self.create.as_mut(), customer) {
+                    form.credited = invoice.to_string();
+                    form.customer = customer.to_string();
                 }
             }
         }
@@ -110,8 +114,8 @@ impl Documents {
         match customer {
             Some((id, true)) => {
                 if self.start_draft(scope, "invoice").await? {
-                    if let Some(draft) = self.create.as_mut() {
-                        draft.values.insert("customer_id".into(), id.to_string());
+                    if let Some(form) = self.create.as_mut() {
+                        form.customer = id.to_string();
                     }
                 }
             }

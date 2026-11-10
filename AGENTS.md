@@ -65,7 +65,11 @@ they govern this code and are not copied here.
 - Hold amounts as `Money` built with the book's `MinorUnits` (`Money::parse`,
   `Money::new`), never a bare `Decimal` from input: the columns are
   `numeric(20,4)`, and an amount finer than the book's minor units is refused
-  by the type, not rounded by PostgreSQL.
+  by the type, not rounded by PostgreSQL. A typed amount goes through
+  `Money::parse`, which accepts thousands commas (`1,250.00`); a figure parser
+  of a module's own (a quantity, a unit price) first calls `Money::ungrouped`
+  (`receivables/src/validation.rs`), never refuses the way the pages show
+  amounts, and says what to type when it still fails.
 - Prove behaviour with `fixtures/walkthrough` on a disposable database
   (`cargo run -p bilibi-finance-walkthrough-fixture`), extending its chart and
   scenarios, not with unit tests or mocks: the gate is
@@ -151,6 +155,8 @@ they govern this code and are not copied here.
 - A settings page names the company it changes (header subtitle and each dialog's description, through `Pages::company_name`); edit a settings row's name, status or account in place with `InlineEdit`/`InlineChoice` keyed per row on a `save_event` listed in `PAGE_WRITES`, and open a dialog only for a new record whose fields are fixed once saved. `receivables/src/web/settings.rs` and its twin `payables/src/web/setup.rs` are the running pattern (an on/off is a `Toggle` in the row, a new record a dialog from its section heading), including a setup that needs two values in one write (the first choice waits on the page, nothing half-set is persisted) and a change history folded under `Fold` (`DESIGN.md`: History is a quiet disclosure).
 - Write from a page with `Pages::write` (the contract the agent doors call, event listed in `PageWrites`), never `Payables::approve_document` and the other facade writes: the facade skips the contract's validation and review, so a person and an agent stop getting the same answer. Show `Written::Fields` (keyed by input path) on the fields, not as one flash.
 - Record a bill or debit note, or correct a draft, in the Bills list's dialog (`payables/src/web/bill_form.rs`, opened by "+ Bill", `?correct=<draft>` and `?debit_note=<bill>`), as New invoice is the Invoices list's; never a page of its own (one thing, one door).
+- Edit a date in place with `InlineField::input_type("date")` and a `display_value` from `DisplayContext::render_date` (`receivables/src/web/document/view.rs`), never a plain text `InlineEdit`: the shared date box takes "9 Nov 2026", "9/11/2026" or a calendar pick, and plain text accepted only `2026-11-09`.
+- Draw an invoice's or credit note's editable lines with `Lines` (`receivables/src/web/lines.rs`: each line's amount and the totals as typed, add, remove and paste from a spreadsheet) and its issue confirmation with `Issue` (`receivables/src/web/issue.rs`), never a second lines form or confirmation: New invoice and the draft page share both. Clear a page's flash when the next action starts (`Document::event`), so an old refusal never shows inside the next dialog.
 - A recorded document is immutable, so "edit a draft" is a corrected draft that replaces it, through `finance.payables.bill.replace_draft` (`Payables::replace_draft_on` voids the old draft and records the new one in one transaction, so a refusal leaves the draft as it was); never void then create in two calls, and do not add an update path. List a page of payment requests with `page_payment_requests` (newest first, the total from SQL), never by loading batches of `list_payment_requests` and cutting them, which drops the newest. A form with many fields reads its own `name[...]` keys: `params::form_values` keeps only 64.
 - Leave builder detail (a fingerprint, an environment every row shares, a
   stored unit code) out of a list's default columns: mount the list without
