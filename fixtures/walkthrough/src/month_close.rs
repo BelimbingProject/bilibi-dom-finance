@@ -22,7 +22,12 @@ fn lacks(body: &LiveBody, unexpected: &str) {
     assert!(!body.html.contains(unexpected), "page shows {unexpected}");
 }
 
-async fn act(state: &mut State, scope: &Scope, credential: &str, event: Value) -> Outcome<LiveBody> {
+async fn act(
+    state: &mut State,
+    scope: &Scope,
+    credential: &str,
+    event: Value,
+) -> Outcome<LiveBody> {
     Ok(state
         .update(LiveRequest {
             scope,
@@ -66,11 +71,15 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
         );
         if check["state"] == "open" {
             assert!(
-                check["path"].as_str().is_some_and(|path| path.starts_with("/finance/")),
+                check["path"]
+                    .as_str()
+                    .is_some_and(|path| path.starts_with("/finance/")),
                 "{} has nowhere to go",
                 check["id"]
             );
-            assert!(check["action"].as_str().is_some_and(|action| !action.is_empty()));
+            assert!(check["action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()));
         }
     }
     let ids: Vec<&str> = checks.iter().filter_map(|c| c["id"].as_str()).collect();
@@ -89,11 +98,18 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
     ] {
         assert!(ids.contains(&id), "no {id} check");
     }
-    assert!(ids.iter().any(|id| id.starts_with("bank-")), "no bank check");
+    assert!(
+        ids.iter().any(|id| id.starts_with("bank-")),
+        "no bank check"
+    );
     let state = |id: &str| {
         checks
             .iter()
-            .find(|c| c["id"].as_str().is_some_and(|i| i == id || i.starts_with(id)))
+            .find(|c| {
+                c["id"]
+                    .as_str()
+                    .is_some_and(|i| i == id || i.starts_with(id))
+            })
             .map(|c| c["state"].as_str().unwrap_or_default().to_owned())
             .unwrap_or_default()
     };
@@ -102,7 +118,9 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
     assert_eq!(state("depreciation"), "open");
     assert_eq!(state("bank-"), "open");
     assert_eq!(state("trial-balance"), "clear");
-    assert!(october["open_checks"].as_u64().is_some_and(|open| open >= 2));
+    assert!(october["open_checks"]
+        .as_u64()
+        .is_some_and(|open| open >= 2));
 
     // No month named: the earliest open one, which may close, alone or with
     // the months after it up to November (December closes with the year).
@@ -124,7 +142,11 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
         .await?;
     assert_eq!(run["name"], "February to April 2026");
     assert!(contracts
-        .read(manager, READ, &json!({"company_id": company, "month": "2031-01"}))
+        .read(
+            manager,
+            READ,
+            &json!({"company_id": company, "month": "2031-01"})
+        )
         .await
         .is_err());
 
@@ -173,9 +195,18 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
     has(&closed, "January 2026 is closed.");
     has(&closed, "Close February 2026");
     has(&closed, ">Close February<");
-    assert!(closed.query.contains_key("period"), "the address names February");
+    assert!(
+        closed.query.contains_key("period"),
+        "the address names February"
+    );
 
-    let several = act(&mut page, manager, &login.token, json!({"type":"close_several"})).await?;
+    let several = act(
+        &mut page,
+        manager,
+        &login.token,
+        json!({"type":"close_several"}),
+    )
+    .await?;
     has(&several, "close-months-modal");
     has(&several, "Last month to close");
     let chosen = act(
@@ -187,14 +218,23 @@ pub async fn proof(services: &Services, manager: &Scope, company: i64) -> Outcom
     .await?;
     has(&chosen, "February to April 2026 close together.");
     has(&chosen, ">Close 3 months<");
-    let done = act(&mut page, manager, &login.token, json!({"type":"do_close_several"})).await?;
+    let done = act(
+        &mut page,
+        manager,
+        &login.token,
+        json!({"type":"do_close_several"}),
+    )
+    .await?;
     has(&done, "February to April 2026 are closed.");
     has(&done, "Close May 2026");
     lacks(&done, "close-months-modal");
 
     // A closed month still shows what it left behind, and says it is closed.
     let january = read(json!({"company_id": company, "month": "2026-01"})).await?;
-    assert_eq!(january["close"]["blocked"], "January 2026 is already closed.");
+    assert_eq!(
+        january["close"]["blocked"],
+        "January 2026 is already closed."
+    );
     println!(
         "Month close proof: one contract lists every module's open items with a link each; the earliest open month may close and December waits for the year; the page closes January and lands on February, then closes February to April together and lands on May"
     );

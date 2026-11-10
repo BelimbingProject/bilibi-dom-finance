@@ -396,12 +396,9 @@ impl Reports {
         checks.push(self.trial_balance(scope, company_id, &span).await);
 
         // A count is shown only when it is true: every check was read.
-        let readable = checks.iter().all(|check| {
-            !matches!(
-                check.state,
-                CheckState::NoAccess | CheckState::Unavailable
-            )
-        });
+        let readable = checks
+            .iter()
+            .all(|check| !matches!(check.state, CheckState::NoAccess | CheckState::Unavailable));
         let open_checks = readable.then(|| {
             checks
                 .iter()
@@ -461,10 +458,9 @@ impl Reports {
             };
             checks.push(match read.await {
                 Err(error) => check.failed(matches!(error, E::Unauthorized)),
-                Ok((_, Some(reconciled))) if reconciled >= span.to => check.clear(format!(
-                    "Reconciled to {}.",
-                    dates::display(reconciled)
-                )),
+                Ok((_, Some(reconciled))) if reconciled >= span.to => {
+                    check.clear(format!("Reconciled to {}.", dates::display(reconciled)))
+                }
                 Ok((lines, reconciled)) => {
                     let last = match reconciled {
                         Some(date) => format!("Last reconciled to {}.", dates::display(date)),
@@ -590,7 +586,13 @@ impl Reports {
         };
         let drafts = named("draft-bills", "Draft bills");
         let unposted = named("unposted-bills", "Bills not posted");
-        let read = async { Ok::<_, E>((count("draft").await?, count("approved").await?, count("held").await?)) };
+        let read = async {
+            Ok::<_, E>((
+                count("draft").await?,
+                count("approved").await?,
+                count("held").await?,
+            ))
+        };
         let (draft, approved, held) = match read.await {
             Ok(counts) => counts,
             Err(error) => {
@@ -1034,7 +1036,11 @@ impl Reports {
     async fn trial_balance(&self, scope: &Scope, company: i64, span: &Span) -> Check {
         let check = named("trial-balance", "Trial balance");
         let path = format!("/finance/ledger/trial-balance?as_of={}", span.to);
-        match self.ledger.trial_balance(scope, company, span.to, None).await {
+        match self
+            .ledger
+            .trial_balance(scope, company, span.to, None)
+            .await
+        {
             Err(error) => check.failed(matches!(error, LedgerError::Unauthorized)),
             Ok(balance) if balance.total_debit == balance.total_credit => Check {
                 badge: "Balanced".into(),

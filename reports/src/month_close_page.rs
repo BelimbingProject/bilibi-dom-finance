@@ -400,8 +400,9 @@ impl MonthClose {
                                     ""
                                 }
                             ),
-                            None => "Some checks could not be read, so no total is shown."
-                                .to_owned(),
+                            None => {
+                                "Some checks could not be read, so no total is shown.".to_owned()
+                            }
                         };
                         let mut card = render(SectionHeading {
                             id: "month-close-heading",
@@ -449,9 +450,8 @@ impl MonthClose {
                             .id("month-close-forbidden"),
                     )?),
                     Err(Refused::Said(text)) => {
-                        let mut empty =
-                            EmptyState::missing("This month could not be shown", text)
-                                .id("month-close-missing");
+                        let mut empty = EmptyState::missing("This month could not be shown", text)
+                            .id("month-close-missing");
                         empty.action = render(Button {
                             id: "month-close-years",
                             href: YEARS,
@@ -639,7 +639,10 @@ impl MonthClose {
                     name: list.period.name,
                     month: list.period.month,
                     left: list.open_checks,
-                    next: list.next.filter(|m| m.status == "open").map(|m| m.period_id),
+                    next: list
+                        .next
+                        .filter(|m| m.status == "open")
+                        .map(|m| m.period_id),
                 });
             }
             Ok(review) => {
@@ -682,7 +685,8 @@ impl MonthClose {
                 return Ok(());
             }
         };
-        let input = json!({"company_id": company.get(), "period_id": through, "with_earlier": true});
+        let input =
+            json!({"company_id": company.get(), "period_id": through, "with_earlier": true});
         let call = self.call(r, "do_close_several");
         let notice = match self.pages.contracts.submit(&call, input).await {
             Ok(_) => {
@@ -794,9 +798,8 @@ impl Page<Scope, Error> for Pages {
 
     fn mount<'a>(&'a self, r: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            Ok(Some(
-                Box::new(MonthClose::new(self.clone(), r.query)) as Box<dyn LiveState<Scope, Error>>
-            ))
+            Ok(Some(Box::new(MonthClose::new(self.clone(), r.query))
+                as Box<dyn LiveState<Scope, Error>>))
         })
     }
 }

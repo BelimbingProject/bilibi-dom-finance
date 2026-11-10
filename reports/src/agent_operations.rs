@@ -181,10 +181,9 @@ impl ReadHandler for MonthCloseRead {
                     crate::ReportsError::InvalidOption => {
                         bilibi_agent_api::invalid("month", "Enter the month as YYYY-MM.")
                     }
-                    crate::ReportsError::BookNotOpen => bilibi_agent_api::invalid(
-                        "base",
-                        "The company's book is not open yet.",
-                    ),
+                    crate::ReportsError::BookNotOpen => {
+                        bilibi_agent_api::invalid("base", "The company's book is not open yet.")
+                    }
                     _ => Error::Internal.into(),
                 })?;
             Ok(json!(checklist).into())

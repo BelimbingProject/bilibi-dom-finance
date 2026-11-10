@@ -628,7 +628,9 @@ impl Write {
                         let closes = periods::closing(&state, p.id, with_earlier(input))?;
                         let reason = periods::reason(input["reason"].as_str(), None)
                             .map_err(LedgerError::Invalid)?;
-                        return Ok(json!({"company_id":company,"book":book,"summary":self.consequence(),"changes":{"before":p,"closes":closes,"reason":reason,"approval_exception":false}}));
+                        return Ok(
+                            json!({"company_id":company,"book":book,"summary":self.consequence(),"changes":{"before":p,"closes":closes,"reason":reason,"approval_exception":false}}),
+                        );
                     }
                     Self::ReopenPeriod => {
                         if p.status == PeriodStatus::Locked {

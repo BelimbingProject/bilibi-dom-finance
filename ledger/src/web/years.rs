@@ -602,8 +602,7 @@ impl Years {
             } else {
                 row.cell("month", Cell::text(&label))
             };
-            let mut row = row
-                .slot("status", period_badge(&period.status)?);
+            let mut row = row.slot("status", period_badge(&period.status)?);
             row.actions = actions;
             row.dom_id = Some(format!("ledger-period-{}", period.id));
             rows.push(row);
@@ -639,9 +638,10 @@ impl Years {
                 // asks to close here, as the row's icon does.
                 let href = checklist_path(period.id);
                 let value = format!("close_period:{}:{}", company.id, period.id);
+                let button_id = format!("ledger-year-close-month-{}", year.id);
                 year_actions.push(&render(if checklist {
                     Button {
-                        id: &format!("ledger-year-close-month-{}", year.id),
+                        id: &button_id,
                         href: &href,
                         variant: ButtonVariant::Primary,
                         body: Html::text(&format!("Close {month}")),
@@ -649,7 +649,7 @@ impl Years {
                     }
                 } else {
                     Button {
-                        id: &format!("ledger-year-close-month-{}", year.id),
+                        id: &button_id,
                         button_type: "button",
                         event: "choose",
                         name: "action",
