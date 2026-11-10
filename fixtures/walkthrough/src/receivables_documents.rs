@@ -119,11 +119,86 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let invoice = |day: Option<&str>, price: &str| json!({"kind":"invoice","series_id":series[0].id,"customer_id":customer.id,"issue_date":day,"lines":[{"description":"R2 saved line","quantity":"1","unit_price":price,"tax_code_id":tax.id}]});
     let payment = |day: &str, amount: &str, allocations: Value| json!({"series_id":series[2].id,"customer_id":customer.id,"payment_date":day,"amount":amount,"deposit_account_id":bank,"allocations":allocations});
     let draft = ar.create_draft(&admin, 1, &invoice(None, "100")).await?;
+    // A draft saved without an issue date is issued with today's date in the
+    // company's time, and the review says so before anyone confirms. Only the
+    // review is taken here; this draft is dated and issued further down. When
+    // today lies outside the open fiscal year the ledger refuses the entry
+    // date, never the missing issue date.
+    let issue_key = "finance.receivables.document.issue";
+    let bilibi_agent_api::Handler::SafeWrite(issue_handler) =
+        registry.operations[issue_key].definition.handler
+    else {
+        panic!("issue must be a reviewed write");
+    };
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
+    match issue_handler
+        .preview(
+            &**client,
+            &admin,
+            &json!({"company_id":1,"document_id":draft.id}),
+        )
+        .await
+    {
+        Ok(review) => {
+            let review = review.envelope(issue_key);
+            let dated: jiff::civil::Date = review["result"]["changes"]["after"]["issue_date"]
+                .as_str()
+                .expect("the review dates the undated draft")
+                .parse()?;
+            assert!(
+                (dated - today).get_days().abs() <= 1,
+                "undated draft reviewed for {dated}, today is {today}"
+            );
+            assert!(review["result"]["changes"]["facts"]["draft"]["issue_date"].is_null());
+        }
+        Err(bilibi_agent_api::Error::InvalidInput(fields)) => assert!(
+            !fields.contains_key("issue_date") && fields.contains_key("entry_date"),
+            "undated draft refused for {fields:?}"
+        ),
+        Err(other) => panic!("undated draft review: {other:?}"),
+    }
+    assert!(ar
+        .get_document(&admin, 1, draft.id)
+        .await?
+        .issue_date
+        .is_none());
+    // A typed amount may carry thousands commas, as the pages show amounts; a
+    // comma that is not a thousands separator is refused with what to type.
+    let grouped = ar
+        .create_draft(&admin, 1, &invoice(None, "1,250.00"))
+        .await?;
+    assert_eq!(grouped.subtotal, money("1250"));
+    assert_eq!(money("1,250.00"), money("1250"));
+    assert!(Money::parse("1,25", units).is_err() && Money::parse("12,3456", units).is_err());
     field(
-        ar.issue_document(&admin, 1, draft.id).await,
-        "issue_date",
-        "can't be blank",
+        ar.update_draft(
+            &admin,
+            1,
+            grouped.id,
+            &json!({"lines":[{"description":"R2 saved line","quantity":"1","unit_price":"1,25"}]}),
+        )
+        .await,
+        "unit_price",
+        "Enter the unit price as a number, like 1,250.00.",
     );
+    ar.update_draft(&admin, 1, grouped.id, &json!({"issue_date":"9 Nov 2026"}))
+        .await?;
+    assert_eq!(
+        ar.get_document(&admin, 1, grouped.id)
+            .await?
+            .issue_date
+            .as_deref(),
+        Some("2026-11-09")
+    );
+    field(
+        ar.update_draft(&admin, 1, grouped.id, &json!({"issue_date":"next week"}))
+            .await,
+        "issue_date",
+        "Enter the issue date like 9 Nov 2026.",
+    );
+    ar.discard_draft(&admin, 1, grouped.id).await?;
     let empty = ar.create_draft(&admin, 1, &json!({"kind":"invoice","series_id":series[0].id,"customer_id":customer.id,"issue_date":"2026-08-31"})).await?;
     field(
         ar.issue_document(&admin, 1, empty.id).await,

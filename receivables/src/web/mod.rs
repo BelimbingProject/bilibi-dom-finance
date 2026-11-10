@@ -12,6 +12,8 @@ mod customers;
 mod document;
 mod documents;
 mod format;
+mod issue;
+mod lines;
 mod opening;
 mod payment;
 mod payments;
@@ -216,6 +218,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, Provenance { module: 
         ("save_customer", "finance.receivables.customer.update"),
         ("record_relationship", "core.company.relationship.assign"),
         ("create_draft", "finance.receivables.draft.create"),
+        ("create_draft", "finance.receivables.document.issue"),
         ("invoice_order", "finance.receivables.sales_order.invoice"),
         ("save_draft", "finance.receivables.draft.update"),
         ("save_lines", "finance.receivables.draft.update"),

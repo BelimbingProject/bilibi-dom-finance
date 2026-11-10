@@ -8,7 +8,7 @@ use super::{
     super::{
         account_html, documents::reference, format as f, render, CUSTOMERS, INVOICES, RECEIPTS,
     },
-    Dialog, Document, IssueConfirmation,
+    Document,
 };
 use bilibi_database::Result;
 use bilibi_datetime::DisplayContext;
@@ -76,7 +76,7 @@ impl Document {
             actions: self.header_actions(&d, back)?,
         })?);
 
-        let mut document = self.document_card(&d, kind, &customer_name)?;
+        let mut document = self.document_card(&d, kind, &customer_name, &display)?;
         document.push(&self.lines_card(&d)?);
         document.push(&self.write_offs.body(
             &d,
@@ -110,7 +110,7 @@ impl Document {
             summary,
         )?);
 
-        let modal = self.modal(&d, kind)?;
+        let modal = self.modal(&display)?;
         f::frame(
             "receivables-invoice",
             PageVariant::Detail,
@@ -192,25 +192,39 @@ impl Document {
 
     /// The document as the customer reads it: who, when, what for, and the
     /// details it was issued with.
-    fn document_card(&self, d: &crate::Document, kind: &str, customer: &str) -> Result<Html> {
+    fn document_card(
+        &self,
+        d: &crate::Document,
+        kind: &str,
+        customer: &str,
+        display: &DisplayContext,
+    ) -> Result<Html> {
         let editable = self.editable();
-        let text_fact =
-            |key: &str, label: &'static str, value: &str| -> Result<bilibi_ui::Fact<'static>> {
-                Ok(f::fact_html(
-                    label,
-                    render(InlineEdit {
-                        field: f::inline(
-                            key,
-                            label,
-                            value,
-                            d.id,
-                            "save_draft",
-                            editable,
-                            &self.statuses,
-                        ),
-                    })?,
-                ))
-            };
+        // A date reads as the pages write dates ("9 Nov 2026") and edits in
+        // the shared date box, which takes that form, 9/11/2026 or a calendar
+        // pick. `empty` says what the document gets when the draft has none.
+        let date_fact = |key: &str,
+                         label: &'static str,
+                         value: &str,
+                         empty: &str|
+         -> Result<bilibi_ui::Fact<'static>> {
+            let mut field = f::inline(
+                key,
+                label,
+                value,
+                d.id,
+                "save_draft",
+                editable,
+                &self.statuses,
+            )
+            .input_type("date");
+            match value.parse::<jiff::civil::Date>() {
+                Ok(date) => field = field.display_value(display.render_date(date)),
+                Err(_) if value.is_empty() && self.draft() => field = field.display_value(empty),
+                Err(_) => {}
+            }
+            Ok(f::fact_html(label, render(InlineEdit { field })?))
+        };
         let mut items = vec![f::fact_html(
             "Customer",
             f::link(&format!("{CUSTOMERS}/{}", d.customer_id), customer)?,
@@ -224,12 +238,13 @@ impl Document {
                 )?,
             ));
         }
-        items.push(text_fact(
+        items.push(date_fact(
             "issue_date",
             "Issue date",
             d.issue_date.as_deref().unwrap_or(""),
+            "The day you issue it",
         )?);
-        items.push(text_fact(
+        items.push(date_fact(
             "due_date",
             "Due date",
             if d.kind == "opening_credit" {
@@ -240,6 +255,7 @@ impl Document {
             } else {
                 d.due_date.as_deref().unwrap_or("")
             },
+            "From the customer's payment terms",
         )?);
         if self.draft() {
             items.push(f::fact(
@@ -611,68 +627,36 @@ impl Document {
         })?))
     }
 
-    fn modal(&self, d: &crate::Document, kind: &str) -> Result<Option<Html>> {
+    fn modal(&self, display: &DisplayContext) -> Result<Option<Html>> {
         if let Some(dialog) = self
             .write_offs
             .dialog(&self.accounts, &self.flash, &self.figures)?
         {
             return Ok(Some(dialog));
         }
-        if let Some(lines) = &self.editing {
-            return Ok(Some(self.lines_dialog(lines)?));
+        if let Some(editing) = &self.editing {
+            return Ok(Some(self.lines_dialog(editing)?));
         }
-        Ok(match self.dialog {
-            Some(Dialog::Issue) => {
-                let party = self
-                    .issue_review
-                    .as_ref()
-                    .map(|review| &review["changes"]["after"]);
-                let items = [
-                    ("party_name", "Name"),
-                    ("party_tax_identifier", "Tax ID"),
-                    ("party_registration_identifier", "Registration number"),
-                    ("party_email", "Email"),
-                    ("party_phone", "Phone"),
-                    ("party_line1", "Address line 1"),
-                    ("party_line2", "Address line 2"),
-                    ("party_line3", "Address line 3"),
-                    ("party_locality", "City"),
-                    ("party_postcode", "Postcode"),
-                    ("party_admin1_code", "State or region"),
-                    ("party_country_iso", "Country code"),
-                ]
-                .into_iter()
-                .map(|(field, label)| {
-                    f::fact(label, party.and_then(|p| p[field].as_str()).unwrap_or("—"))
-                })
-                .collect();
-                Some(render(IssueConfirmation {
-                    consequence: format!("Issue this {}?", kind.to_lowercase()),
-                    detail: format!(
-                        "It is numbered and posted for {}. These customer details will be kept on the document. After issue, it cannot be edited.",
-                        self.figures.with_currency(d.total, &d.currency_code)
-                    ),
-                    body: {
-                        let mut body = self.issue_banner.clone();
-                        body.push(&render(Facts {
-                            id: "receivables-invoice-party-review",
-                            items,
-                        })?);
-                        body
-                    },
-                })?)
-            }
-            Some(Dialog::Discard) => Some(render(ConfirmDialog {
-                id: "receivables-invoice-discard-confirm",
-                consequence: "Discard this draft?",
-                detail: "The draft and its lines are kept on record as discarded. It takes no number and posts nothing. This cannot be undone.",
-                confirm: "Discard",
-                working: "Discarding…",
-                confirm_event: "discard",
-                cancel_event: "cancel_dialog",
-            })?),
-            None => None,
-        })
+        if let Some(issuing) = &self.issuing {
+            return Ok(Some(issuing.dialog(
+                &self.figures,
+                display,
+                "issue",
+                "cancel_dialog",
+            )?));
+        }
+        if !self.discarding {
+            return Ok(None);
+        }
+        Ok(Some(render(ConfirmDialog {
+            id: "receivables-invoice-discard-confirm",
+            consequence: "Discard this draft?",
+            detail: "The draft and its lines are kept on record as discarded. It takes no number and posts nothing. This cannot be undone.",
+            confirm: "Discard",
+            working: "Discarding…",
+            confirm_event: "discard",
+            cancel_event: "cancel_dialog",
+        })?))
     }
 }
 

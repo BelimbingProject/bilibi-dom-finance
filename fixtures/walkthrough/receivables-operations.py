@@ -176,7 +176,8 @@ for channel, company in [("api", 1), ("mcp", 2)]:
         return write(channel, "draft.create", company, kind="invoice", series_id=series["invoice"], customer_id=customer["id"], issue_date="2026-01-10", lines=[{"description": "First line", "quantity": "3", "unit_price": price, **({"tax_code_id": tax_id} if tax_id else {})}, {"description": "Second line", "quantity": "2", "unit_price": "4.015"}])
 
     empty = write(channel, "draft.create", company, kind="invoice", series_id=series["invoice"], customer_id=customer["id"])
-    refused(channel, "document.issue", company, "issue_date", document_id=empty["id"])
+    # No issue date means today's date at issue, so an empty draft is refused for its missing lines.
+    refused(channel, "document.issue", company, "lines", document_id=empty["id"])
     discarded = write(channel, "draft.discard", company, document_id=empty["id"])
     require(discarded["status"] == "discarded" and discarded["document_number"] is None, "discard numbered a draft")
     invoice = draft()

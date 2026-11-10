@@ -1,7 +1,7 @@
 //! Bilimbi Receivables changesets: cast only editable fields, then validate
 //! effective values. Calculated and immutable attributes never enter SQL.
 use crate::{invalid, Result};
-use bilibi_finance_ledger::{Account, AccountType};
+use bilibi_finance_ledger::{Account, AccountType, Money};
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 
@@ -96,8 +96,11 @@ pub(crate) fn decimal(
         Value::Null | Value::String(_) => return Err(invalid(field, "can't be blank")),
         _ => return Err(invalid(field, "is invalid")),
     };
-    let (negative, digits, exponent) =
-        decimal_parts(&text).ok_or_else(|| invalid(field, "is invalid"))?;
+    // A typed figure may carry thousands commas ("1,250.00"), as the pages
+    // show amounts; anything else that is not a number says what is expected.
+    let (negative, digits, exponent) = Money::ungrouped(&text)
+        .and_then(|plain| decimal_parts(&plain))
+        .ok_or_else(|| invalid(field, not_a_number(field)))?;
     if negative || (positive && digits.is_empty()) {
         return Err(invalid(
             field,
@@ -145,6 +148,20 @@ pub(crate) fn decimal(
     .normalize();
     data[field] = json!(n.to_string());
     Ok(n)
+}
+
+/// What a figure field expects, as a whole sentence: "Enter the unit price as
+/// a number, like 1,250.00."
+fn not_a_number(field: &str) -> String {
+    let example = match field {
+        "quantity" => "2",
+        "rate" => "6",
+        _ => "1,250.00",
+    };
+    format!(
+        "Enter the {} as a number, like {example}.",
+        field.replace('_', " ")
+    )
 }
 
 // Ecto.Type.cast(:decimal) -> Decimal.parse, finite whole-string grammar.
@@ -213,11 +230,18 @@ pub(crate) fn date(data: &mut Value, field: &str) -> Result<()> {
         data[field] = Value::Null;
         return Ok(());
     }
-    let date: jiff::civil::Date = data[field]
-        .as_str()
-        .ok_or_else(|| invalid(field, "is invalid"))?
-        .parse()
-        .map_err(|_| invalid(field, "is invalid"))?;
+    // ISO, or the way the pages show a date ("9 Nov 2026").
+    let expected = || {
+        invalid(
+            field,
+            format!("Enter the {} like 9 Nov 2026.", field.replace('_', " ")),
+        )
+    };
+    let text = data[field].as_str().ok_or_else(expected)?.trim();
+    let date = text
+        .parse::<jiff::civil::Date>()
+        .or_else(|_| jiff::civil::Date::strptime("%d %b %Y", text))
+        .map_err(|_| expected())?;
     data[field] = json!(date.to_string());
     Ok(())
 }

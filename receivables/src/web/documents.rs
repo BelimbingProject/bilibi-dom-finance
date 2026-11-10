@@ -1,26 +1,29 @@
-//! The invoices and credit notes list, and its New invoice and New credit
-//! note dialogs. Reads `document.page`, `customer.list` and `series.list`;
-//! saving a draft calls `draft.create`.
+//! The invoices and credit notes list. Reads `document.page`,
+//! `customer.list` and `series.list`. Its New invoice and New credit note
+//! dialog is `documents/invoice_form.rs`; `documents/new_draft.rs` opens it.
+mod invoice_form;
 mod new_draft;
 
 use super::opening::Opening;
 use super::{
     format::{self as f, Errors},
-    render, Flash, Pages, Written, INVOICES, RECEIPTS, SETTINGS,
+    render, Flash, Pages, Written, INVOICES, RECEIPTS,
 };
 use crate::{
-    records::DocumentPageRow, Customer, Document, Series, MANAGE_DOCUMENTS, POST_PAYMENTS, VIEW,
+    records::DocumentPageRow, Customer, Document, Series, TaxCode, MANAGE_DOCUMENTS, POST_PAYMENTS,
+    VIEW,
 };
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Attrs, BuiltinColumn, Button, ButtonVariant, Cell, Choice, ColumnsOutcome, Combobox,
-    CreateButton, EmptyState, Field, Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html,
-    InputKind, ListColumns, ListSpec, ListState, ModalWidth, PageCounts, PageVariant, Pagination,
-    RecordLink, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, Button, Cell, Choice, ColumnsOutcome, CreateButton, EmptyState, Field,
+    Filter, FilterToolbar, FlexRow, FlexTable, Form, Header, Html, InputKind, ListColumns,
+    ListSpec, ListState, PageCounts, PageVariant, Pagination, RecordLink, SectionHeading, SortDir,
+    StatusKind, TableEmpty, ToolbarControl,
 };
+use invoice_form::InvoiceForm;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -79,13 +82,6 @@ pub(super) fn reference(d: &Document) -> String {
         .unwrap_or_else(|| format!("Draft #{}", d.id))
 }
 
-/// The dialog to start a draft: which kind, and what the person has typed.
-struct Draft {
-    kind: &'static str,
-    values: HashMap<String, String>,
-    errors: Errors,
-}
-
 pub(super) struct Documents {
     pages: Pages,
     /// A customer an actions menu carried (`?drop=`), opened once on first use.
@@ -105,7 +101,13 @@ pub(super) struct Documents {
     can_add: bool,
     can_receive: bool,
     can_write_off: bool,
-    create: Option<Draft>,
+    can_issue: bool,
+    /// What the New invoice dialog's lines choose from, read when it opens.
+    accounts: Vec<super::Account>,
+    tax_codes: Vec<TaxCode>,
+    create: Option<InvoiceForm>,
+    /// A draft the dialog saved whose issue waits for confirmation.
+    issuing: Option<super::issue::Issue>,
     opening: Option<Opening>,
     can_open: bool,
     /// The address asked for the opening invoices dialog (`?opening=1`, the
@@ -161,7 +163,11 @@ impl Documents {
             can_add: false,
             can_receive: false,
             can_write_off: false,
+            can_issue: false,
+            accounts: vec![],
+            tax_codes: vec![],
             create: None,
+            issuing: None,
             opening: None,
             can_open: false,
             open_opening: query.get("opening").map(String::as_str) == Some("1"),
@@ -670,10 +676,13 @@ impl Documents {
         body.push(&self.order_table()?);
         let modal = if let Some(opening) = &mut self.opening {
             Some(opening.body(scope).await?)
+        } else if let Some(issuing) = &self.issuing {
+            let display = self.pages.display(scope).await?;
+            Some(issuing.dialog(&self.figures, &display, "issue", "cancel_issue")?)
         } else {
             self.create
                 .as_ref()
-                .map(|draft| self.dialog(draft))
+                .map(|form| self.invoice_dialog(form))
                 .transpose()?
         };
         let html = f::frame(
@@ -686,183 +695,6 @@ impl Documents {
         Ok(self.drop_zone(html))
     }
 
-    fn dialog(&self, draft: &Draft) -> Result<Html> {
-        let credit = draft.kind == "credit_note";
-        let mut labels = vec![
-            ("series_id", "Series"),
-            ("customer_id", "Customer"),
-            ("issue_date", "Issue date"),
-            ("due_date", "Due date"),
-            ("description", "Description"),
-        ];
-        if credit {
-            labels.push(("credited_document_id", "Credited invoice"));
-        }
-        let labels: Vec<_> = labels
-            .into_iter()
-            .map(|(k, l)| (k.to_owned(), format!("receivables-draft-{k}"), l.to_owned()))
-            .collect();
-        let value = |key: &str| draft.values.get(key).cloned().unwrap_or_default();
-        let mut body = render(draft.errors.summary("receivables-draft-errors", &labels))?;
-        let series: Vec<Choice> = self
-            .series
-            .iter()
-            .filter(|s| s.kind == draft.kind && s.active)
-            .map(|s| Choice::new(format!("{} ({})", s.name, s.code), s.id.to_string()))
-            .collect();
-        let customers: Vec<Choice> = self
-            .customers
-            .iter()
-            .filter(|c| c.active || credit)
-            .map(|c| Choice::new(&c.name, c.id.to_string()).detail(&c.code))
-            .collect();
-        let mut who = Html::EMPTY;
-        let series_field = Field::in_form("draft", "series_id")
-            .id("receivables-draft-series_id")
-            .label("Series")
-            .kind(InputKind::Select)
-            .prompt(if series.is_empty() {
-                "No series yet — add one in Settings"
-            } else {
-                "Choose a series"
-            })
-            .options(series)
-            .value(value("series_id"))
-            .required()
-            .errors(draft.errors.under("series_id", "Series"));
-        let mut series_html = Html::raw("<div>");
-        series_html.push(&render(series_field)?);
-        {
-            // The Field hint is plain text, so the hint is drawn here to
-            // carry the shared settings link icon.
-            series_html.push(&Html::raw(
-                "<p id=\"receivables-draft-series_id-hint\" class=\"mt-1.5 flex items-center gap-1 text-xs text-ink-subtle\">Issued ref no, settings ",
-            ));
-            series_html.push(&render(bilibi_ui::ActionLink {
-                id: "receivables-draft-series-settings",
-                icon: "link",
-                title: "Series settings",
-                href: SETTINGS,
-                ..bilibi_ui::ActionLink::default()
-            })?);
-            series_html.push(&Html::raw("</p>"));
-        }
-        series_html.push(&Html::raw("</div>"));
-        who.push(&series_html);
-        who.push(&render(
-            Combobox::new("receivables-draft-customer_id", "draft[customer_id]")
-                .label("Customer *")
-                .aria_label("Customer")
-                .placeholder("Choose a customer")
-                .options(customers)
-                .value(value("customer_id"))
-                .errors(draft.errors.under("customer_id", "Customer"))
-                .attrs(Attrs {
-                    required: true,
-                    ..Attrs::default()
-                }),
-        )?);
-        body.push(&f::two(who)?);
-        if credit {
-            let invoices: Vec<Choice> = self
-                .credit_invoices
-                .iter()
-                .filter(|d| d.kind == "invoice" && d.status == "issued")
-                .map(|d| Choice::new(reference(d), d.id.to_string()).detail(self.customer_name(d)))
-                .collect();
-            body.push(&render(
-                Combobox::new(
-                    "receivables-draft-credited_document_id",
-                    "draft[credited_document_id]",
-                )
-                .label("Credited invoice *")
-                .aria_label("Credited invoice")
-                .placeholder("Choose the invoice this credits")
-                .options(invoices)
-                .value(value("credited_document_id"))
-                .hint("An issued invoice to the same customer.")
-                .errors(
-                    draft
-                        .errors
-                        .under("credited_document_id", "Credited invoice"),
-                )
-                .attrs(Attrs {
-                    required: true,
-                    ..Attrs::default()
-                }),
-            )?);
-        }
-        let mut dates = Html::EMPTY;
-        for (key, label, hint) in [
-            (
-                "issue_date",
-                "Issue date",
-                "Leave empty to use the actual date of issue.",
-            ),
-            (
-                "due_date",
-                "Due date",
-                "Leave empty to use the customer's payment terms.",
-            ),
-        ] {
-            dates.push(&render(
-                Field::in_form("draft", key)
-                    .id(format!("receivables-draft-{key}"))
-                    .label(label)
-                    .kind(InputKind::Date)
-                    .value(value(key))
-                    .hint(hint)
-                    .errors(draft.errors.under(key, label)),
-            )?);
-        }
-        body.push(&f::two(dates)?);
-        body.push(&render(
-            Field::in_form("draft", "description")
-                .id("receivables-draft-description")
-                .label("Description")
-                .kind(InputKind::Textarea)
-                .attr("maxlength", "500")
-                .value(value("description"))
-                .errors(draft.errors.under("description", "Description")),
-        )?);
-        let mut actions = render(Button {
-            id: "receivables-draft-cancel",
-            button_type: "button",
-            event: "cancel_create",
-            body: Html::text("Cancel"),
-            ..Button::default()
-        })?;
-        actions.push(&render(Button {
-            id: "receivables-draft-save",
-            button_type: "submit",
-            variant: ButtonVariant::Primary,
-            working: "Saving…",
-            body: Html::text("Save draft"),
-            ..Button::default()
-        })?);
-        let form = render(Form {
-            id: "receivables-draft-form",
-            event: "create_draft",
-            change: false,
-            class: "mt-4",
-            body,
-            actions: f::actions(actions)?,
-        })?;
-        f::modal(
-            "receivables-draft-modal",
-            if credit {
-                "New credit note - draft"
-            } else {
-                "New invoice - draft"
-            },
-            "Draft: no ref no and no posting until issued.",
-            "cancel_create",
-            ModalWidth::Wide,
-            &self.flash,
-            form,
-        )
-    }
-
     async fn event(
         &mut self,
         scope: &Scope,
@@ -870,7 +702,13 @@ impl Documents {
         v: &serde_json::Value,
     ) -> Result<LiveBody> {
         let mut redirect = None;
-        match v["type"].as_str().ok_or(Error::Invalid)? {
+        let kind = v["type"].as_str().ok_or(Error::Invalid)?;
+        // A message answers the action before it: it does not follow the
+        // person into the next dialog or the next action.
+        if !matches!(kind, "clear-flash" | "grid" | "order_grid" | "draft_change") {
+            self.flash.0 = None;
+        }
+        match kind {
             "invoice_order" => {
                 let form = params::form_values(v, "order");
                 let order = form
@@ -952,89 +790,10 @@ impl Documents {
                 let text = v["records"].as_str().ok_or(Error::Invalid)?;
                 self.receive_drop(scope, text).await?;
             }
-            "cancel_create" => self.create = None,
-            "create_draft" => {
-                let kind = self.create.as_ref().map_or("invoice", |d| d.kind);
-                let form = params::form_values(v, "draft");
-                let mut input = json!({"kind": kind});
-                let mut local = Errors::default();
-                for key in ["series_id", "customer_id", "credited_document_id"] {
-                    let text = f::posted(&form, key);
-                    match text.parse::<i64>() {
-                        Ok(id) if id > 0 => input[key] = json!(id),
-                        _ if text.is_empty() && key != "series_id" && key != "customer_id" => {}
-                        _ => local
-                            .0
-                            .entry(key.into())
-                            .or_default()
-                            .push("can't be blank".into()),
-                    }
-                }
-                for key in ["issue_date", "due_date", "description"] {
-                    f::put(&mut input, key, f::posted(&form, key));
-                }
-                if kind == "credit_note" && input.get("credited_document_id").is_none() {
-                    local
-                        .0
-                        .entry("credited_document_id".into())
-                        .or_default()
-                        .push("can't be blank".into());
-                }
-                let draft_kind = if kind == "credit_note" {
-                    "credit_note"
-                } else {
-                    "invoice"
-                };
-                if !local.is_empty() {
-                    self.create = Some(Draft {
-                        kind: draft_kind,
-                        values: form,
-                        errors: local,
-                    });
-                } else {
-                    match self
-                        .pages
-                        .write(
-                            scope,
-                            credential,
-                            "create_draft",
-                            "finance.receivables.draft.create",
-                            input,
-                        )
-                        .await?
-                    {
-                        Written::Done(record) => {
-                            self.create = None;
-                            self.flash.set(
-                                StatusKind::Success,
-                                "Draft saved. Add its lines, then issue it.",
-                            );
-                            if let Some(id) = record["id"].as_i64() {
-                                redirect = Some(format!("{INVOICES}/{id}"));
-                            }
-                            self.load_page(scope).await?;
-                        }
-                        Written::Invalid(fields) => {
-                            self.create = Some(Draft {
-                                kind: draft_kind,
-                                values: form,
-                                errors: Errors(fields),
-                            });
-                        }
-                        Written::Refused(message) => {
-                            self.create = None;
-                            self.flash.set(
-                                StatusKind::Error,
-                                super::worded(
-                                    message,
-                                    "You do not have permission to start documents.",
-                                ),
-                            );
-                        }
-                    }
-                }
-            }
-            _ => return Err(Error::Invalid),
+            _ => match self.form_event(scope, credential, v).await? {
+                Some(to) => redirect = to,
+                None => return Err(Error::Invalid),
+            },
         }
         let flash = redirect.is_some().then(|| self.flash.0.take()).flatten();
         Ok(LiveBody {

@@ -332,6 +332,10 @@ pub(super) fn commit_status(
                 .collect();
             if reasons.is_empty() {
                 CommitStatus::refusal(label, submitted, &["is not valid"])
+            } else if reasons.iter().all(|r| r.starts_with(char::is_uppercase)) {
+                // A refusal that is already a sentence says what to type
+                // ("Enter the issue date like 9 Nov 2026.") and reads as it is.
+                CommitStatus::Error(reasons.join(" "))
             } else {
                 CommitStatus::refusal(label, submitted, &reasons)
             }
@@ -466,15 +470,6 @@ pub(super) fn announce(record: i64) -> Result<Html> {
 
 #[derive(askama::Template)]
 #[template(
-    source = r#"<div class="grid grid-cols-2 items-start gap-x-3 sm:grid-cols-4">{{ body|safe }}</div>"#,
-    ext = "html"
-)]
-struct Four {
-    body: Html,
-}
-
-#[derive(askama::Template)]
-#[template(
     source = r#"<div class="grid items-start gap-x-3 sm:grid-cols-2">{{ body|safe }}</div>"#,
     ext = "html"
 )]
@@ -491,11 +486,6 @@ struct Padded {
 /// Facts under a table in a flat card, at the card's own padding.
 pub(super) fn padded(body: Html) -> Result<Html> {
     render(Padded { body })
-}
-
-/// Fields side by side: four on a wide screen, two on a phone.
-pub(super) fn four(body: Html) -> Result<Html> {
-    render(Four { body })
 }
 
 /// Fields in two columns on a wide screen, one on a phone.

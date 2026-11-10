@@ -727,7 +727,7 @@ capture.
 
 Opening a book through `finance.ledger.book.open` may include `separation_required: false` and `approval_reason` for a one-person company. That choice also requires `finance.ledger.duty-separation.manage`, records the duty-separation change in the same transaction and keeps every later same-person approval by an unconverted Finance consumer in Approval exceptions. It does not relax manual journals, which follow their published Workflow rules. Omitting it leaves the approval control unchanged; independent approval is the default. The Book page asks about other Finance approvals before opening. A same-person refusal names the control and the Approval exceptions address.
 
-`Money::display` formats a page amount with thousands separators and the book's decimal places. `Money::shown` remains plain decimal notation for editable values.
+`Money::display` formats a page amount with thousands separators and the book's decimal places. `Money::shown` remains plain decimal notation for editable values. `Money::parse` reads an amount as a person types or pastes it, with or without thousands commas (`1,250.00`); a comma that is not a thousands separator (`1,25`) is refused as `must be a number, like 1,250.00`, never read as a larger number. `Money::ungrouped` gives a module's own figure parser (a quantity, a unit price) the same rule.
 
 ## External accountant
 
