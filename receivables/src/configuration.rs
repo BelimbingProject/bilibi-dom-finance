@@ -93,6 +93,10 @@ impl Receivables {
             }
         }
         data["invoice_layout"] = serde_json::to_value(layout).map_err(|_| Error::Internal)?;
+        data["invoice_email"] = crate::email::settings(
+            old.as_ref().map(|o| &o["invoice_email"]),
+            attrs.get("invoice_email"),
+        )?;
         let chart = self.ledger.list_accounts_on(client, scope, company).await?;
         v::account(
             &mut data,
@@ -161,7 +165,7 @@ impl Receivables {
             tx.mutate(move |sql| Box::pin(async move {
                 let mut changes = Vec::new();
                 let new = store::save(sql, SETUPS, tenant, company, old.clone(), data, &mut changes).await?;
-                for field in fields.into_iter().filter(|field| *field != "invoice_layout") {
+                for field in fields.into_iter().filter(|field| !matches!(*field, "invoice_layout" | "invoice_email")) {
                     store::save(sql, HISTORY, tenant, company, None, json!({"field": field, "old_value": old.as_ref().map(|o| &o[field]), "new_value": new[field], "changed_by_user_id": actor, "changed_by_impersonator_id": impersonator}), &mut changes).await?;
                 }
                 Ok((new, changes))

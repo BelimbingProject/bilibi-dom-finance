@@ -109,7 +109,7 @@ impl Write {
                 "Reject the proposed bad-debt journal without posting; retain its evidence and decision."
             }
             Self::Configure => {
-                "Change document defaults or the printed layout; issued invoices keep their original control account."
+                "Change document defaults, the printed layout or how invoices are emailed; issued invoices keep their original control account."
             }
             Self::Code(t, None) if t.name == SERIES.name => {
                 "Create a numbering series; code, kind, prefix and width are permanent."
@@ -221,7 +221,24 @@ impl Write {
                     .ledger
                     .preview_post_entry_on(client, scope, company, &p.entry, &p.options)
                     .await?;
-                let changes = json!({"after":p.after,"facts":p.facts,"posting":posting});
+                let mut p = p;
+                // Issue and send: what the email would be, and whether this
+                // call asked for it. Null while the company does not offer it.
+                let document = id(input, "document_id")?;
+                let send = input["send_email"] == true;
+                let email = match service.issue_email(client, scope, company, document, &p).await? {
+                    Some(Ok(email)) => {
+                        let offer = json!({"send":send,"to":email.to,"from_name":email.from_name,"reply_to":email.reply_to,"subject":email.subject,"message":email.message,"attachment":email.attachment});
+                        p.email = send.then_some(email);
+                        offer
+                    }
+                    Some(Err(refusal)) if send => return Err(refusal),
+                    Some(Err(ReceivableError::Invalid(errors))) => json!({"send":false,"refusal":errors.first().map(|e| e.message.clone())}),
+                    Some(Err(other)) => return Err(other),
+                    None if send => return Err(invalid("send_email", "is not offered: turn on invoice email and Issue and send in Receivables settings")),
+                    None => Value::Null,
+                };
+                let changes = json!({"after":p.after,"facts":p.facts,"posting":posting,"email":email});
                 prepared_issue = Some(p);
                 changes
             }
@@ -663,7 +680,7 @@ fn target() -> Value {
 fn configure() -> Value {
     schema(
         &[],
-        json!({"receivable_account_id":identifier(),"income_account_id":identifier(),"invoice_layout":object(&[], json!({"company_name":string(200),"registration_number":string(100),"address":string(2000),"contact":string(500),"footer":string(4000)}))}),
+        json!({"receivable_account_id":identifier(),"income_account_id":identifier(),"invoice_layout":object(&[], json!({"company_name":string(200),"registration_number":string(100),"address":string(2000),"contact":string(500),"footer":string(4000)})),"invoice_email":object(&[], json!({"enabled":boolean(),"from_name":string(200),"reply_to":string(254),"subject":string(150),"message":string(4000),"issue_and_send":boolean()}))}),
     )
 }
 fn series_create() -> Value {
@@ -748,6 +765,12 @@ fn draft_update() -> Value {
 }
 fn document() -> Value {
     schema(&["document_id"], json!({"document_id":identifier()}))
+}
+fn issue() -> Value {
+    schema(
+        &["document_id"],
+        json!({"document_id":identifier(),"send_email":{"type":"boolean","description":"Also email the issued invoice to the customer. Offered only while the company has invoice email and Issue and send turned on; the review's email says what would be sent."}}),
+    )
 }
 fn payment() -> Value {
     schema(&["payment_id"], json!({"payment_id":identifier()}))
@@ -855,7 +878,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.write_off.reject",title:"Reject a bad-debt journal",summary:"Keep the proposed journal and rejection reason without posting.",keywords:&[],capability:APPROVE_WRITE_OFFS,input:write_off_decide,output,handler:Handler::SafeWrite(&Write::BadDebt("reject")),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.write_off.reverse",title:"Reverse a bad-debt journal",summary:"Restore the invoice balance with an owned mirror journal before recording any recovery receipt. Also requires a different reviewer.",keywords:&[],capability:APPROVE_WRITE_OFFS,input:write_off_reverse,output,handler:Handler::SafeWrite(&Write::BadDebt("reverse")),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.book_figures.get",title:"Read how amounts are written",summary:"Read the company's currency code and decimal places so amounts display correctly. Needs only receivables view, not ledger view; nothing else of the book is returned.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::BookFigures),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.setup.get",title:"Read receivables setup",summary:"Read default accounts and the invoice layout; setup is null until configured.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::Setup),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.setup.get",title:"Read receivables setup",summary:"Read default accounts, the invoice layout and the invoice email choice; setup is null until configured.",keywords:&[],capability:VIEW,input:target,output,handler:Handler::Read(&Read::Setup),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.setup.changes",title:"Read setup history",summary:"Read account-default changes in ascending identifier order.",keywords:&[],capability:VIEW,input:history,output,handler:Handler::Read(&Read::History),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.list",title:"List numbering series",summary:"Read active and inactive series in code order with a bounded cursor.",keywords:&[],capability:VIEW,input:codes,output,handler:Handler::Read(&Read::Codes(SERIES)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.tax_code.list",title:"List tax codes",summary:"Read code, frozen rate, posting account and active flag in code order.",keywords:&[],capability:VIEW,input:codes,output,handler:Handler::Read(&Read::Codes(TAX)),channels:Channels::Every,step_up:&[]},
@@ -867,7 +890,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.payment.list",title:"List receipts",summary:"Read numbered receipts with allocations and reversal, by identifier and optional customer.",keywords:&[],capability:VIEW,input:payments,output,handler:Handler::Read(&Read::Payments),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.get",title:"Read a receipt",summary:"Read the original receipt, its allocations and optional dated reversal.",keywords:&[],capability:VIEW,input:payment,output,handler:Handler::Read(&Read::Payment),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.aging.get",title:"Read receivables aging",summary:"Read customer residuals at a date and posting pin. Invoices age from their due dates; unapplied credits age from their source dates. Also requires ledger view.",keywords:&[],capability:VIEW,input:aging,output,handler:Handler::Read(&Read::Aging),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.setup.configure",title:"Configure receivables",summary:"Choose default accounts or update invoice layout text. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:configure,output,handler:Handler::SafeWrite(&Write::Configure),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.setup.configure",title:"Configure receivables",summary:"Choose default accounts, update invoice layout text, or turn invoice email on or off and set its sender name, reply address, subject, message and Issue and send. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:configure,output,handler:Handler::SafeWrite(&Write::Configure),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.create",title:"Create a numbering series",summary:"Create an invoice, credit note or payment series with a unique code and prefix.",keywords:&[],capability:MANAGE_SETUP,input:series_create,output,handler:Handler::SafeWrite(&Write::Code(SERIES,None)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.series.update",title:"Change a numbering series",summary:"Change name or active flag; never change its code, kind, prefix or width.",keywords:&[],capability:MANAGE_SETUP,input:series_update,output,handler:Handler::SafeWrite(&Write::Code(SERIES,Some("series_id"))),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.tax_code.create",title:"Create a tax code",summary:"Create a percentage tax code on an active liability account. Also requires ledger view.",keywords:&[],capability:MANAGE_SETUP,input:tax_create,output,handler:Handler::SafeWrite(&Write::Code(TAX,None)),channels:Channels::Every,step_up:&[]},
@@ -877,7 +900,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.draft.create",title:"Create a receivables draft",summary:"Save an unnumbered invoice or credit note with derived amounts. Also requires ledger view and configured setup.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_create,output,handler:Handler::SafeWrite(&Write::Draft(false)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.update",title:"Change a receivables draft",summary:"Change header or atomically replace lines; omit lines to keep snapshots. Also requires ledger view.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_update,output,handler:Handler::SafeWrite(&Write::Draft(true)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.discard",title:"Discard a receivables draft",summary:"Keep the draft and its lines permanently as discarded, without numbering or posting.",keywords:&[],capability:MANAGE_DOCUMENTS,input:document,output,handler:Handler::SafeWrite(&Write::Discard),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.document.issue",title:"Issue an invoice or credit note",summary:"Freeze the saved draft, number it and post its owned entry atomically. Also requires ledger view and entries.post.",keywords:&[],capability:ISSUE,input:document,output,handler:Handler::SafeWrite(&Write::Issue),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.issue",title:"Issue an invoice or credit note",summary:"Freeze the saved draft, number it and post its owned entry atomically. With send_email, also email the invoice to the customer in the same step. Also requires ledger view and entries.post.",keywords:&[],capability:ISSUE,input:issue,output,handler:Handler::SafeWrite(&Write::Issue),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.record",title:"Record a receipt",summary:"Number and post a fully allocated payment using each invoice's original control. Also requires ledger view and entries.post.",keywords:&[],capability:POST_PAYMENTS,input:payment_record,output,handler:Handler::SafeWrite(&Write::Payment),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.reverse",title:"Reverse a receipt",summary:"Correct a payment once with a dated owned mirror entry and reason. Also requires ledger entries.post, not ledger view.",keywords:&[],capability:POST_PAYMENTS,input:payment_reverse,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},
     ],

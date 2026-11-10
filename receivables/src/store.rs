@@ -20,6 +20,7 @@ pub(crate) const SETUPS: Table = Table {
         "receivable_account_id",
         "income_account_id",
         "invoice_layout",
+        "invoice_email",
     ],
     timestamps: true,
 };

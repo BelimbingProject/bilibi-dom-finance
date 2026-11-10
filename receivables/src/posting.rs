@@ -24,6 +24,8 @@ pub(super) struct PreparedIssue {
     pub entry: NewEntry,
     pub options: PostOptions,
     pub facts: Value,
+    /// The email to queue with the issue, when the caller asked to send it.
+    pub email: Option<crate::email::Composed>,
 }
 pub(super) struct PreparedPayment {
     pub after: Value,
@@ -311,6 +313,7 @@ impl Receivables {
             // The effective control is frozen in `after` and the posting;
             // unrelated defaults cannot change this saved draft's entry.
             facts: json!({"draft":draft,"customer":customer,"party":customer.party,"series":series,"credited_invoice":credited}),
+            email: None,
         })
     }
 
@@ -366,6 +369,7 @@ impl Receivables {
             after: mut data,
             entry,
             options,
+            email,
             ..
         } = prepared;
         let tenant = scope.tenant();
@@ -396,6 +400,9 @@ impl Receivables {
             Err(AttachmentError::Unauthorized) => "error: unauthorized",
             Err(error) => return Err(error.into()),
         };
+        if let Some(email) = email {
+            self.send_email_on(tx, scope, company, id, email).await?;
+        }
         let mut result = documents::read(tx.sql(), tenant, company, id).await?;
         result.retention_refresh = Some(refresh.into());
         Ok(result)

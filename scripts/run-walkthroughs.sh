@@ -49,6 +49,7 @@ WALKTHROUGHS=(
   'fixed-assets-runs|fixed-assets-runs|'
   'fixed-assets-ui|fixed-assets-ui|'
   'opening-balances|opening-balances|'
+  'invoice-email|invoice-email|'
   'order-invoices|order-invoices|absent'
   'party-code|party-code|'
   'receivables-companies|receivables-companies|'

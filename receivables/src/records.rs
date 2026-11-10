@@ -7,6 +7,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Setup {
     pub invoice_layout: InvoiceLayout,
+    #[serde(default)]
+    pub invoice_email: InvoiceEmail,
     pub company_id: i64,
     pub receivable_account_id: i64,
     pub income_account_id: i64,
@@ -131,6 +133,9 @@ pub struct Document {
     pub tax_lines: Vec<TaxLine>,
     #[serde(default)]
     pub write_offs: Vec<crate::WriteOff>,
+    /// Each time this invoice was emailed from Bilibi, oldest first.
+    #[serde(default)]
+    pub emails: Vec<DocumentEmail>,
     /// Present only on issue: `queued`, `none`, or `error: unauthorized`
     /// when the issuer cannot view the source (issuance still succeeds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -258,4 +263,45 @@ pub struct InvoiceLayout {
     pub address: String,
     pub contact: String,
     pub footer: String,
+}
+
+/// Whether this company emails its invoices from Bilibi, and with which
+/// words. Off until someone turns it on; an empty subject or message means
+/// the built-in wording.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InvoiceEmail {
+    pub enabled: bool,
+    /// The sender's name a customer sees; empty means the company's name.
+    pub from_name: String,
+    /// Where a customer's reply goes; empty means no reply address is set.
+    pub reply_to: String,
+    pub subject: String,
+    pub message: String,
+    /// Whether pages and agents may issue and send in one step.
+    pub issue_and_send: bool,
+}
+
+/// One send of an issued invoice: who asked, when, to whom, with which words
+/// and which PDF, and how the delivery ended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentEmail {
+    pub id: i64,
+    pub document_id: i64,
+    pub to_email: String,
+    pub from_name: String,
+    pub reply_to: Option<String>,
+    pub subject: String,
+    pub message: String,
+    pub attachment_name: String,
+    /// Size and SHA-256 of the PDF that went out; absent until it is made.
+    pub attachment_bytes: Option<i64>,
+    pub attachment_sha256: Option<String>,
+    /// `queued`, `sent`, `failed` or `cancelled`.
+    pub state: String,
+    pub reason: Option<String>,
+    pub requested_by_user_id: i64,
+    /// Database-stamped UTC, microsecond precision.
+    pub requested_at: String,
+    pub settled_at: Option<String>,
 }

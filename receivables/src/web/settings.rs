@@ -11,6 +11,9 @@
 //! prefix, digits and rate are fixed once saved. A setup that is not yet
 //! configured needs both accounts in one `setup.configure`, so the first
 //! choice is kept on the page (never persisted) until the second arrives.
+//! How invoices are emailed is its own section (`settings/email.rs`).
+mod email;
+
 use super::{
     format::{self as f, Errors},
     render, Account, Flash, Pages, Written, DENIED, READ_LIMIT,
@@ -559,6 +562,8 @@ impl Settings {
             })?,
             ..Card::default()
         })?);
+
+        body.push(&self.email_section()?);
 
         // Numbering series.
         let mut rows = Vec::new();
@@ -1332,6 +1337,9 @@ impl Settings {
                         value,
                     ),
                 );
+            }
+            event @ ("save_email" | "toggle_email") => {
+                self.email_event(scope, credential, event, v).await?
             }
             "configure" => self.save_default(scope, credential, v).await?,
             "confirm_receivable" => self.confirm_receivable(scope, credential).await?,

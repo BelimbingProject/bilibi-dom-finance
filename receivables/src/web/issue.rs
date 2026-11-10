@@ -2,7 +2,9 @@
 //! the invoice's own page and the New invoice dialog (one contract, two
 //! keys). The confirmation says what the document becomes: its number, the
 //! issue date (today when the draft has none) and the due date, all read from
-//! the `document.issue` review, never worked out by the page.
+//! the `document.issue` review, never worked out by the page. Where the
+//! company offers Issue and send, the same review says what the email would
+//! be, and the confirmation offers both: "Issue only" and "Issue and send".
 use super::{format as f, render, Pages, Written};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
@@ -58,12 +60,21 @@ impl Issue {
         )
     }
 
-    /// The confirmation, raising `confirm_event` or `cancel_event`.
+    /// The address Issue and send would mail the invoice to, when the
+    /// company offers it and the customer has one.
+    pub(super) fn send_to(&self) -> Option<&str> {
+        self.review["changes"]["email"]["to"].as_str()
+    }
+
+    /// The confirmation, raising `confirm_event` (issue), `send_event` (issue
+    /// and email it, offered only when the review says it can be sent) or
+    /// `cancel_event`.
     pub(super) fn dialog(
         &self,
         figures: &f::Figures,
         display: &DisplayContext,
         confirm_event: &'static str,
+        send_event: &'static str,
         cancel_event: &'static str,
     ) -> Result<Html> {
         let after = &self.review["changes"]["after"];
@@ -132,17 +143,45 @@ impl Issue {
         if !address.is_empty() {
             items.push(f::fact("Address", &address));
         }
+        // What Issue and send would email, or why this invoice cannot be
+        // emailed; nothing while the company does not offer it.
+        let email = &self.review["changes"]["email"];
+        let offer = match (
+            email["to"].as_str(),
+            email["attachment"].as_str(),
+            email["refusal"].as_str(),
+        ) {
+            (Some(to), Some(attachment), _) => {
+                Some(format!("Issue and send emails {attachment} to {to}."))
+            }
+            (_, _, Some(refusal)) => Some(refusal.to_owned()),
+            _ => None,
+        };
+        if let Some(offer) = &offer {
+            items.push(f::fact("Email", offer));
+        }
         let mut body = self.banner.clone();
         body.push(&render(Facts {
             id: "receivables-invoice-party-review",
             items,
         })?);
+        let consequence = format!(
+            "Issue this {} to {} for {total}?",
+            if credit { "credit note" } else { "invoice" },
+            text("party_name").unwrap_or("the customer"),
+        );
+        if self.send_to().is_some() {
+            return render(SendConfirmation {
+                consequence,
+                detail,
+                confirm_event,
+                send_event,
+                cancel_event,
+                body,
+            });
+        }
         render(Confirmation {
-            consequence: format!(
-                "Issue this {} to {} for {total}?",
-                if credit { "credit note" } else { "invoice" },
-                text("party_name").unwrap_or("the customer"),
-            ),
+            consequence,
             detail,
             confirm_event,
             cancel_event,
@@ -150,15 +189,20 @@ impl Issue {
         })
     }
 
-    /// Issues the reviewed draft under the live `event` (the confirmation).
+    /// Issues the reviewed draft under the live `event` (the confirmation);
+    /// `send` also emails it, as the review offered.
     pub(super) async fn commit(
         self,
         pages: &Pages,
         scope: &Scope,
         credential: &str,
         event: &str,
+        send: bool,
     ) -> Result<Written> {
-        let input = json!({"company_id": Pages::company(scope), "document_id": self.id});
+        let mut input = json!({"company_id": Pages::company(scope), "document_id": self.id});
+        if send {
+            input["send_email"] = json!(true);
+        }
         let answer = pages
             .contracts
             .commit(&Pages::call(scope, credential, event, CONTRACT), input)
@@ -168,12 +212,40 @@ impl Issue {
     }
 }
 
-/// What the page says once a document is issued.
-pub(super) fn issued(record: &Value) -> String {
-    match record["document_reference"].as_str() {
+/// What the page says once a document is issued, and where its email is
+/// going when it was sent in the same step.
+pub(super) fn issued(record: &Value, sent_to: Option<&str>) -> String {
+    let issued = match record["document_reference"].as_str() {
         Some(reference) => format!("Issued as {reference} and posted to the ledger."),
         None => "Issued and posted to the ledger.".into(),
+    };
+    match sent_to {
+        Some(to) => format!("{issued} It is on its way to {to}."),
+        None => issued,
     }
+}
+
+/// The confirmation where the company offers Issue and send: Cancel, the
+/// issue alone, then the one press that also emails it.
+#[derive(askama::Template)]
+#[template(
+    source = r#"{% import "dialog.html" as ui %}{% import "components.html" as c %}{% call ui::modal(id="receivables-invoice-issue-confirm", title=consequence, cancel_event=cancel_event, width=bilibi_ui::ModalWidth::Compact, description=detail, role="alertdialog") %}
+{{ body|safe }}
+<div class="mt-3 flex flex-wrap justify-end gap-2">
+{% call c::button(id="receivables-invoice-issue-confirm-cancel", button_type="button", event=cancel_event) %}Cancel{% endcall %}
+{% call c::button(id="receivables-invoice-issue-confirm-confirm", button_type="button", event=confirm_event, working="Issuing…") %}Issue only{% endcall %}
+{% call c::button(id="receivables-invoice-issue-confirm-send", button_type="button", variant=bilibi_ui::ButtonVariant::Danger, event=send_event, working="Issuing…") %}Issue and send{% endcall %}
+</div>
+{% endcall %}"#,
+    ext = "html"
+)]
+struct SendConfirmation {
+    consequence: String,
+    detail: String,
+    confirm_event: &'static str,
+    send_event: &'static str,
+    cancel_event: &'static str,
+    body: Html,
 }
 
 #[derive(askama::Template)]

@@ -5,7 +5,10 @@
 //! it is issued (`issue.rs`) or discarded after a confirmation. Reads
 //! `document.get`; writes call `draft.update`, `draft.discard` and
 //! `document.issue`. The page is drawn in `document/view.rs`; an address with
-//! `?do=discard` or `?do=write_off` (its local icon buttons) opens that dialog.
+//! `?do=discard`, `?do=write_off` or `?do=send` (its local icon buttons) opens
+//! that dialog. An issued invoice is emailed from `send.rs` (`document.send`)
+//! while the company has invoice email turned on.
+mod send;
 mod view;
 
 use super::{
@@ -60,6 +63,10 @@ pub(super) struct Document {
     discarding: bool,
     /// The reviewed issue that waits for the person's confirmation.
     issuing: Option<Issue>,
+    /// Whether this company emails invoices from Bilibi (its setting).
+    email_enabled: bool,
+    /// The email a person is writing in the Send dialog.
+    sending: Option<send::Sending>,
     /// Where to go once this event is answered: the page itself after an
     /// issue, so the browser tab takes the document's new name.
     redirect: Option<String>,
@@ -67,6 +74,7 @@ pub(super) struct Document {
     lines_cols: ListColumns,
     tax_cols: ListColumns,
     applied_cols: ListColumns,
+    history_cols: ListColumns,
     write_offs: super::write_offs::Journals,
     credit_actions: super::credits::Credits,
 }
@@ -101,6 +109,8 @@ impl Document {
             flash: Flash::default(),
             discarding: false,
             issuing: None,
+            email_enabled: false,
+            sending: None,
             redirect: None,
             editing: None,
             lines_cols: f::columns(
@@ -137,6 +147,16 @@ impl Document {
                 ],
                 &["amount"],
             )?,
+            history_cols: f::columns(
+                "receivables-invoice-history-table",
+                &[
+                    ("when", "When"),
+                    ("what", "What happened"),
+                    ("status", "Status"),
+                    ("by", "By"),
+                ],
+                &[],
+            )?,
         })
     }
 
@@ -170,6 +190,14 @@ impl Document {
         match action {
             "discard" => {
                 self.discarding = self.editable();
+            }
+            "send" => {
+                if self.can_send() {
+                    match send::Sending::open(&self.pages, scope, self.id).await? {
+                        Ok(sending) => self.sending = Some(sending),
+                        Err(refusal) => self.flash.set(StatusKind::Error, refusal),
+                    }
+                }
             }
             "write_off" => {
                 self.write_offs
@@ -224,7 +252,15 @@ impl Document {
             self.can_issue = self.pages.allowed(scope, ISSUE).await?;
             self.can_receive = self.pages.allowed(scope, POST_PAYMENTS).await?;
         }
+        self.email_enabled = false;
         let Some(d) = &self.record else { return Ok(()) };
+        if !historical && d.status == "issued" && d.kind == "invoice" && d.opening.is_none() {
+            self.email_enabled = self
+                .pages
+                .read(scope, "finance.receivables.setup.get", json!({}))
+                .await
+                .is_ok_and(|setup| setup["setup"]["invoice_email"]["enabled"] == true);
+        }
         if !historical {
             self.credit_actions
                 .load(&self.pages, scope, d.id, &d.kind)
@@ -320,6 +356,12 @@ impl Document {
 
     fn editable(&self) -> bool {
         self.draft() && self.can_manage
+    }
+
+    /// Whether Send by email shows: an issued invoice of a company that
+    /// emails invoices, for a person who may issue.
+    fn can_send(&self) -> bool {
+        self.email_enabled && self.can_issue
     }
 
     fn tax_code(&self, id: Option<i64>) -> String {
@@ -425,6 +467,7 @@ impl Document {
                     | "lines_grid"
                     | "tax_grid"
                     | "applied_grid"
+                    | "history_grid"
                     | "write_off_grid"
                     | "credit_grid"
             )
@@ -439,6 +482,7 @@ impl Document {
                 | "lines_grid"
                 | "tax_grid"
                 | "applied_grid"
+                | "history_grid"
                 | "write_off_grid"
                 | "credit_grid"
                 | "lines_change"
@@ -481,10 +525,34 @@ impl Document {
             "applied_grid" => {
                 self.applied_cols.handle(&params::string_values(v));
             }
+            "history_grid" => {
+                self.history_cols.handle(&params::string_values(v));
+            }
             "save_draft" => self.save_field(scope, credential, v).await?,
             "cancel_dialog" => {
                 self.discarding = false;
                 self.issuing = None;
+            }
+            "cancel_send" => self.sending = None,
+            "send" => {
+                let Some(sending) = &mut self.sending else {
+                    return Ok(());
+                };
+                match sending
+                    .send(&self.pages, scope, credential, self.id, v)
+                    .await?
+                {
+                    send::Sent::Queued(to) => {
+                        self.sending = None;
+                        self.flash.set(
+                            StatusKind::Success,
+                            format!("The invoice is on its way to {to}. History shows when it has gone."),
+                        );
+                    }
+                    send::Sent::Invalid => {}
+                    // Said in the dialog, which stays open with what was typed.
+                    send::Sent::Refused(message) => self.flash.set(StatusKind::Error, message),
+                }
             }
             "ask_issue" => {
                 if self.can_issue && self.draft() {
@@ -509,8 +577,10 @@ impl Document {
                     );
                 }
             }
-            "issue" | "discard" => {
-                let issue = event == "issue";
+            "issue" | "issue_send" | "discard" => {
+                let issue = event != "discard";
+                let send = event == "issue_send";
+                let mut sent_to = None;
                 self.discarding = false;
                 let written = if issue {
                     let Some(issuing) = self.issuing.take() else {
@@ -518,8 +588,9 @@ impl Document {
                             .set(StatusKind::Error, "Review this invoice before issuing it.");
                         return Ok(());
                     };
+                    sent_to = issuing.send_to().filter(|_| send).map(str::to_owned);
                     issuing
-                        .commit(&self.pages, scope, credential, "issue")
+                        .commit(&self.pages, scope, credential, event, send)
                         .await?
                 } else {
                     self.pages
@@ -538,7 +609,10 @@ impl Document {
                             // The page is opened again under its new name, so
                             // the browser tab says INV-00006, not "Draft #9".
                             self.redirect = Some(format!("{INVOICES}/{}", self.id));
-                            self.flash.set(StatusKind::Success, issue::issued(&record));
+                            self.flash.set(
+                                StatusKind::Success,
+                                issue::issued(&record, sent_to.as_deref()),
+                            );
                         } else {
                             self.flash.set(StatusKind::Success, "Draft discarded.");
                         }

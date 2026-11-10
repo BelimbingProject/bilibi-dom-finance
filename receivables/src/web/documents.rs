@@ -683,7 +683,7 @@ impl Documents {
             Some(opening.body(scope).await?)
         } else if let Some(issuing) = &self.issuing {
             let display = self.pages.display(scope).await?;
-            Some(issuing.dialog(&self.figures, &display, "issue", "cancel_issue")?)
+            Some(issuing.dialog(&self.figures, &display, "issue", "issue_send", "cancel_issue")?)
         } else {
             self.create
                 .as_ref()

@@ -139,18 +139,21 @@ impl Documents {
                 }
             }
             "create_draft" => redirect = self.save_form(scope, credential, v).await?,
-            "issue" => {
+            "issue" | "issue_send" => {
                 let Some(issuing) = self.issuing.take() else {
                     return Ok(Some(None));
                 };
                 let id = issuing.id;
+                let send = kind == "issue_send";
+                let sent_to = issuing.send_to().filter(|_| send).map(str::to_owned);
                 let written = issuing
-                    .commit(&self.pages, scope, credential, "issue")
+                    .commit(&self.pages, scope, credential, kind, send)
                     .await?;
                 match written {
-                    Written::Done(record) => {
-                        self.flash.set(StatusKind::Success, issue::issued(&record))
-                    }
+                    Written::Done(record) => self.flash.set(
+                        StatusKind::Success,
+                        issue::issued(&record, sent_to.as_deref()),
+                    ),
                     Written::Invalid(fields) => self.flash.set(
                         StatusKind::Error,
                         format!(
