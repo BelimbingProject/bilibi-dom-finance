@@ -28,9 +28,11 @@ struct Stack {
     body: Html,
 }
 
-/// The date part of a recorded instant.
-fn day(instant: &Value) -> &str {
-    instant.as_str().and_then(|t| t.get(..10)).unwrap_or("")
+/// The date part of a recorded instant, as pages show a date.
+fn day(instant: &Value) -> String {
+    bilibi_finance_ledger::dates::display_text(
+        instant.as_str().and_then(|t| t.get(..10)).unwrap_or(""),
+    )
 }
 
 impl State {
@@ -81,8 +83,8 @@ impl State {
             id: "source-period-detail",
             body: Html::text(&format!(
                 "Source {label}; {} to {}; {}. These are retained source facts, not postings or submissions.",
-                record["period_start"].as_str().unwrap_or(""),
-                record["period_end"].as_str().unwrap_or(""),
+                bilibi_finance_ledger::dates::display_text(record["period_start"].as_str().unwrap_or("")),
+                bilibi_finance_ledger::dates::display_text(record["period_end"].as_str().unwrap_or("")),
                 record["currency_code"].as_str().unwrap_or("")
             )),
             ..Alert::default()
@@ -144,7 +146,9 @@ impl State {
                 },
                 Fact {
                     title: "Conversion date",
-                    value: Html::text(record["conversion_date"].as_str().unwrap_or("")),
+                    value: Html::text(&bilibi_finance_ledger::dates::display_text(
+                        record["conversion_date"].as_str().unwrap_or(""),
+                    )),
                     ..Fact::default()
                 },
                 Fact {
@@ -209,7 +213,9 @@ impl State {
                     row = row
                         .cell(
                             "event_date",
-                            Cell::text(r["event_date"].as_str().unwrap_or("")),
+                            Cell::text(bilibi_finance_ledger::dates::display_text(
+                                r["event_date"].as_str().unwrap_or(""),
+                            )),
                         )
                         .cell("status", Cell::text(r["status"].as_str().unwrap_or("")));
                 }

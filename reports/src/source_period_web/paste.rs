@@ -544,7 +544,10 @@ impl Paste {
                 } => line
                     .cell("item", Cell::text(item))
                     .cell("side", Cell::text(side))
-                    .cell("date", Cell::text(date))
+                    .cell(
+                        "date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(date)),
+                    )
                     .cell("amount", Cell::text(amount.display(units))),
                 Row::Left(reason) => line.cell("item", Cell::text(format!("Left out: {reason}"))),
                 Row::Skipped => line,

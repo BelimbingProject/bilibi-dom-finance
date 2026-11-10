@@ -296,7 +296,7 @@ impl Acquire {
                         };
                         Choice::new(label, key(s)).detail(format!(
                             "{} · {}",
-                            s.acquisition_date,
+                            bilibi_finance_ledger::dates::display(s.acquisition_date),
                             s.amount.display(units)
                         ))
                     })
@@ -320,7 +320,7 @@ impl Acquire {
             source = source.hint(format!(
                 "Cost {}, bought {}.",
                 chosen.amount.display(units),
-                chosen.acquisition_date
+                bilibi_finance_ledger::dates::display(chosen.acquisition_date)
             ));
         }
         let fields = vec![

@@ -136,7 +136,7 @@ impl Journals {
                 history.push(&Html::text(&format!(
                     "; {} {} · {} · {} · ",
                     e.event,
-                    e.effective_date,
+                    bilibi_finance_ledger::dates::display_text(&e.effective_date),
                     people.who(Some(e.actor_user_id), e.actor_impersonator_id),
                     e.reason
                 )));
@@ -155,7 +155,10 @@ impl Journals {
             }
             rows.push(
                 FlexRow::new(w.id.to_string())
-                    .cell("date", Cell::text(&w.entry_date))
+                    .cell(
+                        "date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(&w.entry_date)),
+                    )
                     .slot("amount", f::tabular(&figures.money(w.amount))?)
                     .slot(
                         "account",
@@ -254,7 +257,10 @@ impl Journals {
             body.push(&render(Facts {
                 id: "write-off-review-details",
                 items: vec![
-                    f::fact("Journal date", &journal.entry_date),
+                    f::fact(
+                        "Journal date",
+                        &bilibi_finance_ledger::dates::display_text(&journal.entry_date),
+                    ),
                     f::fact("Amount", &figures.money(journal.amount)),
                     f::fact_html(
                         "Allowance or expense",

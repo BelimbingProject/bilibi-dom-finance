@@ -30,7 +30,7 @@ use std::sync::{
 use tokio::{sync::broadcast, task::JoinHandle};
 
 pub(crate) const PAGES: &str = "finance/reconciliation.pages";
-const DENIED: &str = "You do not have permission for that action.";
+const DENIED: &str = "You do not have permission to do that.";
 
 #[derive(Clone)]
 pub(crate) struct Pages {

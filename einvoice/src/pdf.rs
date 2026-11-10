@@ -268,14 +268,20 @@ fn printable(view: &DocumentView) -> serializer::Document {
     let title = format!("{type_name} {}", document.code_number);
     let mut heading = vec![
         format!("{} {}", type_name.to_uppercase(), document.code_number),
-        format!("Issued {}", document.issued_at),
+        format!(
+            "Issued {}",
+            bilibi_finance_ledger::dates::display_utc(document.issued_at)
+        ),
         format!("Status: {}", view.status),
     ];
     if let Some(uuid) = &view.document_uuid {
         heading.push(format!("Authority UUID: {uuid}"));
     }
     if let Some(at) = view.validated_at {
-        heading.push(format!("Validated {at}"));
+        heading.push(format!(
+            "Validated {}",
+            bilibi_finance_ledger::dates::display_utc(at)
+        ));
     }
     if let Some(url) = &view.validation_url {
         heading.push(format!("Validation link: {url}"));

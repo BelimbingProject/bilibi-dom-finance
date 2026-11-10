@@ -342,7 +342,10 @@ impl Document {
             f::fact("Source system", &text("source_system")),
             f::fact("Source reference", &text("source_reference")),
             f::fact("Source document", &text("document_reference")),
-            f::fact("Conversion date", &text("conversion_date")),
+            f::fact(
+                "Conversion date",
+                &bilibi_finance_ledger::dates::display_text(&text("conversion_date")),
+            ),
         ];
         if let Some(value) = opening["original_total"]
             .as_str()
@@ -488,7 +491,9 @@ impl Document {
         if let Some(pins) = self.balance_pins.as_object() {
             items.push(f::fact(
                 "Balance as of",
-                pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
+                &bilibi_finance_ledger::dates::display_text(
+                    pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
+                ),
             ));
         }
         let issued = d.status == "issued";
@@ -586,7 +591,10 @@ impl Document {
                     "document",
                     f::link(&format!("{RECEIPTS}/{}", p.id), &p.payment_reference)?,
                 )
-                .cell("date", Cell::text(&p.payment_date))
+                .cell(
+                    "date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(&p.payment_date)),
+                )
                 .slot("amount", f::tabular(&self.figures.decimal(allocated))?)
                 .slot("status", super::super::payments::status_badge(p)?),
             );
@@ -599,7 +607,12 @@ impl Document {
                     "document",
                     f::link(&format!("{INVOICES}/{}", c.id), &reference(c))?,
                 )
-                .cell("date", Cell::text(f::optional(&c.issue_date)))
+                .cell(
+                    "date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(f::optional(
+                        &c.issue_date,
+                    ))),
+                )
                 .slot("amount", f::tabular(&self.figures.money(c.total))?)
                 .slot("status", f::status_badge(&c.status)?),
             );

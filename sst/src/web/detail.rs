@@ -260,7 +260,8 @@ impl Return {
             return None;
         }
         let blockers = Blockers {
-            period_end: (!report.period_ended).then(|| report.tax_return.period_end.to_string()),
+            period_end: (!report.period_ended)
+                .then(|| bilibi_finance_ledger::dates::display(report.tax_return.period_end)),
             unmapped: figures
                 .unmapped
                 .iter()
@@ -396,12 +397,16 @@ impl Return {
             fact(
                 "Taxable period",
                 "sst-return-period",
-                &format!("{} to {}", r.period_start, r.period_end),
+                &format!(
+                    "{} to {}",
+                    bilibi_finance_ledger::dates::display(r.period_start),
+                    bilibi_finance_ledger::dates::display(r.period_end)
+                ),
             ),
             fact(
                 "Return and payment due",
                 "sst-return-due",
-                &r.due_date.to_string(),
+                &bilibi_finance_ledger::dates::display(r.due_date),
             ),
         ];
         if let Some(figures) = &report.figures {
@@ -782,8 +787,8 @@ impl Return {
             "{} return {}: {} to {}",
             f::tax_name(tax_type),
             r.return_number,
-            r.period_start,
-            r.period_end
+            bilibi_finance_ledger::dates::display(r.period_start),
+            bilibi_finance_ledger::dates::display(r.period_end)
         );
         View {
             flash: flash(&self.flash),

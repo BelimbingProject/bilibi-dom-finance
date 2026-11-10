@@ -274,7 +274,10 @@ impl Bills {
                         "party_document_number",
                         Cell::text(format::optional(&d.party_document_number)),
                     )
-                    .cell("document_date", Cell::text(d.document_date.to_string()))
+                    .cell(
+                        "document_date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(&d.document_date)),
+                    )
                     .slot(
                         "total",
                         render(Tabular {

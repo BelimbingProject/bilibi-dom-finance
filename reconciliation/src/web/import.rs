@@ -453,8 +453,14 @@ impl Import {
             .map(|(n, line)| {
                 let date = line.date.to_string();
                 let mut row = FlexRow::new((n + 1).to_string())
-                    .cell("date", Cell::date(&date, &date))
-                    .slot("date", super::nowrap(&date)?)
+                    .cell(
+                        "date",
+                        Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                    )
+                    .slot(
+                        "date",
+                        super::nowrap(&bilibi_finance_ledger::dates::display_text(&date))?,
+                    )
                     .cell("description", Cell::text(&line.description))
                     .cell("amount", Cell::text(line.amount.display(units)));
                 row.dom_id = Some(format!("statement-preview-line-{}", n + 1));

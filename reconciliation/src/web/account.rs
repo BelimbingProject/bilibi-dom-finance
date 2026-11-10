@@ -381,10 +381,22 @@ impl Account {
                             attachment: files.get(&s.id).copied(),
                         })?,
                     )
-                    .cell("from", Cell::date(&from, &from))
-                    .slot("from", super::nowrap(&from)?)
-                    .cell("to", Cell::date(&to, &to))
-                    .slot("to", super::nowrap(&to)?)
+                    .cell(
+                        "from",
+                        Cell::date(&from, &bilibi_finance_ledger::dates::display_text(&from)),
+                    )
+                    .slot(
+                        "from",
+                        super::nowrap(&bilibi_finance_ledger::dates::display_text(&from))?,
+                    )
+                    .cell(
+                        "to",
+                        Cell::date(&to, &bilibi_finance_ledger::dates::display_text(&to)),
+                    )
+                    .slot(
+                        "to",
+                        super::nowrap(&bilibi_finance_ledger::dates::display_text(&to))?,
+                    )
                     .cell("lines", Cell::text(s.line_count.to_string()))
                     .cell("opening", Cell::text(money(s.opening_balance)))
                     .slot("opening", super::nowrap(&money(s.opening_balance))?)
@@ -443,8 +455,14 @@ impl Account {
                 })?;
                 let mut row = FlexRow::new(key)
                     .slot("number", link)
-                    .cell("end_date", Cell::date(&date, &date))
-                    .slot("end_date", super::nowrap(&date)?)
+                    .cell(
+                        "end_date",
+                        Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                    )
+                    .slot(
+                        "end_date",
+                        super::nowrap(&bilibi_finance_ledger::dates::display_text(&date))?,
+                    )
                     .cell("balance", Cell::text(r.statement_balance.display(minor)))
                     .slot("status", status_badge(r.status)?);
                 row.dom_id = Some(format!("reconciliation-{}", r.id));
@@ -627,7 +645,10 @@ impl Account {
                         StatusKind::Success,
                         format!(
                             "Statement {} imported: {} lines from {} to {}.{skipped} Match its lines next.",
-                            s.statement_number, s.line_count, s.start_date, s.end_date
+                            s.statement_number,
+                            s.line_count,
+                            bilibi_finance_ledger::dates::display(s.start_date),
+                            bilibi_finance_ledger::dates::display(s.end_date)
                         ),
                     ));
                     // The draft follows the newest statement.

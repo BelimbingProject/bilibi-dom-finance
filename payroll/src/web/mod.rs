@@ -244,7 +244,7 @@ impl State {
                 }
             }
             PayrollError::Failed(_) => {
-                Some("It could not be done. No change was confirmed.".into())
+                Some("Nothing was changed. Reload the page and try again.".into())
             }
             _ => Some(error.to_string()),
         };
@@ -665,7 +665,7 @@ fn default_mapping() -> HashMap<String, String> {
 }
 
 /// Bilimbi LiveAuthorization's denied message.
-const DENIED: &str = "You do not have permission for that action.";
+const DENIED: &str = "You do not have permission to do that.";
 
 /// The key an in-place value keeps its outcome under: `settings-<field>`
 /// or `mapping-<id>-<field>`.

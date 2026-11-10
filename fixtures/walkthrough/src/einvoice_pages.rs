@@ -199,7 +199,7 @@ pub async fn run() -> Outcome<()> {
     }
     has(
         &event(&mut setup, &manager, json!({"type":"test_connection"})).await?,
-        "The authority refused the login (HTTP 400).",
+        "MyInvois did not accept the client ID and secret.",
     );
     setting(
         &db,
@@ -497,7 +497,10 @@ pub async fn run() -> Outcome<()> {
             json!({"type":"retry_posting", "id":id.to_string()}),
         )
         .await?;
-        has(&refused, "You need permission to post to the ledger.");
+        has(
+            &refused,
+            "You do not have permission to post to the ledger.",
+        );
         assert!(einvoice
             .get_document(&manager, COMPANY, id)
             .await?

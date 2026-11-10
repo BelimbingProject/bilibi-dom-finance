@@ -974,7 +974,7 @@ impl State {
         for _ in 0..20 {
             let envelope=match self.pages.contracts.read(scope,"base.workflow.approvals.exceptions",&json!({"company":company,"case":"finance.ledger.manual_journal","after":after,"page_size":100,"unreviewed":self.filter("review")=="pending"})).await {
                 Ok(value)=>value,
-                Err(error)=>{parts.push(html(Alert {id:"journal-exceptions-refused",kind:StatusKind::Error,body:Html::text(match error {bilibi_agent_api::Error::Forbidden=>"Your role does not allow you to read approval exceptions.",_=>"The journal approval exceptions could not be read. Reload the page and try again."}),..Alert::default()})?);return Ok(parts);}
+                Err(error)=>{parts.push(html(Alert {id:"journal-exceptions-refused",kind:StatusKind::Error,body:Html::text(match error {bilibi_agent_api::Error::Forbidden=>"You do not have permission to read approval exceptions.",_=>"The journal approval exceptions could not be read. Reload the page and try again."}),..Alert::default()})?);return Ok(parts);}
             };
             let result = &envelope["result"];
             for e in result["entries"].as_array().ok_or(Error::Internal)? {
@@ -1402,7 +1402,7 @@ fn action_label(action: &str) -> String {
 }
 fn refusal(error: &LedgerError) -> String {
     match error {
-        LedgerError::Unauthorized => "You do not have permission for that action.",
+        LedgerError::Unauthorized => "You do not have permission to do that.",
         LedgerError::CompanyArchived => "The company is archived; nothing can be changed.",
         LedgerError::BookNotOpen => "The ledger's book is not open yet.",
         LedgerError::EntryNotFound => "That entry no longer exists.",
@@ -1411,7 +1411,11 @@ fn refusal(error: &LedgerError) -> String {
         LedgerError::ReviewerNotIndependent => {
             "An exception is reviewed by someone who neither approved nor prepared what it records."
         }
-        _ => return format!("That could not be done ({error})."),
+        // A database failure may carry SQL or internals, so it is never shown.
+        LedgerError::Failed(_) | LedgerError::InvalidOption => {
+            "Nothing was changed. Reload the page and try again."
+        }
+        other => return format!("{}.", other.to_string().trim_end_matches('.')),
     }
     .into()
 }

@@ -27,9 +27,9 @@ pub(super) fn refusal(action: &str, error: E) -> String {
         ("cancel", E::CancellationRefused { code: CancelRefusal::ActiveReferencingDocuments, .. }) => "The authority refused: an active document references this one.",
         ("cancel", E::CancellationRefused { reason, .. }) => return reason.as_ref().map_or("The authority refused the cancellation.".into(), |r| format!("The authority refused the cancellation: {r}")),
         ("generate_pdf", E::Unauthorized) => "You do not have permission to generate the PDF.",
-        ("generate_pdf", E::Artifacts("policy")) => "Ask a server administrator to set Storage folder (artifacts.storage_root) and Document retention days (artifacts.retention_days) in Global settings at /system/settings.",
-        ("generate_pdf", E::Artifacts("unsafe_root")) => "Storage folder (artifacts.storage_root) must be the absolute path of an existing private folder (permission 0700). Ask a server administrator to set it in Global settings at /system/settings.",
-        ("generate_pdf", E::Artifacts("missing_root")) => "The storage folder does not exist. Check the drive is connected, or change Storage folder in Global settings at /system/settings.",
+        ("generate_pdf", E::Artifacts("policy")) => "File storage is not set up. Ask your administrator to set the storage folder in System settings.",
+        ("generate_pdf", E::Artifacts("unsafe_root")) => "The storage folder cannot be used. Ask your administrator to check it in System settings.",
+        ("generate_pdf", E::Artifacts("missing_root")) => "The storage folder cannot be found. Ask your administrator to check it in System settings.",
         (_, E::CompanyArchived) => "The company is archived.",
         // Never expose transport, storage or database internals to the page.
         _ => return format!("{} ({error}).", match action {

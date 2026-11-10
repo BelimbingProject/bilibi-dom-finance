@@ -700,7 +700,7 @@ impl Refusal {
             }
         }
         if messages.is_empty() {
-            "That could not be done. Check the details and try again.".into()
+            "Nothing was changed. Reload the page and try again.".into()
         } else {
             messages
                 .into_iter()

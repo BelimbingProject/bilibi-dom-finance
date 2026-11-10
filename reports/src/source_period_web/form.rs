@@ -17,8 +17,8 @@ impl State {
             body: Html::text(&format!(
                 "Review source {} for {} to {}. This retains evidence only and creates no postings or submissions.",
                 text("source_reference"),
-                text("period_start"),
-                text("period_end")
+                bilibi_finance_ledger::dates::display_text(&text("period_start")),
+                bilibi_finance_ledger::dates::display_text(&text("period_end"))
             )),
             ..Alert::default()
         })?;
@@ -53,7 +53,10 @@ impl State {
                 "Accounting time zone",
                 text("accounting_timezone").replace('_', " "),
             ),
-            fact("Conversion date", text("conversion_date")),
+            fact(
+                "Conversion date",
+                bilibi_finance_ledger::dates::display_text(&text("conversion_date")),
+            ),
             fact("Rows", rows.len().to_string()),
         ];
         if let Some(replaced) = facts["replaces"]["source_reference"].as_str() {
@@ -99,7 +102,12 @@ impl State {
                     .cell("source", Cell::text(r["source_id"].as_str().unwrap_or("")))
                     .cell("item", Cell::text(item))
                     .cell("side", Cell::text(side))
-                    .cell("date", Cell::text(r["event_date"].as_str().unwrap_or("")))
+                    .cell(
+                        "date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(
+                            r["event_date"].as_str().unwrap_or(""),
+                        )),
+                    )
                     .cell("amount", Cell::text(money(r).display(units)))
             })
             .collect();

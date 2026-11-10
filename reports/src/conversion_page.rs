@@ -173,7 +173,7 @@ impl State {
                     fields.into_values().flatten().collect::<Vec<_>>().join(" ")
                 }
                 bilibi_agent_api::Error::Forbidden => {
-                    "Your role does not allow you to do this.".into()
+                    "You do not have permission to do that.".into()
                 }
                 bilibi_agent_api::Error::NotFound => {
                     "That conversion report is not in the current company.".into()
@@ -263,7 +263,12 @@ impl State {
                             label: &format!("Report {id}"),
                         })?,
                     )
-                    .cell("date", Cell::text(r["as_of"].as_str().unwrap_or("")))
+                    .cell(
+                        "date",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(
+                            r["as_of"].as_str().unwrap_or(""),
+                        )),
+                    )
                     .cell("pin", Cell::text(r["through_entry_number"].to_string()))
                     .cell(
                         "status",
@@ -524,7 +529,7 @@ impl State {
                     } else {
                         &self.document
                     };
-                    body.push(&render(Alert {id:"conversion-summary",kind:StatusKind::Info,body:Html::text(&format!("Conversion {} · reporting date {} · {} unresolved items. Review every difference, source and schedule limit.",content["conversion_date"].as_str().unwrap_or(""),content["as_of"].as_str().unwrap_or(""),content["unresolved_differences"].as_array().map_or(0,Vec::len))),..Alert::default()})?);
+                    body.push(&render(Alert {id:"conversion-summary",kind:StatusKind::Info,body:Html::text(&format!("Conversion {} · reporting date {} · {} unresolved items. Review every difference, source and schedule limit.",bilibi_finance_ledger::dates::display_text(content["conversion_date"].as_str().unwrap_or("")),bilibi_finance_ledger::dates::display_text(content["as_of"].as_str().unwrap_or("")),content["unresolved_differences"].as_array().map_or(0,Vec::len))),..Alert::default()})?);
                     let stale_bridges = content["bank_bridges"].as_array().map_or(0, |rows| {
                         rows.iter()
                             .filter(|row| row["source_activity_after_finalisation"] == true)

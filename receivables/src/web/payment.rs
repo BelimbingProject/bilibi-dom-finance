@@ -207,7 +207,10 @@ impl Payment {
                     "Customer",
                     f::link(&format!("{CUSTOMERS}/{}", p.customer_id), &customer_name)?,
                 ),
-                f::fact("Date received", &p.payment_date),
+                f::fact(
+                    "Date received",
+                    &bilibi_finance_ledger::dates::display_text(&p.payment_date),
+                ),
                 f::fact(
                     "Amount",
                     &self.figures.with_currency(p.amount, &p.currency_code),
@@ -237,7 +240,10 @@ impl Payment {
                 )
                 .cell(
                     "due",
-                    Cell::text(doc.map_or("—", |d| f::optional(&d.due_date))),
+                    Cell::text(doc.map_or_else(
+                        || "—".to_owned(),
+                        |d| bilibi_finance_ledger::dates::display_text(f::optional(&d.due_date)),
+                    )),
                 )
                 .slot("amount", f::tabular(&self.figures.money(a.amount))?),
             );
@@ -307,7 +313,10 @@ impl Payment {
         ];
         if let Some(r) = &p.reversal {
             summary_items.extend([
-                f::fact("Reversal date", &r.reversal_date),
+                f::fact(
+                    "Reversal date",
+                    &bilibi_finance_ledger::dates::display_text(&r.reversal_date),
+                ),
                 f::fact("Reversal reason", &r.reason),
                 f::fact_html(
                     "Reversal journal",
@@ -389,7 +398,10 @@ impl Payment {
                 .kind(InputKind::Date)
                 .value(values.get("reversal_date").cloned().unwrap_or_default())
                 .required()
-                .hint(format!("On or after {}, the receipt date.", p.payment_date))
+                .hint(format!(
+                    "On or after {}, the receipt date.",
+                    bilibi_finance_ledger::dates::display_text(&p.payment_date)
+                ))
                 .errors(errors.under("reversal_date", "Reversal date")),
         )?);
         body.push(&render(

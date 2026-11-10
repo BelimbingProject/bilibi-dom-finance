@@ -294,7 +294,7 @@ impl State {
             if !self.may_export(scope).await? {
                 self.flash = Some((
                     StatusKind::Error,
-                    "You do not have permission for that action.".into(),
+                    "You do not have permission to do that.".into(),
                 ));
                 return Ok(());
             }

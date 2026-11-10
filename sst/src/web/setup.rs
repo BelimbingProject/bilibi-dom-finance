@@ -380,7 +380,8 @@ impl Setup {
                             "sst-cycle",
                             &format!(
                                 "{} months, the first from {}",
-                                r.period_months, r.period_start
+                                r.period_months,
+                                bilibi_finance_ledger::dates::display(r.period_start)
                             ),
                         ),
                         fact(
@@ -414,7 +415,8 @@ impl Setup {
                                 "cycle",
                                 Cell::text(format!(
                                     "{} months from {}",
-                                    r.period_months, r.period_start
+                                    r.period_months,
+                                    bilibi_finance_ledger::dates::display(r.period_start)
                                 )),
                             )
                             .cell(

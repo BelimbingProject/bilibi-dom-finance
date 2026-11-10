@@ -328,8 +328,12 @@ impl State {
                     "Period",
                     format!(
                         "{} – {}",
-                        schedule["period_start"].as_str().unwrap_or(""),
-                        schedule["period_end"].as_str().unwrap_or("")
+                        bilibi_finance_ledger::dates::display_text(
+                            schedule["period_start"].as_str().unwrap_or("")
+                        ),
+                        bilibi_finance_ledger::dates::display_text(
+                            schedule["period_end"].as_str().unwrap_or("")
+                        )
                     ),
                 ),
                 fact("Reason", facts["reason"].as_str().unwrap_or("").into()),

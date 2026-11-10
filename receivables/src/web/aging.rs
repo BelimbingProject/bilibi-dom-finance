@@ -344,8 +344,14 @@ impl Aging {
                             format!("{} (invoiced as {})", c.name, d.party_name)
                         }),
                     )
-                    .cell("issued", Cell::text(&d.issue_date))
-                    .cell("due", Cell::text(&d.due_date))
+                    .cell(
+                        "issued",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(&d.issue_date)),
+                    )
+                    .cell(
+                        "due",
+                        Cell::text(bilibi_finance_ledger::dates::display_text(&d.due_date)),
+                    )
                     .slot(
                         "late",
                         f::tabular(&if d.days_overdue > 0 {
@@ -422,7 +428,12 @@ impl Aging {
                             )?,
                         )
                         .cell("customer", Cell::text(&c.name))
-                        .cell("issued", Cell::text(&credit.issue_date))
+                        .cell(
+                            "issued",
+                            Cell::text(bilibi_finance_ledger::dates::display_text(
+                                &credit.issue_date,
+                            )),
+                        )
                         .slot(
                             "outstanding",
                             f::tabular(&self.figures.decimal(credit.outstanding))?,

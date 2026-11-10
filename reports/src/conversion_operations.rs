@@ -185,10 +185,7 @@ impl ReadHandler for List {
                 .map_err(refusal)?;
             let after = input["after"].as_i64().unwrap_or(0);
             if after < 0 {
-                return Err(bilibi_agent_api::invalid(
-                    "after",
-                    "Choose a nonnegative cursor.",
-                ));
+                return Err(bilibi_agent_api::invalid("after", "Reload the page."));
             }
             let rows=c.query("SELECT id,issued_at::text,through_entry_number,content->>'as_of',EXISTS(SELECT 1 FROM finance_reports_conversion_signoffs s WHERE s.tenant_id=$1 AND s.company_id=$2 AND s.report_id=r.id) FROM finance_reports_issued r WHERE tenant_id=$1 AND company_id=$2 AND kind='conversion' AND id>$3 ORDER BY id LIMIT 100",&[&s.tenant(),&company,&after]).await.map_err(Error::from)?.iter().map(|r|json!({"id":r.get::<_,i64>(0),"issued_at":r.get::<_,String>(1),"through_entry_number":r.get::<_,i64>(2),"as_of":r.get::<_,String>(3),"signed":r.get::<_,bool>(4)})).collect::<Vec<_>>();
             let next = if rows.len() == 100 {

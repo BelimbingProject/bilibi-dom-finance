@@ -81,7 +81,7 @@ pub type Result<T> = std::result::Result<T, SstError>;
 /// A refusal in the words Bilimbi's SST pages show it.
 #[derive(Debug, thiserror::Error)]
 pub enum SstError {
-    #[error("You do not have permission for that action.")]
+    #[error("You do not have permission to do that.")]
     Unauthorized,
     #[error("The company could not be found.")]
     CompanyNotFound,
@@ -101,7 +101,7 @@ pub enum SstError {
     TaxCodeNotFound,
     #[error("Choose a receivables or payables tax code.")]
     InvalidSource,
-    #[error("The request was malformed.")]
+    #[error("Something went wrong. Reload the page and try again.")]
     InvalidOption,
     #[error("That period already has an open return.")]
     ReturnOpen,

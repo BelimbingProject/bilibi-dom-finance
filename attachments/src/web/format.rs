@@ -8,7 +8,7 @@ use bilibi_database::Error;
 pub(crate) fn refusal(error: AttachmentError) -> Result<String, Error> {
     use AttachmentError as E;
     Ok(match error {
-        E::Unauthorized => "You are not allowed to do that.".into(),
+        E::Unauthorized => "You do not have permission to do that.".into(),
         E::CompanyNotFound => "This company cannot be read with your current access.".into(),
         E::CompanyArchived => "This company is archived; nothing more is recorded.".into(),
         E::NotFound => "There is no such record for this company.".into(),
@@ -19,7 +19,7 @@ pub(crate) fn refusal(error: AttachmentError) -> Result<String, Error> {
         E::EmptyFile => "The file is empty.".into(),
         E::FileTooLarge => "The file is larger than this page accepts.".into(),
         E::InvalidContentType => "The file's type could not be read.".into(),
-        E::InvalidSize => "The file is larger than Base Artifacts accepts.".into(),
+        E::InvalidSize => "This file is too large.".into(),
         E::ReasonRequired => "Give a reason.".into(),
         E::RetentionNotLengthened => "Retention is only ever lengthened.".into(),
         E::RetentionNotExtended => {
@@ -28,7 +28,7 @@ pub(crate) fn refusal(error: AttachmentError) -> Result<String, Error> {
         E::RetentionOutOfRange => {
             "The retention date must be in the future, and no more than 200 years away.".into()
         }
-        E::SourceUnavailable => "The module that owns this record is not mounted.".into(),
+        E::SourceUnavailable => "This record cannot be opened here.".into(),
         E::InvalidSource => "That kind of record cannot take attachments.".into(),
         refused @ (E::RetentionNotConfigured
         | E::StorageFolderMissing(_)
@@ -39,14 +39,16 @@ pub(crate) fn refusal(error: AttachmentError) -> Result<String, Error> {
             .collect::<Vec<_>>()
             .join("; "),
         E::Failed(error) => return Err(error),
-        // Bilimbi `"The action was refused: #{inspect(other)}."`: the atom.
-        E::CaptureMismatch => "The action was refused: :capture_mismatch.".into(),
-        E::DocumentNotFinal => "The action was refused: :document_not_final.".into(),
-        E::AlreadyOnHold => "The action was refused: :already_on_hold.".into(),
-        E::NotOnHold => "The action was refused: :not_on_hold.".into(),
-        E::InvalidOption => "The action was refused: :invalid_option.".into(),
-        E::Storage(code) => format!("The action was refused: :{code}."),
-        other => format!("The action was refused: {other}."),
+        // One plain sentence per case, never the variant's code name.
+        E::CaptureMismatch => "This file does not match the record. Upload it again.".into(),
+        E::DocumentNotFinal => "This record is not final yet.".into(),
+        E::AlreadyOnHold => "This file is already on legal hold.".into(),
+        E::NotOnHold => "This file is not on legal hold.".into(),
+        E::InvalidOption => "Something went wrong. Reload the page and try again.".into(),
+        E::Storage(_) => "The file could not be saved. Try again.".into(),
+        E::RecordedInStorage(_) => {
+            "The change was saved, but the page is out of date. Reload the page.".into()
+        }
     })
 }
 
@@ -73,5 +75,5 @@ pub(crate) fn short_hash(hash: &str) -> String {
 
 /// The date of a retain-until, which is the end of that day in UTC.
 pub(crate) fn retain_until(until: jiff::Timestamp) -> String {
-    until.to_zoned(jiff::tz::TimeZone::UTC).date().to_string()
+    bilibi_finance_ledger::dates::display(until.to_zoned(jiff::tz::TimeZone::UTC).date())
 }

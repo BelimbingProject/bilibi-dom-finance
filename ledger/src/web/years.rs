@@ -537,7 +537,9 @@ impl Years {
         for period in &year.periods {
             let label = format!(
                 "period {} ({} to {})",
-                period.period_number, period.start_date, period.end_date
+                period.period_number,
+                crate::dates::display_text(&period.start_date),
+                crate::dates::display_text(&period.end_date)
             );
             // The period's next step is local to it, so it is a plain icon
             // button with a tooltip, raising the page's own confirmation.
@@ -577,8 +579,14 @@ impl Years {
             }
             let mut row = FlexRow::new(period.id.to_string())
                 .cell("number", Cell::text(period.period_number.to_string()))
-                .cell("start", Cell::text(&period.start_date))
-                .cell("end", Cell::text(&period.end_date))
+                .cell(
+                    "start",
+                    Cell::text(crate::dates::display_text(&period.start_date)),
+                )
+                .cell(
+                    "end",
+                    Cell::text(crate::dates::display_text(&period.end_date)),
+                )
                 .slot("status", period_badge(&period.status)?);
             row.actions = actions;
             row.dom_id = Some(format!("ledger-period-{}", period.id));
@@ -604,7 +612,10 @@ impl Years {
                 name: "action",
                 value: &format!(
                     "close_year:{}:{}:{} to {}",
-                    company.id, year.id, year.start_date, year.end_date
+                    company.id,
+                    year.id,
+                    crate::dates::display_text(&year.start_date),
+                    crate::dates::display_text(&year.end_date)
                 ),
                 variant: ButtonVariant::Primary,
                 body: Html::text("Close year"),
@@ -620,7 +631,10 @@ impl Years {
                 name: "action",
                 value: &format!(
                     "reopen_year:{}:{}:{} to {}",
-                    company.id, year.id, year.start_date, year.end_date
+                    company.id,
+                    year.id,
+                    crate::dates::display_text(&year.start_date),
+                    crate::dates::display_text(&year.end_date)
                 ),
                 body: Html::text("Reopen year"),
                 ..Button::default()
@@ -634,7 +648,10 @@ impl Years {
                 name: "action",
                 value: &format!(
                     "lock_year:{}:{}:{} to {}",
-                    company.id, year.id, year.start_date, year.end_date
+                    company.id,
+                    year.id,
+                    crate::dates::display_text(&year.start_date),
+                    crate::dates::display_text(&year.end_date)
                 ),
                 variant: ButtonVariant::Danger,
                 body: Html::text("Lock year"),
@@ -646,7 +663,9 @@ impl Years {
             id: &heading_id,
             title: &format!(
                 "{} · {} to {}",
-                company_name, year.start_date, year.end_date
+                company_name,
+                crate::dates::display_text(&year.start_date),
+                crate::dates::display_text(&year.end_date)
             ),
             title_actions: render(Badge::status(
                 if closed {
@@ -1217,12 +1236,13 @@ fn start_hint(opening: &Opening) -> String {
     } else if opening.start == opening.follows {
         format!(
             "Follows the previous year, which ends {}.",
-            opening.previous_end
+            crate::dates::display_text(&opening.previous_end)
         )
     } else {
         format!(
             "The previous year ends {}; the next year must start on {}.",
-            opening.previous_end, opening.follows
+            crate::dates::display_text(&opening.previous_end),
+            crate::dates::display_text(&opening.follows)
         )
     }
 }
@@ -1233,7 +1253,7 @@ fn end_hint(opening: &Opening) -> String {
     } else if opening.end.trim().is_empty() {
         format!(
             "Left empty, the year ends twelve months after the first day: {}.",
-            opening.calculated_end
+            crate::dates::display_text(&opening.calculated_end)
         )
     } else if opening.end == opening.calculated_end {
         "Calculated: twelve months from the first day. Choose another month-end for a short or extended year."
@@ -1245,11 +1265,11 @@ fn end_hint(opening: &Opening) -> String {
                 "Chosen by you: {months} {}, a {} year. The calculated last day is {}. The ledger accepts 1 to 24 months; confirm your company may use this length.",
                 if months == 1 { "month" } else { "months" },
                 if months < 12 { "short" } else { "extended" },
-                opening.calculated_end
+                crate::dates::display_text(&opening.calculated_end)
             ),
             None => format!(
                 "Chosen by you. The calculated last day is {}.",
-                opening.calculated_end
+                crate::dates::display_text(&opening.calculated_end)
             ),
         }
     }
@@ -1285,7 +1305,12 @@ fn default_end(start: &str) -> String {
 fn review_detail(review: &Review) -> String {
     let start = review.facts["start_date"].as_str().unwrap_or("");
     let end = review.facts["end_date"].as_str().unwrap_or("");
-    match months_between(start, end) {
+    let months = months_between(start, end);
+    let (start, end) = (
+        crate::dates::display_text(start),
+        crate::dates::display_text(end),
+    );
+    match months {
         Some(months) => format!(
             "{start} to {end}: {months} monthly {}, all open.",
             if months == 1 { "period" } else { "periods" }

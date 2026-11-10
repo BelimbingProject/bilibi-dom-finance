@@ -443,8 +443,14 @@ impl Detail {
                     let date = item.item_date.to_string();
                     let mut row = FlexRow::new((index + 1).to_string())
                         .cell("kind", Cell::text(kind_label(item.kind)))
-                        .cell("date", Cell::date(&date, &date))
-                        .slot("date", super::nowrap(&date)?)
+                        .cell(
+                            "date",
+                            Cell::date(&date, &bilibi_finance_ledger::dates::display_text(&date)),
+                        )
+                        .slot(
+                            "date",
+                            super::nowrap(&bilibi_finance_ledger::dates::display_text(&date))?,
+                        )
                         .cell("description", Cell::text(&item.description))
                         .slot(
                             "description",
@@ -558,7 +564,8 @@ impl Detail {
 
         let title = format!(
             "Reconciliation {} as of {}",
-            report.reconciliation_number, report.end_date
+            report.reconciliation_number,
+            bilibi_finance_ledger::dates::display(report.end_date)
         );
         // Back, this account's matching, the local Abandon, then Finalise.
         let mut actions = back;

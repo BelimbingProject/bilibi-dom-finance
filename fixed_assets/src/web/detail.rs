@@ -203,7 +203,9 @@ impl Detail {
                         ),
                         fact(
                             "Conversion date",
-                            opening["opening_date"].as_str().unwrap_or("").to_owned(),
+                            bilibi_finance_ledger::dates::display_text(
+                                opening["opening_date"].as_str().unwrap_or(""),
+                            ),
                         ),
                         fact(
                             "Source accumulated depreciation",
@@ -257,7 +259,10 @@ impl Detail {
         for r in &d.charges {
             let reversal = match &r.reversal {
                 Some(e) => {
-                    let mut html = Html::text(&format!("{} ", e.effective_date));
+                    let mut html = Html::text(&format!(
+                        "{} ",
+                        bilibi_finance_ledger::dates::display(e.effective_date)
+                    ));
                     if e.entry_id.is_some() {
                         html.push(&entry_link(e.entry_id, e.entry_number)?);
                     }
@@ -301,7 +306,10 @@ impl Detail {
                 rows.push(
                     FlexRow::new(e.id.to_string())
                         .cell("action", Cell::text(event_name(e.action)))
-                        .cell("effective", Cell::text(e.effective_date.to_string()))
+                        .cell(
+                            "effective",
+                            Cell::text(bilibi_finance_ledger::dates::display(e.effective_date)),
+                        )
                         .slot("entry", entry_link(e.entry_id, e.entry_number)?)
                         .cell("reason", Cell::text(e.reason.clone()))
                         .cell(

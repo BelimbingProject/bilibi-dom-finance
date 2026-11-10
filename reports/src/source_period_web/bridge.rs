@@ -183,8 +183,12 @@ impl State {
             }
             let period = format!(
                 "{} – {}",
-                month["period_start"].as_str().unwrap_or(""),
-                month["period_end"].as_str().unwrap_or("")
+                bilibi_finance_ledger::dates::display_text(
+                    month["period_start"].as_str().unwrap_or("")
+                ),
+                bilibi_finance_ledger::dates::display_text(
+                    month["period_end"].as_str().unwrap_or("")
+                )
             );
             rows.push(
                 FlexRow::new(month["month"].as_str().unwrap_or(""))

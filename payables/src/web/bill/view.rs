@@ -235,10 +235,16 @@ impl Bill {
                 "Supplier's invoice number",
                 f::optional(&d.party_document_number),
             ),
-            f::fact("Date", &d.document_date.to_string()),
+            f::fact(
+                "Date",
+                &bilibi_finance_ledger::dates::display(d.document_date),
+            ),
         ];
         if d.document_type != "opening_credit" {
-            items.push(f::fact("Due date", &d.due_date.to_string()));
+            items.push(f::fact(
+                "Due date",
+                &bilibi_finance_ledger::dates::display(d.due_date),
+            ));
         }
         if d.description.is_some() {
             items.push(f::fact("Description", f::optional(&d.description)));
@@ -294,7 +300,10 @@ impl Bill {
             ),
             f::fact("Source system", &text("source_system")),
             f::fact("Source reference", &text("source_reference")),
-            f::fact("Conversion date", &text("conversion_date")),
+            f::fact(
+                "Conversion date",
+                &bilibi_finance_ledger::dates::display_text(&text("conversion_date")),
+            ),
         ];
         if let Some(amount) = opening["original_total"]
             .as_str()
@@ -526,7 +535,9 @@ impl Bill {
         if let Some(pins) = self.balance_pins.as_object() {
             items.push(f::fact(
                 "Balance as of",
-                pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
+                &bilibi_finance_ledger::dates::display_text(
+                    pins.get("as_of").and_then(Value::as_str).unwrap_or(""),
+                ),
             ));
         }
         if let Some(outstanding) = d.outstanding {

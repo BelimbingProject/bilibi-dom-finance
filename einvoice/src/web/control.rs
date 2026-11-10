@@ -644,11 +644,11 @@ impl State {
                 ),
                 (
                     "Client secret expires",
-                    Html::text(
+                    Html::text(&bilibi_finance_ledger::dates::display_text(
                         s.client_secret_expires_on
                             .as_deref()
                             .unwrap_or("Not recorded"),
-                    ),
+                    )),
                 ),
             ],
         )?;
@@ -898,12 +898,12 @@ fn issue_error(error: &EinvoiceError) -> String {
 fn retry_error(error: &EinvoiceError) -> String {
     match error {
         EinvoiceError::LedgerFollowUpFailed(reason) => format!("It failed again: {reason}."),
-        EinvoiceError::Unauthorized => "You need permission to post to the ledger.".into(),
+        EinvoiceError::Unauthorized => "You do not have permission to post to the ledger.".into(),
         EinvoiceError::NotPostable => "Only a valid document can be posted.".into(),
         EinvoiceError::NotReversible => "Only a cancelled document can be reversed.".into(),
         EinvoiceError::CompanyArchived => "The company is archived.".into(),
         EinvoiceError::DocumentNotFound => "The document no longer exists.".into(),
-        _ => "It could not be tried.".into(),
+        _ => "Nothing was changed. Reload the page and try again.".into(),
     }
 }
 
@@ -924,9 +924,12 @@ fn connection_outcome(outcome: LoginOutcome) -> String {
         LoginOutcome::MissingCredentials => {
             connection_error(&EinvoiceError::MissingCredentials).into()
         }
-        LoginOutcome::Refused(status) => format!(
-            "The authority refused the login (HTTP {status}). Check the client ID and secret."
-        ),
+        LoginOutcome::Refused(status) => {
+            // The HTTP status is for the log, never for a person.
+            let _ = status;
+            "MyInvois did not accept the client ID and secret. Check both in e-invoice setup."
+                .into()
+        }
         LoginOutcome::RateLimited { seconds, .. } => {
             format!("The authority is limiting logins. Try again in {seconds} seconds.")
         }

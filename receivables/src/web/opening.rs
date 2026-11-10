@@ -270,7 +270,8 @@ impl Opening {
             page.push(&render(Alert {
                 id: "conversion-context",
                 body: Html::text(&format!(
-                    "Conversion date {conversion}. Currency {currency}. Opening entry {}.",
+                    "Conversion date {}. Currency {currency}. Opening entry {}.",
+                    bilibi_finance_ledger::dates::display_text(conversion),
                     context["opening"]["entry"]["entry_number"]
                 )),
                 ..Alert::default()
@@ -660,10 +661,20 @@ impl Opening {
                                 text("document_reference")
                             )),
                         )
-                        .cell("date", Cell::text(text("document_date")))
+                        .cell(
+                            "date",
+                            Cell::text(bilibi_finance_ledger::dates::display_text(text(
+                                "document_date",
+                            ))),
+                        )
                         .cell("original", Cell::text(money(&r["original_total"])))
                         .cell("balance", Cell::text(money(&r["outstanding"])))
-                        .cell("due", Cell::text(text("due_date")))
+                        .cell(
+                            "due",
+                            Cell::text(bilibi_finance_ledger::dates::display_text(text(
+                                "due_date",
+                            ))),
+                        )
                         .cell("account", Cell::text(text("account_code"))),
                 );
             }
@@ -679,9 +690,9 @@ impl Opening {
                 .await?
                 .banner("conversion-instance", "")
                 .map_err(|_| Error::Internal)?;
-            body.push(&render(Alert{id:"conversion-review-context",body:Html::text(&format!("Conversion date {}. Source {}. {} records. Review every source identifier, date, amount and account mapping before approval.",facts["conversion_date"].as_str().or_else(||context["opening"]["entry"]["entry_date"].as_str()).unwrap_or(""),facts["source_reference"].as_str().unwrap_or(""),facts["rows"].as_array().map_or_else(||facts["rows"].as_u64().unwrap_or(0) as usize,Vec::len))),..Alert::default()})?);
+            body.push(&render(Alert{id:"conversion-review-context",body:Html::text(&format!("Conversion date {}. Source {}. {} records. Review every source identifier, date, amount and account mapping before approval.",bilibi_finance_ledger::dates::display_text(facts["conversion_date"].as_str().or_else(||context["opening"]["entry"]["entry_date"].as_str()).unwrap_or("")),facts["source_reference"].as_str().unwrap_or(""),facts["rows"].as_array().map_or_else(||facts["rows"].as_u64().unwrap_or(0) as usize,Vec::len))),..Alert::default()})?);
             if !facts["replaces_batch_id"].is_null() {
-                body.push(&render(Alert{id:"conversion-correction-review",kind:StatusKind::Warning,body:Html::text(&format!("Replace register {} as of the conversion date {}. Reason: {}. Prior records and approvals remain available at their original report boundaries.",facts["replaces_batch_id"],facts["conversion_date"].as_str().unwrap_or(""),facts["reason"].as_str().unwrap_or(""))),..Alert::default()})?);
+                body.push(&render(Alert{id:"conversion-correction-review",kind:StatusKind::Warning,body:Html::text(&format!("Replace register {} as of the conversion date {}. Reason: {}. Prior records and approvals remain available at their original report boundaries.",facts["replaces_batch_id"],bilibi_finance_ledger::dates::display_text(facts["conversion_date"].as_str().unwrap_or("")),facts["reason"].as_str().unwrap_or(""))),..Alert::default()})?);
             }
             if let Some(classifications) = facts["classified_opening_accounts"].as_array() {
                 let rows = classifications

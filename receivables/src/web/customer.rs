@@ -297,8 +297,9 @@ impl Customer {
         let relation = match &self.company.relation {
             Some(Relation::Recorded { since }) => Html::text(&match since {
                 Some(day) => format!(
-                    "Recorded as a customer of {} since {day}.",
-                    self.company_name
+                    "Recorded as a customer of {} since {}.",
+                    self.company_name,
+                    bilibi_finance_ledger::dates::display_text(day)
                 ),
                 None => format!("Recorded as a customer of {}.", self.company_name),
             }),
@@ -452,8 +453,18 @@ impl Customer {
                     )?,
                 )
                 .cell("kind", Cell::text(f::kind_label(&d.kind)))
-                .cell("issue_date", Cell::text(f::optional(&d.issue_date)))
-                .cell("due_date", Cell::text(f::optional(&d.due_date)))
+                .cell(
+                    "issue_date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(f::optional(
+                        &d.issue_date,
+                    ))),
+                )
+                .cell(
+                    "due_date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(f::optional(
+                        &d.due_date,
+                    ))),
+                )
                 .slot("total", f::tabular(&self.figures.money(d.total))?)
                 .slot(
                     "outstanding",
@@ -471,7 +482,10 @@ impl Customer {
                     "number",
                     f::link(&format!("{RECEIPTS}/{}", p.id), &p.payment_reference)?,
                 )
-                .cell("payment_date", Cell::text(&p.payment_date))
+                .cell(
+                    "payment_date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(&p.payment_date)),
+                )
                 .slot("amount", f::tabular(&self.figures.money(p.amount))?)
                 .slot("status", super::payments::status_badge(p)?),
             );

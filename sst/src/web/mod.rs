@@ -35,7 +35,7 @@ const INDEX: &str = "/finance/sst";
 const SETUP: &str = "/finance/sst/setup";
 
 /// Bilimbi `LiveAuthorization`'s denied message.
-const DENIED: &str = "You do not have permission for that action.";
+const DENIED: &str = "You do not have permission to do that.";
 
 #[derive(Clone)]
 pub(crate) struct Pages {

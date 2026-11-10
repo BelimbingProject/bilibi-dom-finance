@@ -292,7 +292,7 @@ impl Opening {
             if f["already_imported"] == true {
                 body.push(&render(Alert {body:Html::text("This exact source was already recorded. Continuing returns the existing bridge without posting again."),..Alert::default()})?);
             } else {
-                body.push(&render(Alert {body:Html::text(&format!("Conversion date {}. Source {}. Review each amount against the source statement and register. No new entry will be posted.",f["conversion_date"].as_str().unwrap_or(""),f["source_reference"].as_str().unwrap_or(""))),..Alert::default()})?);
+                body.push(&render(Alert {body:Html::text(&format!("Conversion date {}. Source {}. Review each amount against the source statement and register. No new entry will be posted.",bilibi_finance_ledger::dates::display_text(f["conversion_date"].as_str().unwrap_or("")),f["source_reference"].as_str().unwrap_or(""))),..Alert::default()})?);
                 body.push(&render(Facts {
                     id: "opening-totals",
                     items: vec![
@@ -333,7 +333,12 @@ impl Opening {
                                 "source",
                                 Cell::text(item["source_id"].as_str().unwrap_or("")),
                             )
-                            .cell("date", Cell::text(item["item_date"].as_str().unwrap_or("")))
+                            .cell(
+                                "date",
+                                Cell::text(bilibi_finance_ledger::dates::display_text(
+                                    item["item_date"].as_str().unwrap_or(""),
+                                )),
+                            )
                             .cell(
                                 "description",
                                 Cell::text(item["description"].as_str().unwrap_or("")),

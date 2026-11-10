@@ -206,8 +206,8 @@ impl Aged {
                     "party_number",
                     Cell::text(f::optional(&d.party_document_number)),
                 )
-                .cell("date", Cell::text(d.document_date.to_string()))
-                .cell("due", Cell::text(d.due_date.to_string()))
+                .cell("date", Cell::text(bilibi_finance_ledger::dates::display(d.document_date)))
+                .cell("due", Cell::text(bilibi_finance_ledger::dates::display(d.due_date)))
                 .cell(
                     "late",
                     Cell::text(if d.days_overdue > 0 {

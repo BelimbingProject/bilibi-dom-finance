@@ -75,7 +75,7 @@ impl OpeningMatch {
                     Choice::new(
                         format!(
                             "{} · {} · {}",
-                            line.line.line_date,
+                            bilibi_finance_ledger::dates::display(line.line.line_date),
                             line.line.description,
                             line.line.amount.display(units)
                         ),
@@ -143,7 +143,7 @@ impl OpeningMatch {
             .await?
             .banner("opening-match-instance", "")
             .map_err(|_| Error::Internal)?;
-        body.push(&render(Alert {body:Html::text(&format!("Match opening item {} ({}) to the statement line {} on {}. No new entry will be posted.",f["source_id"].as_str().unwrap_or(""),f["item_description"].as_str().unwrap_or(""),f["statement_description"].as_str().unwrap_or(""),f["statement_date"].as_str().unwrap_or(""))),..Alert::default()})?);
+        body.push(&render(Alert {body:Html::text(&format!("Match opening item {} ({}) to the statement line {} on {}. No new entry will be posted.",f["source_id"].as_str().unwrap_or(""),f["item_description"].as_str().unwrap_or(""),f["statement_description"].as_str().unwrap_or(""),bilibi_finance_ledger::dates::display_text(f["statement_date"].as_str().unwrap_or("")))),..Alert::default()})?);
         let mut buttons = render(Button {
             button_type: "button",
             event: "cancel_opening_match",

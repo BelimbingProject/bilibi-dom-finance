@@ -409,9 +409,12 @@ impl PaymentForm {
                     detail: format!(
                         "{} · dated {}",
                         f::optional(&doc.party_document_number),
-                        doc.document_date
+                        bilibi_finance_ledger::dates::display(doc.document_date)
                     ),
-                    due: format!("Due {}", doc.due_date),
+                    due: format!(
+                        "Due {}",
+                        bilibi_finance_ledger::dates::display(doc.due_date)
+                    ),
                     overdue: (doc.days_overdue > 0)
                         .then(|| format!("{} days overdue", doc.days_overdue)),
                     owed: format!(

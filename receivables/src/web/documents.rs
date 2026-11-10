@@ -587,13 +587,18 @@ impl Documents {
                 )
                 .cell("kind", Cell::text(f::kind_label(&d.kind)))
                 .cell("customer", Cell::text(self.page_customer_name(d)))
-                .cell("issue_date", Cell::text(f::optional(&d.issue_date)))
+                .cell(
+                    "issue_date",
+                    Cell::text(bilibi_finance_ledger::dates::display_text(f::optional(
+                        &d.issue_date,
+                    ))),
+                )
                 .cell(
                     "due_date",
                     Cell::text(if d.kind == "opening_credit" {
-                        "—"
+                        "—".to_owned()
                     } else {
-                        f::optional(&d.due_date)
+                        bilibi_finance_ledger::dates::display_text(f::optional(&d.due_date))
                     }),
                 )
                 .slot("total", f::tabular(&self.figures.money(d.total))?)
