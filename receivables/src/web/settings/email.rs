@@ -168,7 +168,7 @@ impl Settings {
         &mut self,
         scope: &Scope,
         credential: &str,
-        event: &'static str,
+        event: &str,
         v: &Value,
     ) -> Result<()> {
         let (key, value, shown): (&'static str, Value, String) = if event == "toggle_email" {
