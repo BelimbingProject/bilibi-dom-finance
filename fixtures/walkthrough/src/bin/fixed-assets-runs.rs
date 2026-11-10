@@ -1,5 +1,6 @@
 //! NX2 running proof, mirroring Bilimbi.Finance.FixedAssets runs and corrections.
 //! Run only against a fresh disposable database; business writes use facades.
+use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_authz::grants::Grants;
 use bilibi_database::{pool, Db};
 use bilibi_finance_fixed_assets::{
@@ -12,9 +13,12 @@ use bilibi_finance_ledger::{
 };
 use bilibi_finance_walkthrough_fixture::{install, sign_in, COMPANY};
 use bilibi_module_registry::{Contribution, Provenance, Services};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Authentication, ProofFuture, Scope};
 use jiff::civil::{date, Date};
+use serde_json::json;
 use std::fmt::Debug;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -28,6 +32,33 @@ inventory::submit! { Contribution::new(bilibi_authz::VOCABULARY,"walkthrough.fix
     ],
 }) }
 type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
+/// The manager's session, as an agent door proves it for a plan.
+struct Authority(Arc<Authentication>);
+impl PlanAuthority for Authority {
+    fn verify<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+    ) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            Ok(PlanIdentity {
+                scope: self
+                    .0
+                    .authenticate_session(tx, 1, 1, None, Some(COMPANY), String::new())
+                    .await?,
+                credential_binding: "fixed-assets-runs-fixture:1".into(),
+            })
+        })
+    }
+}
+/// Another session's hold on Company 001's row, until `ROLLBACK`: `KEY SHARE`
+/// is what every authorizer takes, `NO KEY UPDATE` what a company write holds.
+async fn hold(c: &tokio_postgres::Client, strength: &str) -> Outcome<()> {
+    c.batch_execute(&format!(
+        "BEGIN; SELECT id FROM companies WHERE tenant_id=1 AND id={COMPANY} FOR {strength}"
+    ))
+    .await?;
+    Ok(())
+}
 fn m(v: &str) -> Money {
     Money::parse(v, MinorUnits::new(2).unwrap()).unwrap()
 }
@@ -252,12 +283,65 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .set_direct(&admin, 1, bilibi_finance_ledger::POST_ENTRIES, None)
         .await?;
     // Race creation, rather than only racing retries after a run already exists.
+    // Someone else is reading the company meanwhile (an authorizer's KEY SHARE,
+    // held open here): a reader must never make a company write or its review
+    // fail. The review lock once asked FOR UPDATE, which that reader refused
+    // as "could not obtain lock on row in relation companies".
+    let other = db.get().await?;
+    hold(&other, "KEY SHARE").await?;
     let (first, second) = tokio::join!(
         f.depreciate(&s, COMPANY, date(2026, 1, 1)),
         f.depreciate(&s, COMPANY, date(2026, 1, 1))
     );
     let jan = first?;
     assert_eq!(second?.id, jan.id);
+    let plans = services.get::<Plans>("base/agent_api.plans")?;
+    let authority = Authority(services.get::<Authentication>("base/tenancy.authentication")?);
+    let february = vec![PlannedOperation {
+        key: "finance.fixed_assets.run.post".into(),
+        input: json!({"company_id":COMPANY,"period":"2026-02-01"}),
+    }];
+    let review = plans.preview(&authority, &february).await?;
+    assert_eq!(review["valid"], true, "{review}");
+    other.batch_execute("ROLLBACK").await?;
+    println!("A reader of the company refuses neither a depreciation run nor its review");
+    // A competing write holds the company: the review answers the retryable
+    // refusal instead of failing, and so does the plan's commit; nothing posts.
+    hold(&other, "NO KEY UPDATE").await?;
+    let review = plans.preview(&authority, &february).await?;
+    assert_eq!(review["valid"], false, "{review}");
+    assert_eq!(
+        review["results"][0]["error"],
+        json!({"code":"rejected","reason":"record_changed"}),
+        "{review}"
+    );
+    let commit = plans.commit(&s, &authority, &february).await;
+    assert!(
+        matches!(
+            commit,
+            Err(bilibi_agent_api::Error::PlanRejected(_)
+                | bilibi_agent_api::Error::Backend(bilibi_database::Error::Conflict))
+        ),
+        "{commit:?}"
+    );
+    println!(
+        "Expected refusal under a held company lock: {}",
+        review["results"][0]["error"]
+    );
+    // A facade write waits for that lock, then runs.
+    let started = Instant::now();
+    let pause = Duration::from_millis(300);
+    let (waited, released) = tokio::join!(f.depreciate(&s, COMPANY, date(2026, 1, 1)), async {
+        tokio::time::sleep(pause).await;
+        other.batch_execute("ROLLBACK").await
+    });
+    released?;
+    assert_eq!(waited?.id, jan.id);
+    assert!(started.elapsed() >= pause);
+    let review = plans.preview(&authority, &february).await?;
+    assert_eq!(review["valid"], true, "{review}");
+    drop(other);
+    println!("The lock released: the same review is valid again");
     assert_eq!(f.list_runs(&s, COMPANY).await?.len(), 1);
     assert_eq!(
         l.account_totals(&s, COMPANY, &TotalsQuery::default())
