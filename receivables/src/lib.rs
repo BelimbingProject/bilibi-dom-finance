@@ -7,6 +7,7 @@ mod configuration;
 mod contributions;
 mod documents;
 mod email;
+mod email_delivery;
 mod email_operations;
 mod evidence;
 mod opening;
@@ -86,7 +87,7 @@ inventory::submit! {
             Ok(receivables)
         }}, Service { id: orders::SWEEP_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
             receivables: services.get(SERVICE)?, schedule: services.get("base/schedule.store")?, queue: services.get(bilibi_queue::SERVICE)?,
-        })))) }, Service { id: orders::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrder { receivables: services.get(SERVICE)? })))) }, Service { id: email::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(email::SendInvoice { receivables: services.get(SERVICE)? })))) }, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+        })))) }, Service { id: orders::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrder { receivables: services.get(SERVICE)? })))) }, Service { id: email_delivery::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(email_delivery::SendInvoice { receivables: services.get(SERVICE)? })))) }, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             plans: services.get("base/agent_api.plans")?,

@@ -55,8 +55,8 @@ impl ReadHandler for Draft {
     }
 }
 
-struct Send;
-impl Send {
+struct SendEmail;
+impl SendEmail {
     async fn review(
         client: &dyn OperationClient,
         scope: &Scope,
@@ -73,7 +73,7 @@ impl Send {
         ))
     }
 }
-impl WriteHandler for Send {
+impl WriteHandler for SendEmail {
     fn owner(&self) -> &'static str {
         MODULE
     }
@@ -137,6 +137,6 @@ fn output() -> Value {
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.email_operations",Provenance {module:MODULE,source:file!(),line:line!()},&Definitions {
     operations:&[
         Operation {key:"finance.receivables.document.email",title:"Read an invoice's email",summary:"Read whether this company emails invoices, and the email an issued invoice would go out with: recipient, sender name, subject, message and the PDF's name. A refusal or a missing address is said in words.",keywords:&["send","mail"],capability:VIEW,input:target,output,handler:Handler::Read(&Draft),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.document.send",title:"Email an invoice",summary:"Email an issued invoice to the customer with its PDF attached, when the company has invoice email turned on. Refused for a draft, a credit note, or a customer with no address unless one is given. Each send is recorded on the invoice.",keywords:&["send","mail","email"],capability:ISSUE,input:send_input,output,handler:Handler::SafeWrite(&Send),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.send",title:"Email an invoice",summary:"Email an issued invoice to the customer with its PDF attached, when the company has invoice email turned on. Refused for a draft, a credit note, or a customer with no address unless one is given. Each send is recorded on the invoice.",keywords:&["send","mail","email"],capability:ISSUE,input:send_input,output,handler:Handler::SafeWrite(&SendEmail),channels:Channels::Every,step_up:&[]},
     ],guides:&[],
 }) }

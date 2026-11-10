@@ -8,6 +8,7 @@
 //! `?do=discard`, `?do=write_off` or `?do=send` (its local icon buttons) opens
 //! that dialog. An issued invoice is emailed from `send.rs` (`document.send`)
 //! while the company has invoice email turned on.
+mod history;
 mod send;
 mod view;
 
