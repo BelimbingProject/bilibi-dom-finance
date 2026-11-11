@@ -20,7 +20,7 @@
 {% endcall %}
 {% if let Some((count, table)) = r.items %}
 {% call ui::card(id="reconciliation-items", inner_class="p-0", role="region", labelledby="reconciliation-items-heading") %}
-{% call ui::section_heading(id="reconciliation-items-heading", title="Items explaining the difference", count=count, class="p-5 pb-0", description="Statement lines the books lack, entries the statement lacks, and matches that cleared after the end date.") %}{% endcall %}
+{% call ui::section_heading(id="reconciliation-items-heading", title="Not matched yet", count=count, class="p-5 pb-0") %}{% endcall %}
 {{ table|safe }}
 {% endcall %}
 {% endif %}
@@ -36,6 +36,18 @@
 <div class="mt-4 flex flex-wrap justify-end gap-2">
 {% call ui::button(id="abandon-cancel", button_type="button", event="cancel_abandon") %}Cancel{% endcall %}
 {% call ui::button(id="abandon-submit", button_type="submit", variant=bilibi_ui::ButtonVariant::Danger, working="Abandoning…") %}Abandon{% endcall %}
+</div>
+</form>
+{% endcall %}
+{% endif %}
+{% if let Some(fin) = r.finalise %}
+{% call dialog::modal(id="finalise-modal", title=fin.title, cancel_event="cancel_finalise", description=fin.description) %}
+{{ fin.refusal|safe }}
+<form id="finalise-form" data-event="finalise_change" data-change data-submit-event="finalise" class="mt-4">
+{% call form::input(field=fin.reason) %}{% endcall %}
+<div class="mt-4 flex flex-wrap justify-end gap-2">
+{% call ui::button(id="finalise-cancel", button_type="button", event="cancel_finalise") %}Cancel{% endcall %}
+{% call ui::button(id="finalise-submit", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Finalising…") %}Finalise{% endcall %}
 </div>
 </form>
 {% endcall %}

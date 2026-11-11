@@ -2,14 +2,18 @@
 //! statement balance, the book balance, the items that explain the
 //! difference, and the difference itself. An open reconciliation reads its
 //! figures now, follows the ledger's postings, lets a statement line the books
-//! lack be posted as a bank charge or interest, and is finalised once the
-//! difference is zero or abandoned with a reason; a finalised one shows the
-//! figures and items it was finalised with, which never change. Every write is
-//! a facade call that re-asks its capability.
+//! lack be posted as a bank charge or interest, or recorded where it belongs
+//! (a receipt for money in, a payment for money out, each in its own module's
+//! form through `MoneySeen`), and is finalised once the difference is zero or
+//! abandoned with a reason; finalising while statement lines are not in the
+//! books asks for a reason first. A finalised one shows the figures and items
+//! it was finalised with, which never change. Every write is a facade call
+//! that re-asks its capability.
 use super::{clear_flash, company, event_type, flash_map, format::told, render, Follow, Pages};
 use crate::{
-    BankAccount, BankReconciliation, ItemKind, PostLine, ReconciliationStatus,
-    FINALISE_RECONCILIATIONS, MANAGE_RECONCILIATIONS, POST_STATEMENT_LINES,
+    BankAccount, BankReconciliation, Figures, ItemKind, PostLine, ReconciliationError,
+    ReconciliationStatus, FINALISE_RECONCILIATIONS, MANAGE_MATCHES, MANAGE_RECONCILIATIONS,
+    POST_STATEMENT_LINES,
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -17,10 +21,12 @@ use bilibi_datetime::{Format, Precision};
 use bilibi_finance_ledger::{MinorUnits, POST_ENTRIES};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    page::*, params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell,
+    page::*, params, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Cell,
     EmptyState, Fact, Facts, Field, FlashMap, FlexRow, FlexTable, Header, Html, IconButton,
     IconKind, Instant, ListColumns, RowMode, StatusKind, TableEmpty,
 };
+mod elsewhere;
+use elsewhere::{PAYMENTS, RECEIPTS};
 
 pub(super) struct Detail {
     pages: Pages,
@@ -31,8 +37,18 @@ pub(super) struct Detail {
     can_finalise: bool,
     can_abandon: bool,
     can_post: bool,
+    can_match: bool,
+    can_receive: bool,
+    can_pay: bool,
     abandoning: bool,
     reason: String,
+    /// The Finalise dialog, open while statement lines are not in the books.
+    finalising: bool,
+    finalise_reason: String,
+    finalise_refusal: Option<String>,
+    /// A statement line and the entry another page posted for it, as the
+    /// address the person came back to named them; matched once on arrival.
+    returned: Option<(i64, i64)>,
     items: ListColumns,
     events: ListColumns,
     flash: Option<(StatusKind, String)>,
@@ -55,6 +71,13 @@ struct RecordView {
     items: Option<(Option<usize>, Html)>,
     events: Html,
     abandon: Option<Field>,
+    finalise: Option<FinaliseView>,
+}
+struct FinaliseView {
+    title: String,
+    description: String,
+    refusal: Html,
+    reason: Field,
 }
 
 #[derive(Template)]
@@ -113,6 +136,14 @@ fn event_label(action: &str) -> &str {
     }
 }
 
+/// "1 statement line not in the books", "4 statement lines not in the books".
+fn not_in_books(count: usize) -> String {
+    format!(
+        "{count} statement line{} not in the books",
+        if count == 1 { "" } else { "s" }
+    )
+}
+
 fn badge(kind: BadgeKind, text: &str) -> Result<Html> {
     render(Badge {
         kind,
@@ -151,8 +182,15 @@ impl Detail {
             can_finalise: false,
             can_abandon: false,
             can_post: false,
+            can_match: false,
+            can_receive: false,
+            can_pay: false,
             abandoning: false,
             reason: String::new(),
+            finalising: false,
+            finalise_reason: String::new(),
+            finalise_refusal: None,
+            returned: None,
             items: columns(
                 "reconciliation-items-table",
                 &[
@@ -179,7 +217,6 @@ impl Detail {
         self.follow = follow;
         self
     }
-
     /// Bilimbi `load`: the reconciliation and its bank account, or the
     /// refusal the page shows in their place.
     async fn load(&mut self, scope: &Scope) -> Result<()> {
@@ -204,6 +241,9 @@ impl Detail {
                 self.can_abandon = self.pages.allowed(scope, MANAGE_RECONCILIATIONS).await?;
                 self.can_post = self.pages.allowed(scope, POST_STATEMENT_LINES).await?
                     && self.pages.allowed(scope, POST_ENTRIES).await?;
+                self.can_match = self.pages.allowed(scope, MANAGE_MATCHES).await?;
+                self.can_receive = self.pages.allowed(scope, RECEIPTS.1).await?;
+                self.can_pay = self.pages.allowed(scope, PAYMENTS.1).await?;
             }
             Err(e) => {
                 self.report = None;
@@ -243,23 +283,54 @@ impl Detail {
                 columns.handle(&params::string_values(v));
                 Ok(false)
             }
+            "finalising" => {
+                self.finalising = true;
+                self.finalise_reason.clear();
+                self.finalise_refusal = None;
+                self.flash = None;
+                Ok(false)
+            }
+            "cancel_finalise" => {
+                self.finalising = false;
+                Ok(false)
+            }
+            "finalise_change" => {
+                self.finalise_reason = v["finalise[reason]"].as_str().unwrap_or_default().into();
+                Ok(false)
+            }
             "finalise" => {
+                if let Some(reason) = v["finalise[reason]"].as_str() {
+                    self.finalise_reason = reason.into();
+                }
                 if !self.may(scope, &[FINALISE_RECONCILIATIONS]).await? {
                     return Ok(false);
                 }
-                let result = r
-                    .finalise_reconciliation(scope, company(scope)?, self.id)
-                    .await;
-                self.flash = Some(match told(result)? {
-                    Ok(done) => (
-                        StatusKind::Success,
-                        format!(
-                            "Reconciliation {} finalised; its figures are now fixed.",
-                            done.reconciliation_number
-                        ),
-                    ),
-                    Err(e) => (StatusKind::Error, e),
-                });
+                let reason = self.finalising.then_some(self.finalise_reason.as_str());
+                match r
+                    .finalise_reconciliation(scope, company(scope)?, self.id, reason)
+                    .await
+                {
+                    // Lines are missing from the books and no reason came with
+                    // the request: ask for it, in the dialog.
+                    Err(e @ ReconciliationError::LinesNotInBooks(_)) => {
+                        self.finalise_refusal = self.finalising.then(|| e.to_string());
+                        self.finalising = true;
+                    }
+                    result => match told(result)? {
+                        Ok(done) => {
+                            self.finalising = false;
+                            self.flash = Some((
+                                StatusKind::Success,
+                                format!(
+                                    "Reconciliation {} finalised; its figures are now fixed.",
+                                    done.reconciliation_number
+                                ),
+                            ));
+                        }
+                        Err(e) if self.finalising => self.finalise_refusal = Some(e),
+                        Err(e) => self.flash = Some((StatusKind::Error, e)),
+                    },
+                }
                 Ok(true)
             }
             kind @ ("post_charge" | "post_interest") => {
@@ -405,16 +476,20 @@ impl Detail {
                     badge: None,
                 })?,
             });
-            let explained = f.difference.is_zero();
+            // A zero difference is not the whole story: statement lines the
+            // books do not have explain it too, so their count is said here.
+            let waiting = f.lines_not_in_books();
             facts.push(Fact {
-                title: "Unexplained difference",
+                title: "Difference",
                 id: "figure-difference",
                 value: render(Figure {
                     text: f.difference.display(MinorUnits::new(i64::from(units))),
-                    badge: Some(if explained {
-                        badge(BadgeKind::Success, "Explained")?
-                    } else {
+                    badge: Some(if !f.difference.is_zero() {
                         badge(BadgeKind::Warning, "Not explained yet")?
+                    } else if waiting > 0 {
+                        badge(BadgeKind::Warning, &not_in_books(waiting))?
+                    } else {
+                        badge(BadgeKind::Success, "Every statement line is in the books")?
                     }),
                 })?,
             });
@@ -424,6 +499,7 @@ impl Detail {
             items: facts,
         })?;
         let unexplained = figures.is_none_or(|f| !f.difference.is_zero());
+        let waiting = figures.map_or(0, Figures::lines_not_in_books);
         let controls = render(Controls {
             forbidden: if open && !self.can_finalise {
                 Some(render(
@@ -467,8 +543,8 @@ impl Detail {
                             Cell::text(item.amount.display(MinorUnits::new(i64::from(units)))),
                         );
                     row.dom_id = Some(format!("item-{}", index + 1));
-                    if open && self.can_post && item.kind == ItemKind::StatementLine {
-                        let line = item.statement_line_id;
+                    if open && item.kind == ItemKind::StatementLine {
+                        let line = item.statement_line_id.filter(|_| self.can_post);
                         let negative =
                             item.amount.amount().is_sign_negative() && !item.amount.is_zero();
                         // Local actions on the line: plain icon buttons.
@@ -503,6 +579,7 @@ impl Detail {
                                 })?);
                             }
                         }
+                        actions.push(&self.elsewhere(account, item, index + 1, units)?);
                         row.actions = actions;
                     }
                     rows.push(row);
@@ -515,7 +592,7 @@ impl Detail {
                 table.suggestions = self.items.flex_suggestions();
                 table.add_query = &self.items.add_query;
                 table.empty = Some(TableEmpty::State(EmptyState::missing(
-                    "Nothing to explain",
+                    "Everything is matched",
                     "Every statement line through the end date is matched, and so is every entry.",
                 )));
                 Some((Some(f.items.len()), render(table)?))
@@ -589,7 +666,12 @@ impl Detail {
                     id: "reconciliation-finalise",
                     button_type: "button",
                     variant: ButtonVariant::Primary,
-                    event: "finalise",
+                    // Lines not in the books: say so and ask why first.
+                    event: if waiting > 0 {
+                        "finalising"
+                    } else {
+                        "finalise"
+                    },
                     disabled: unexplained,
                     working: "Finalising…",
                     body: Html::text("Finalise"),
@@ -621,6 +703,36 @@ impl Detail {
                     .attr("maxlength", "500")
                     .required()
             }),
+            finalise: if self.finalising && open && waiting > 0 {
+                Some(FinaliseView {
+                    title: format!("Finalise with {}?", not_in_books(waiting)),
+                    description: format!(
+                        "{} on the bank statement but not in the books. You can still finalise. Say why, so whoever reads this later knows.",
+                        if waiting == 1 {
+                            "1 line is".to_owned()
+                        } else {
+                            format!("{waiting} lines are")
+                        }
+                    ),
+                    refusal: match &self.finalise_refusal {
+                        Some(why) => render(Alert {
+                            kind: StatusKind::Error,
+                            id: "finalise-refusal",
+                            body: Html::text(why),
+                            ..Alert::default()
+                        })?,
+                        None => Html::EMPTY,
+                    },
+                    reason: Field::in_form("finalise", "reason")
+                        .id("finalise-reason")
+                        .label("Reason")
+                        .value(&self.finalise_reason)
+                        .attr("maxlength", "500")
+                        .required(),
+                })
+            } else {
+                None
+            },
         });
         view.render().map_err(|_| Error::Internal)
     }
@@ -648,6 +760,10 @@ impl LiveState<Scope, Error> for Detail {
                 LiveInput::Event(v) => self.event(request.scope, v).await?,
             };
             if reload {
+                self.load(request.scope).await?;
+            }
+            if let Some((line, entry)) = self.returned.take() {
+                self.match_returned(request.scope, line, entry).await?;
                 self.load(request.scope).await?;
             }
             Ok(LiveBody {

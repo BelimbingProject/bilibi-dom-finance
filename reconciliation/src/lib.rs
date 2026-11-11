@@ -210,9 +210,7 @@ pub enum ReconciliationError {
     #[error("That ledger entry is already matched on this account.")]
     EntryMatched,
     /// The two sides of a match differ.
-    #[error(
-        "The sides do not agree: the statement lines sum to {statement_side} and the ledger entries to {ledger_side}."
-    )]
+    #[error("The amounts differ: {statement_side} on the statement, {ledger_side} in the books.")]
     Unbalanced {
         statement_side: Money,
         ledger_side: Money,
@@ -241,6 +239,14 @@ pub enum ReconciliationError {
         "The difference is {0}, not zero; match or post what is unmatched, or check the statement balance."
     )]
     Difference(Money),
+    /// Statement lines through the end date are not in the books, and the
+    /// finaliser gave no reason for finalising all the same.
+    #[error(
+        "{} not in the books. Say why to finalise without {}.",
+        lines_text(*.0),
+        if *.0 == 1 { "it" } else { "them" }
+    )]
+    LinesNotInBooks(usize),
     #[error("Choose whether the line is a charge or interest.")]
     InvalidKind,
     #[error("Set the bank account's charges account first.")]
@@ -266,6 +272,15 @@ pub enum ReconciliationError {
     /// A database or capture failure; never a refusal.
     #[error(transparent)]
     Failed(#[from] Error),
+}
+
+/// "1 statement line is" or "4 statement lines are".
+fn lines_text(count: usize) -> String {
+    if count == 1 {
+        "1 statement line is".into()
+    } else {
+        format!("{count} statement lines are")
+    }
 }
 
 impl From<LedgerError> for ReconciliationError {
@@ -662,6 +677,18 @@ pub struct Figures {
     pub through_match_event_number: i64,
     pub through_opening_id: i64,
     pub items: Vec<ReconciliationItem>,
+}
+
+impl Figures {
+    /// How many statement lines through the end date are not in the books:
+    /// they explain the difference, so it can be zero while they wait, and a
+    /// finalisation must say why they are left.
+    pub fn lines_not_in_books(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| item.kind == ItemKind::StatementLine)
+            .count()
+    }
 }
 
 /// The figures a reconciliation of a bank account would show, from
@@ -1578,6 +1605,12 @@ impl Reconciliation {
     /// explain them, after which the reconciliation is immutable and the
     /// matches it counted are kept. Needs `finance.ledger.view`.
     ///
+    /// While statement lines through the end date are not in the books
+    /// ([`Figures::lines_not_in_books`]) it needs a `reason` (trimmed, at
+    /// most 500 characters), kept with the `finalised` event, and is
+    /// `LinesNotInBooks(count)` without one: outstanding items are
+    /// legitimate, so they never block, but someone says why they are left.
+    ///
     /// The finaliser differs from whoever opened it (`SamePerson`),
     /// impersonation included, unless the company has turned separation of
     /// duties off, when the finalisation is listed in the ledger's approval
@@ -1587,7 +1620,10 @@ impl Reconciliation {
         scope: &Scope,
         company_id: i64,
         reconciliation_id: i64,
+        reason: Option<&str>,
     ) -> Result<BankReconciliation> {
+        let reason = matching::optional_text("reason", reason)
+            .map_err(|error| ReconciliationError::Invalid(vec![error]))?;
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .write(
@@ -1642,12 +1678,17 @@ impl Reconciliation {
         if !read.figures.difference.is_zero() {
             return Err(ReconciliationError::Difference(read.figures.difference));
         }
+        let waiting = read.figures.lines_not_in_books();
+        if waiting > 0 && reason.is_none() {
+            return Err(ReconciliationError::LinesNotInBooks(waiting));
+        }
         reconciliations::record_finalised(
             &mut tx,
             tenant,
             company_id,
             people(scope),
             open.id,
+            reason,
             read.figures.clone(),
         )
         .await?;

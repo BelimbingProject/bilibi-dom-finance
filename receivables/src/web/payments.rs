@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{Customer, Document, Payment, Series, POST_PAYMENTS};
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{RecordAction, RecordActions};
+use bilibi_finance_ledger::{MoneySeen, RecordAction, RecordActions};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
@@ -25,6 +25,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+
+mod seen;
 
 const SIZES: [u64; 3] = [25, 50, 100];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -96,6 +98,11 @@ pub(super) struct Payments {
     /// The customer an address asked to record a receipt from (`?customer=`),
     /// as a customer's own page sends it here.
     receive_from: Option<i64>,
+    /// Money another page saw and sent here to record (a bank statement
+    /// line), with the page to go back to once it is saved.
+    seen: Option<MoneySeen>,
+    /// Whether the dialog for `seen` is still to be opened.
+    open_seen: bool,
     flash: Flash,
     framed: bool,
 }
@@ -129,6 +136,8 @@ impl Payments {
             draft: None,
             receive: params::positive_id(query.get("receive").map(String::as_str)),
             receive_from: params::positive_id(query.get("customer").map(String::as_str)),
+            seen: MoneySeen::read(query),
+            open_seen: true,
             flash: Flash::default(),
             framed,
         })
@@ -153,6 +162,8 @@ impl Payments {
                     .insert("customer_id".into(), customer.to_string());
                 draft.open = open;
             }
+        } else if self.seen.is_some() && std::mem::take(&mut self.open_seen) {
+            self.start_seen(scope).await?;
         }
         Ok(())
     }
@@ -764,7 +775,11 @@ impl Payments {
                 }
             }
             "show_record" => self.start_receipt(scope, None).await?,
-            "cancel_record" => self.draft = None,
+            "cancel_record" => {
+                self.draft = None;
+                // Sent here by another page: Cancel goes back to it.
+                redirect = self.seen.take().and_then(|seen| seen.back(None));
+            }
             "receipt_change" => {
                 let form = params::form_values(v, "receipt");
                 let after = form.get("customer_id").cloned().unwrap_or_default();
@@ -867,9 +882,17 @@ impl Payments {
                                     StatusKind::Success,
                                     "Receipt recorded and posted to the ledger.",
                                 );
-                                if let Some(id) = record["id"].as_i64() {
-                                    redirect = Some(format!("{RECEIPTS}/{id}"));
-                                }
+                                // Back to the page that sent the person here,
+                                // told which entry was posted; else the receipt.
+                                redirect = self
+                                    .seen
+                                    .take()
+                                    .and_then(|seen| seen.back(record["ledger_entry_id"].as_i64()))
+                                    // That page says what happened to its line.
+                                    .inspect(|_| self.flash = Flash::default())
+                                    .or_else(|| {
+                                        record["id"].as_i64().map(|id| format!("{RECEIPTS}/{id}"))
+                                    });
                                 self.load(scope).await?;
                             }
                             Written::Invalid(fields) => {

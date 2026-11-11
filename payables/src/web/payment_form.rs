@@ -6,7 +6,7 @@ use super::{company, format as f, record_id, render, Pages, Written, PAYMENTS};
 use crate::{AgedParty, AgingQuery, SUBMIT_PAYMENTS};
 use askama::Template;
 use bilibi_database::{Error, Result};
-use bilibi_finance_ledger::{Account, AccountType, MinorUnits, Money};
+use bilibi_finance_ledger::{Account, AccountType, MinorUnits, Money, MoneySeen};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     error_sentence,
@@ -33,6 +33,9 @@ struct Draft {
 pub(super) struct PaymentForm {
     pages: Pages,
     for_bill: Option<i64>,
+    /// Money another page saw leave and sent here to pay bills with (a bank
+    /// statement line), with the page to go back to once it is saved.
+    seen: Option<MoneySeen>,
     draft: Draft,
     started: bool,
     errors: Vec<(String, String)>,
@@ -51,6 +54,7 @@ impl PaymentForm {
         Ok(Self {
             pages,
             for_bill: params::positive_id(query.get("bill").map(String::as_str)),
+            seen: MoneySeen::read(query),
             draft: Draft::default(),
             started: false,
             errors: vec![],
@@ -90,11 +94,25 @@ impl PaymentForm {
                     && matches!(a.account_type, AccountType::Asset | AccountType::Liability)
             })
             .collect();
-        if !self.started {
+        let starting = !self.started;
+        if starting {
             self.draft.date = self.pages.today(scope).await?.to_string();
             self.started = true;
             if let Some(bill) = self.for_bill {
                 self.prefill(scope, company, bill).await;
+            }
+            if let Some(seen) = &self.seen {
+                if seen.date.parse::<Date>().is_ok() {
+                    self.draft.date = seen.date.clone();
+                }
+                if let Some(account) = seen
+                    .account_id
+                    .filter(|id| self.accounts.iter().any(|a| a.id == *id))
+                {
+                    self.draft.account = account.to_string();
+                }
+                self.draft.reference = seen.reference.chars().take(100).collect();
+                self.draft.description = seen.text.clone();
             }
         }
         let as_of = self
@@ -120,7 +138,44 @@ impl PaymentForm {
             party.documents.retain(|d| d.document_date <= as_of);
         }
         self.owed.retain(|p| !p.documents.is_empty());
+        if starting {
+            self.prefill_seen();
+        }
         Ok(())
+    }
+
+    /// For money another page saw leave: the supplier it most likely went
+    /// to, with the amount applied to what they are owed.
+    fn prefill_seen(&mut self) {
+        let (Some(seen), Some(units)) = (&self.seen, self.units) else {
+            return;
+        };
+        let owed: Vec<Vec<rust_decimal::Decimal>> = self
+            .owed
+            .iter()
+            .map(|p| p.documents.iter().map(|d| d.outstanding.amount()).collect())
+            .collect();
+        let Some(index) = seen.likely(
+            self.owed
+                .iter()
+                .zip(&owed)
+                .map(|(p, amounts)| (p.party_name.as_str(), amounts.as_slice())),
+        ) else {
+            return;
+        };
+        let party = &self.owed[index];
+        self.draft.party = party.party_key.clone();
+        self.draft.amounts = party
+            .documents
+            .iter()
+            .zip(seen.split(&owed[index]))
+            .filter_map(|(d, take)| {
+                Money::new(take, units)
+                    .ok()
+                    .filter(|m| m.is_positive())
+                    .map(|m| (d.id, m.shown(units)))
+            })
+            .collect();
     }
 
     /// Starts from a bill that is still owed: its supplier and the whole amount.
@@ -292,8 +347,10 @@ impl PaymentForm {
             .await?
         {
             Written::Done(result) => {
-                let id = record_id(&result);
-                Ok(id.map(|id| format!("{PAYMENTS}/{id}")))
+                // Back to the page that sent the person here; else the request.
+                // Nothing is posted yet, so there is no entry to name.
+                let back = self.seen.as_ref().and_then(|seen| seen.back(None));
+                Ok(back.or_else(|| record_id(&result).map(|id| format!("{PAYMENTS}/{id}"))))
             }
             Written::Forbidden => {
                 self.notice = Some("You do not have permission to request payments.".into());
@@ -332,10 +389,15 @@ impl PaymentForm {
     }
 
     pub(super) fn body(&self) -> Result<String> {
+        let returning = self.seen.as_ref().and_then(|seen| seen.back(None));
         let back = render(BackLink {
-            href: PAYMENTS,
+            href: returning.as_deref().unwrap_or(PAYMENTS),
             id: "payables-pay-back",
-            title: "Back to payments",
+            title: if returning.is_some() {
+                "Back"
+            } else {
+                "Back to payments"
+            },
             class: "",
         })?;
         if let Some(why) = self.unavailable {

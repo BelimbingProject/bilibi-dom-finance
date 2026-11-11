@@ -4197,7 +4197,9 @@ pub use party_links::{PartyFacts, PartyLinks, PartyTarget};
 mod party_picker;
 mod people;
 pub use people::{People, DIRECTORY as PEOPLE};
+mod money_seen;
 mod owed;
+pub use money_seen::{MoneySeen, ENTRY as MONEY_SEEN_ENTRY};
 mod record_page;
 pub use owed::{DocumentTotals, Owed, OwedFigure, OwedSummary, PaymentStatus, Tally};
 pub use party_picker::{

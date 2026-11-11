@@ -404,6 +404,7 @@ pub(crate) async fn record_finalised(
     company_id: i64,
     people: (i64, Option<i64>),
     reconciliation_id: i64,
+    reason: Option<String>,
     figures: Figures,
 ) -> Result<()> {
     Ok(tx
@@ -417,7 +418,7 @@ pub(crate) async fn record_finalised(
                         people,
                         reconciliation_id,
                         "finalised",
-                        None,
+                        reason.as_deref(),
                         Some(&figures),
                     )
                     .await?,

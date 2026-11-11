@@ -590,7 +590,7 @@ impl Receivables {
         );
         let entry = NewEntry {
             entry_date: date,
-            description: format!("Payment {reference} from {}", customer.name),
+            description: format!("Receipt {reference} · {}", customer.name),
             reference: Some(reference.clone()),
             lines,
         };
@@ -721,7 +721,7 @@ impl Receivables {
         }
         let reversal = Reversal {
             entry_date: date,
-            description: format!("Reversal of payment {}", payment.payment_reference),
+            description: format!("Reversal of receipt {}", payment.payment_reference),
             reference: None,
         };
         Ok(PreparedReversal {
