@@ -312,8 +312,10 @@ async fn main() -> Outcome<()> {
                         },
                     )
                     .await?;
-                ap.approve_document(&approver, company, doc.id).await?;
-                let doc = ap.post_document(&manager, company, doc.id).await?;
+                let doc = bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+                    &ap, &approver, &manager, company, doc.id,
+                )
+                .await?;
                 (
                     "finance/payables",
                     doc.id,

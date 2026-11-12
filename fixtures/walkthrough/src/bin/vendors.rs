@@ -259,8 +259,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(bill.party.address.is_none());
     assert_eq!(bill.due_date, date(2026, 11, 9));
     assert_eq!(bill.vendor_id, Some(id));
-    p.approve_document(&reviewer, 1, bill.id).await?;
-    let bill = p.post_document(&manager, 1, bill.id).await?;
+    let bill = bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &p, &reviewer, &manager, 1, bill.id,
+    )
+    .await?;
     assert_eq!(bill.payable_account_id, Some(vendor_control.id));
     // The bill's key is the vendor's own, `vendor:{id}`; no other key is
     // matched to a vendor, so every read of the vendor's records shares it.
@@ -327,8 +329,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     note.document_date = date(2026, 10, 14);
     note.lines[0].amount = money("5");
     let note = p.create_debit_note(&manager, 1, bill.id, &note).await?;
-    p.approve_document(&reviewer, 1, note.id).await?;
-    p.post_document(&manager, 1, note.id).await?;
+    bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &p, &reviewer, &manager, 1, note.id,
+    )
+    .await?;
     let aged = p
         .aged_payables(&manager, 1, date(2026, 10, 31), &AgingQuery::default())
         .await?;

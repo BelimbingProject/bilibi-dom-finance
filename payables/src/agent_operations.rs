@@ -460,7 +460,27 @@ impl Write {
                         .ledger
                         .preview_approval_on(c, s, company, &documents::approval(&d))
                         .await?;
-                    json!({"before":document_value(d),"status":"approved","approval":approval})
+                    // Approving posts in the same write unless something
+                    // keeps the document approved; the review says which.
+                    match p.posting_after_approval(c, s, company, d.clone()).await? {
+                        Ok((
+                            documents::PreparedPosting::Post {
+                                payable,
+                                matched,
+                                capacity,
+                                ..
+                            },
+                            entry,
+                        )) => {
+                            json!({"before":document_value(d),"status":"posted","approval":approval,"payable_account_id":payable,"posting":entry,"match_lines":matched,"capacity":capacity})
+                        }
+                        Ok(_) => {
+                            json!({"before":document_value(d),"status":"approved","approval":approval,"posting":null,"not_posted":documents::NotPosted::Match})
+                        }
+                        Err(why) => {
+                            json!({"before":document_value(d),"status":"approved","approval":approval,"posting":null,"not_posted":why})
+                        }
+                    }
                 } else {
                     if !matches!(d.status.as_str(), "draft" | "approved" | "held") {
                         return Err(PayablesError::NotVoidable);
@@ -645,6 +665,7 @@ impl WriteHandler for Write {
             )
             .await?;
             let p = owner().map_err(|e| error(e, self.array()))?;
+            let mut not_posted = None;
             let result: Result<Value> = async {
                 Ok(match self {
                     Self::VendorCreate | Self::VendorUpdate => {
@@ -720,10 +741,13 @@ impl WriteHandler for Write {
                             .await?
                         )
                     }
-                    Self::Approve => json!(
-                        p.approve_document_on(tx, s, company, id(v, "document_id")?)
-                            .await?
-                    ),
+                    Self::Approve => {
+                        let (document, why) = p
+                            .approve_document_on(tx, s, company, id(v, "document_id")?)
+                            .await?;
+                        not_posted = why;
+                        json!(document)
+                    }
                     Self::Post => json!(
                         p.post_document_on(tx, s, company, id(v, "document_id")?)
                             .await?
@@ -795,7 +819,11 @@ impl WriteHandler for Write {
                         .ok_or(Error::Internal)?,
                 );
             }
-            Ok(json!({"record":record,"path":null}).into())
+            let mut answer = json!({"record":record,"path":null});
+            if matches!(self, Self::Approve) {
+                answer["not_posted"] = json!(not_posted);
+            }
+            Ok(answer.into())
         })
     }
 }
@@ -1095,8 +1123,8 @@ inventory::submit! {Contribution::new(DEFINITIONS,"finance/payables.operations",
         Operation {key:"finance.payables.bill.create",title:"Record a bill",summary:"Freeze the party, positive net lines and tax snapshots in a draft without posting.",keywords:&[],capability:CREATE_DOCUMENTS,input:||document_schema(false),output,handler:Handler::SafeWrite(&Write::Bill),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.bill.replace_draft",title:"Replace a draft bill",summary:"Void a draft bill and record its corrected draft in one step: if the corrected draft is refused, the draft is left as it was, and its supplier invoice number may be reused.",keywords:&[],capability:CREATE_DOCUMENTS,input:replace_schema,output,handler:Handler::SafeWrite(&Write::Replace),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.debit_note.create",title:"Record a debit note",summary:"Draft a reduction against a posted bill, retaining its party and respecting future outstanding balances.",keywords:&[],capability:CREATE_DOCUMENTS,input:||document_schema(true),output,handler:Handler::SafeWrite(&Write::Note),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.payables.document.approve",title:"Approve a payable document",summary:"Approve a draft through separation of duties; no accounting entry is posted yet.",keywords:&[],capability:APPROVE_DOCUMENTS,input:document_id,output,handler:Handler::SafeWrite(&Write::Approve),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.payables.document.post",title:"Post a payable document",summary:"Match an approved or held bill; record a hold or post its owned entry atomically. Actual posting requires ledger capability and an open period.",keywords:&[],capability:POST_DOCUMENTS,input:document_id,output,handler:Handler::SafeWrite(&Write::Post),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.payables.document.approve",title:"Approve a payable document",summary:"Approve a draft through separation of duties and post its owned entry in the same write. It stays approved, with not_posted saying why (match, permission or refused), when the three-way match would hold it, you may not post, or posting is refused; then use document.post.",keywords:&[],capability:APPROVE_DOCUMENTS,input:document_id,output,handler:Handler::SafeWrite(&Write::Approve),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.payables.document.post",title:"Post a payable document",summary:"For a document that approval left approved, or a held bill: match it, then record a hold or post its owned entry atomically. Actual posting requires ledger capability and an open period.",keywords:&[],capability:POST_DOCUMENTS,input:document_id,output,handler:Handler::SafeWrite(&Write::Post),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.document.void",title:"Void a payable draft",summary:"Void an unposted draft, approved or held document permanently with a reason, retaining its evidence.",keywords:&[],capability:APPROVE_DOCUMENTS,input:||schema(&["document_id","void_reason"],json!({"document_id":identifier(),"void_reason":string(500)})),output,handler:Handler::SafeWrite(&Write::Void),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.payment.submit",title:"Submit a payment request",summary:"Retain positive bill allocations for approval; no balance reservation or posting occurs.",keywords:&[],capability:SUBMIT_PAYMENTS,input:payment_schema,output,handler:Handler::SafeWrite(&Write::Submit),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.payables.payment.approve",title:"Approve and post a payment",summary:"Independently approve a submitted request and post against the bills' original control accounts. Requires ledger posting capability.",keywords:&[],capability:POST_PAYMENTS,input:||schema(&["request_id"],json!({"request_id":identifier(),"override_reason":string(500)})),output,handler:Handler::SafeWrite(&Write::Pay),channels:Channels::Every,step_up:&[]},

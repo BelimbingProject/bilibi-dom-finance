@@ -13,6 +13,43 @@ use serde_json::json;
 /// Why a corrected draft's predecessor is voided.
 pub(super) const REPLACED: &str = "Replaced by a corrected draft.";
 
+/// Why approving a document did not also post it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum NotPosted {
+    /// The three-way match would hold the bill; posting it records the hold.
+    Match,
+    /// The approver may not post documents or ledger entries.
+    Permission,
+    /// Posting refused it (a closed period, no payable account), in the
+    /// owner's words.
+    Refused { message: String },
+}
+fn not_posted<T>(e: PayablesError) -> Result<std::result::Result<T, NotPosted>> {
+    use bilibi_finance_ledger::LedgerError;
+    match e {
+        PayablesError::Failed(_) | PayablesError::Ledger(LedgerError::Failed(_)) => Err(e),
+        PayablesError::Unauthorized | PayablesError::Ledger(LedgerError::Unauthorized) => {
+            Ok(Err(NotPosted::Permission))
+        }
+        PayablesError::Invalid(errors) | PayablesError::Ledger(LedgerError::Invalid(errors)) => {
+            Ok(Err(NotPosted::Refused {
+                message: errors
+                    .iter()
+                    .map(|e| match e.field {
+                        "entry_date" => format!("The document date {}.", e.message),
+                        _ => e.message.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            }))
+        }
+        e => Ok(Err(NotPosted::Refused {
+            message: e.to_string(),
+        })),
+    }
+}
+
 pub(super) enum PreparedPosting {
     Held(Document, Vec<MatchLine>),
     Post {
@@ -468,6 +505,10 @@ impl Payables {
             .await?;
         self.create_document_on(tx, s, company, None, input).await
     }
+    /// Approves a draft and, in the same write, posts it: one press puts a
+    /// bill in the books. It stays `approved`, as [`NotPosted`] says why, when
+    /// the three-way match would hold it, the approver may not post, or
+    /// posting refuses it; [`Payables::post_document`] is then the next step.
     pub async fn approve_document(&self, s: &Scope, company: i64, id: i64) -> Result<Document> {
         let mut c = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -479,7 +520,7 @@ impl Payables {
                 "finance.payables.approve_document",
             )
             .await?;
-        let result = self.approve_document_on(&mut tx, s, company, id).await?;
+        let (result, _) = self.approve_document_on(&mut tx, s, company, id).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -489,7 +530,7 @@ impl Payables {
         s: &Scope,
         company: i64,
         id: i64,
-    ) -> Result<Document> {
+    ) -> Result<(Document, Option<NotPosted>)> {
         join(tx, s, company, APPROVE_DOCUMENTS).await?;
         let d = store::document(tx.sql(), s.tenant(), company, id)
             .await?
@@ -500,8 +541,49 @@ impl Payables {
         self.ledger
             .check_approval(tx, s, company, &approval(&d))
             .await?;
-        let result = advance(tx, s, company, id, "approved", None, None).await?;
-        Ok(result)
+        let approved = advance(tx, s, company, id, "approved", None, None).await?;
+        let d = store::document_record(tx.sql(), s.tenant(), company, id)
+            .await?
+            .ok_or(PayablesError::DocumentNotFound)?;
+        // Decided on reads before anything posts, so a refusal leaves the
+        // approval standing instead of rolling it back.
+        match self.posting_after_approval(tx.sql(), s, company, d).await? {
+            Ok((prepared, _)) => Ok((
+                self.post_prepared(tx, s, company, id, prepared).await?,
+                None,
+            )),
+            Err(why) => Ok((approved, Some(why))),
+        }
+    }
+    /// What approving `d` does next: the posting and the ledger's preview of
+    /// its entry, or why the document stays approved. A hold is never
+    /// recorded here; the separate Post does that, as it always has.
+    pub(super) async fn posting_after_approval(
+        &self,
+        c: &dyn OperationClient,
+        s: &Scope,
+        company: i64,
+        d: Document,
+    ) -> Result<std::result::Result<(PreparedPosting, serde_json::Value), NotPosted>> {
+        if let Err(e) = crate::agent_operations::authorize_on(c, s, company, POST_DOCUMENTS).await {
+            return not_posted(e);
+        }
+        let prepared = match self.prepare_posting(c, s, company, d).await {
+            Ok(PreparedPosting::Held(..)) => return Ok(Err(NotPosted::Match)),
+            Ok(prepared) => prepared,
+            Err(e) => return not_posted(e),
+        };
+        let PreparedPosting::Post { entry, options, .. } = &prepared else {
+            return Ok(Err(NotPosted::Match));
+        };
+        match self
+            .ledger
+            .preview_post_entry_on(c, s, company, entry, options)
+            .await
+        {
+            Ok(preview) => Ok(Ok((prepared, preview))),
+            Err(e) => not_posted(e.into()),
+        }
     }
     pub async fn void_document(
         &self,
@@ -570,9 +652,24 @@ impl Payables {
         let d = store::document_record(c, s.tenant(), company, id)
             .await?
             .ok_or(PayablesError::DocumentNotFound)?;
+        if d.status == "posted" {
+            return Err(PayablesError::AlreadyPosted);
+        }
         if !matches!(d.status.as_str(), "approved" | "held") {
             return Err(PayablesError::NotApproved);
         }
+        self.prepare_posting(c, s, company, d).await
+    }
+    /// The match and the entry for `d`, whatever its status: the caller has
+    /// decided it may be posted.
+    async fn prepare_posting(
+        &self,
+        c: &dyn OperationClient,
+        s: &Scope,
+        company: i64,
+        d: Document,
+    ) -> Result<PreparedPosting> {
+        let id = d.id;
         let mut capacity = note_capacity(
             c,
             s.tenant(),
@@ -702,6 +799,17 @@ impl Payables {
     ) -> Result<Document> {
         join(tx, s, company, POST_DOCUMENTS).await?;
         let prepared = self.prepare_post_document(tx.sql(), s, company, id).await?;
+        self.post_prepared(tx, s, company, id, prepared).await
+    }
+    /// Records the hold, or posts the owned entry and marks the document posted.
+    async fn post_prepared(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        s: &Scope,
+        company: i64,
+        id: i64,
+        prepared: PreparedPosting,
+    ) -> Result<Document> {
         let actor = (s.user(), s.impersonator().map(|p| p.user()));
         let (d, payable, new, options, matched) = match prepared {
             PreparedPosting::Held(d, lines) => {

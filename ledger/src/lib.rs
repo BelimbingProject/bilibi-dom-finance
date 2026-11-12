@@ -64,6 +64,7 @@
 //! Results are plain records; the schema, SQL and validation stay private.
 mod accounts;
 mod agent_operations;
+mod bank_links;
 mod bookkeeping;
 mod books;
 pub mod columns;
@@ -90,6 +91,7 @@ mod templates;
 mod totals;
 mod web;
 
+pub use bank_links::{money_first, BankLinks, BankLinksDefinition, BankLinksFuture, BANK_LINKS};
 pub use contributions::{
     APPROVE_JOURNALS, CAPABILITIES, LOCK_PERIODS, MANAGE_ACCOUNTS, MANAGE_CONTROLLED_BOOKKEEPING,
     MANAGE_DUTY_SEPARATION, MANAGE_PERIODS, MANAGE_TEMPLATES, POST_ENTRIES, REOPEN_PERIODS,
@@ -138,6 +140,7 @@ inventory::submit! {
         ],
         services: &[Service { id: SERVICE, factory: |services| {
             journal_approvals::bind(services.get(bilibi_workflow::SERVICE)?)?;
+            bank_links::bind()?;
             saved_templates::bind(services.get("base/settings.store")?)?;
             currency::bind(
                 services.get("core/currency.currencies")?,
@@ -256,7 +259,7 @@ pub enum LedgerError {
     /// The approver prepared the record, impersonated whoever did, or was
     /// impersonated by them, while the company requires separation of duties.
     #[error(
-        "Someone else must approve this because the company requires separation of duties, including when impersonating. For a one-person company, change Separation of duties on Approval exceptions: /finance/reports/approval-exceptions"
+        "Someone else must approve this, because you prepared it or acted for the person who did."
     )]
     SamePerson,
     #[error("Set up manual journal approval rules on Approval rules before submitting a journal.")]
@@ -1403,6 +1406,20 @@ impl Ledger {
     ) -> Result<Vec<Account>> {
         agent_operations::authorize_on(client, scope, company_id, VIEW).await?;
         Ok(accounts::list(client, scope.tenant(), company_id).await?)
+    }
+
+    /// The accounts linked to one of the company's active bank accounts
+    /// (`finance.ledger.view`), as the modules that keep bank accounts report
+    /// them (`BANK_LINKS`); empty when none is mounted. For the order of a
+    /// list of choices ([`money_first`]), never a posting rule.
+    pub async fn bank_linked_account_ids(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Vec<i64>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        agent_operations::authorize_on(&**client, scope, company_id, VIEW).await?;
+        Ok(bank_links::account_ids(&**client, scope.tenant(), company_id).await?)
     }
 
     /// Adds an account (`finance.ledger.accounts.manage`). `retained_earnings`

@@ -145,6 +145,7 @@ pub(super) fn refusal(action: &str, error: PayablesError) -> String {
         ("approve", Ledger(LedgerError::SamePerson)) => "Someone else must approve this because the company requires separation of duties. For a one-person company, change Separation of duties on Approval exceptions.".into(),
         ("approve", Unauthorized) => "You do not have permission to approve documents.".into(),
         ("post", NotApproved) => "Only an approved or held document can be posted.".into(),
+        ("post", AlreadyPosted) => "This bill is already posted.".into(),
         ("post", Unauthorized) => "You do not have permission to post documents.".into(),
         ("approve" | "post", CompanyArchived) => "This company is archived.".into(),
         ("post", PayablesNotConfigured) => "Set the payable account in the payables settings first.".into(),

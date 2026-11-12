@@ -12,8 +12,8 @@ use bilibi_finance_ledger::{
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, BackLink, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field, FlashMap,
-    FlexRow, FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
+    params, Alert, BackLink, BuiltinColumn, ButtonVariant, Cell, EmptyState, Facts, Field,
+    FlashMap, FlexRow, FlexTable, Html, InputKind, ListColumns, StatusKind, NO_FLASH,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -34,6 +34,10 @@ pub(super) struct Request {
     accounts: Vec<Account>,
     units: Option<MinorUnits>,
     can_decide: bool,
+    /// The reader requested this payment, so the ledger would refuse their
+    /// approval: the page says who it waits for instead of offering Approve.
+    awaits_someone_else: bool,
+    can_change_approval: bool,
     dialog: Option<Dialog>,
     reason: String,
     date: String,
@@ -60,6 +64,8 @@ impl Request {
             accounts: vec![],
             units: None,
             can_decide: false,
+            awaits_someone_else: false,
+            can_change_approval: false,
             dialog: None,
             reason: String::new(),
             date: String::new(),
@@ -95,9 +101,21 @@ impl Request {
         self.payment = None;
         self.reversal = None;
         self.bills.clear();
+        self.awaits_someone_else = false;
         let Some(company) = company(scope) else {
             return Ok(());
         };
+        self.awaits_someone_else = self
+            .pages
+            .payables
+            .payment_awaits_someone_else(scope, company, self.id)
+            .await
+            .unwrap_or(false);
+        self.can_change_approval = self.awaits_someone_else
+            && self
+                .pages
+                .allowed(scope, bilibi_finance_ledger::MANAGE_DUTY_SEPARATION)
+                .await?;
         self.request = self
             .pages
             .payables
@@ -353,12 +371,24 @@ impl Request {
         };
         let title = format!("Payment #{}", r.request_number);
         let mut parts = Html::EMPTY;
-        if flash.error.contains("separation of duties") {
-            parts.push(&render(bilibi_ui::Button {
-                id: "payables-approval-settings",
-                href: "/finance/reports/approval-exceptions",
-                body: Html::text("Approval exceptions"),
-                ..bilibi_ui::Button::default()
+        if self.awaits_someone_else {
+            parts.push(&render(Waiting {
+                alert: render(Alert {
+                    kind: StatusKind::Info,
+                    id: "payables-payment-waiting",
+                    body: Html::text(OWN_REQUEST),
+                    ..Alert::default()
+                })?,
+                settings: if self.can_change_approval {
+                    render(bilibi_ui::Button {
+                        id: "payables-approval-settings",
+                        href: "/finance/reports/approval-exceptions?area=other",
+                        body: Html::text("Approval settings"),
+                        ..bilibi_ui::Button::default()
+                    })?
+                } else {
+                    Html::EMPTY
+                },
             })?);
         }
         View {
@@ -395,7 +425,9 @@ impl Request {
             .is_some_and(|p| p.reversed_by_payment_id.is_none() && p.reverses_payment_id.is_none());
         let mut items = Vec::new();
         let mut primary = None;
-        if self.can_decide && waiting {
+        if waiting && self.awaits_someone_else {
+            primary = Some(render(WaitingNote)?);
+        } else if self.can_decide && waiting {
             primary = Some(render(bilibi_ui::Button {
                 id: "payables-payment-approve",
                 button_type: "button",
@@ -405,6 +437,8 @@ impl Request {
                 body: Html::text("Approve and pay"),
                 ..bilibi_ui::Button::default()
             })?);
+        }
+        if self.can_decide && waiting {
             items.push(RecordAction::here("x-mark", "Reject", &here, "reject"));
         }
         if self.can_decide && can_reverse {
@@ -620,6 +654,18 @@ impl Request {
                     "{doing} did not go through because the request changed. Review it and try again."
                 ),
             ),
+            // The ledger refused the requester's own approval (a second tab).
+            Written::Fields(_)
+                if event == "approve_payment"
+                    && self
+                        .pages
+                        .payables
+                        .payment_awaits_someone_else(scope, company, self.id)
+                        .await
+                        .unwrap_or(false) =>
+            {
+                (StatusKind::Error, OWN_REQUEST.to_owned())
+            }
             Written::Fields(fields) => (StatusKind::Error, f::refused(doing, &fields)),
         });
         self.dialog = None;
@@ -661,6 +707,26 @@ impl LiveState<Scope, Error> for Request {
             query: HashMap::new(),
         }]
     }
+}
+
+/// What the requester reads where others read Approve and pay.
+const OWN_REQUEST: &str = "You requested this payment, so someone else must approve it.";
+
+#[derive(Template)]
+#[template(
+    source = r#"<span id="payables-payment-waiting-note" class="text-sm text-ink-muted">Waiting for someone else to approve</span>"#,
+    ext = "html"
+)]
+struct WaitingNote;
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="mt-4 space-y-3">{{ alert|safe }}{{ settings|safe }}</div>"#,
+    ext = "html"
+)]
+struct Waiting {
+    alert: Html,
+    settings: Html,
 }
 
 #[derive(Template)]

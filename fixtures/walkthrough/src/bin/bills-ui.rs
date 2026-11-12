@@ -190,14 +190,15 @@ async fn main() -> Outcome<()> {
                     )
                     .await?;
             }
-            if n % 3 == 0 {
-                p.approve_document(&admin, COMPANY, d.id).await?;
-            }
-            if n % 6 == 0 {
-                p.post_document(&manager, COMPANY, d.id).await?;
-            } else if n % 7 == 0 {
+            // Approving posts in the same press when the approver may post.
+            if n % 7 == 0 {
                 p.void_document(&admin, COMPANY, d.id, "Duplicate party document")
                     .await?;
+            } else if n % 3 == 0 {
+                bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+                    &p, &admin, &manager, COMPANY, d.id,
+                )
+                .await?;
             }
             println!("bill {} ({number})", d.id);
         }

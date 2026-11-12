@@ -509,6 +509,9 @@ pub(super) struct Account {
     pub active: bool,
     #[serde(default)]
     pub is_group: bool,
+    /// Linked to an active bank account: listed first where money is paid in.
+    #[serde(default)]
+    pub bank_linked: bool,
 }
 
 impl Account {

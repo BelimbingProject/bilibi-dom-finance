@@ -540,6 +540,46 @@ impl Payables {
         authorize(&**c, s, company, VIEW).await?;
         request(&**c, s.tenant(), company, id).await
     }
+    /// Whether the caller must leave this waiting request to someone else:
+    /// they requested it (or acted for whoever did) and the company requires
+    /// separation of duties. It is the ledger's own decision, read without
+    /// recording anything, so a page offers Approve only to someone whose
+    /// approval the ledger would take. False for a decided request.
+    pub async fn payment_awaits_someone_else(
+        &self,
+        s: &Scope,
+        company: i64,
+        id: i64,
+    ) -> Result<bool> {
+        let c = self.db.get().await.map_err(Error::from)?;
+        authorize(&**c, s, company, VIEW).await?;
+        let r = request(&**c, s.tenant(), company, id).await?;
+        if r.status != "submitted" {
+            return Ok(false);
+        }
+        match self
+            .ledger
+            .preview_approval_on(&**c, s, company, &approval(&r, None))
+            .await
+        {
+            Err(bilibi_finance_ledger::LedgerError::SamePerson) => Ok(true),
+            Err(e) => Err(e.into()),
+            Ok(_) => Ok(false),
+        }
+    }
+    /// The account the company's latest payment request was paid from, for a
+    /// new request to start on (`finance.payables.view`).
+    pub async fn last_paid_from(&self, s: &Scope, company: i64) -> Result<Option<i64>> {
+        let c = self.db.get().await.map_err(Error::from)?;
+        authorize(&**c, s, company, VIEW).await?;
+        Ok(c
+            .query_opt(
+                "SELECT paid_from_account_id FROM finance_payables_payment_requests WHERE tenant_id=$1 AND company_id=$2 ORDER BY id DESC LIMIT 1",
+                &[&s.tenant(), &company],
+            )
+            .await?
+            .map(|row| row.get(0)))
+    }
     pub async fn get_payment(&self, s: &Scope, company: i64, id: i64) -> Result<Payment> {
         let c = self.db.get().await.map_err(Error::from)?;
         authorize(&**c, s, company, VIEW).await?;

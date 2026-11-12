@@ -484,11 +484,12 @@ async fn main() -> Outcome<()> {
                 },
             )
             .await?;
+        // Approving posts in the same press, so bills 2 and 3 are in the books.
         if n > 1 {
-            payables.approve_document(&admin, COMPANY, bill.id).await?;
-        }
-        if n == 3 {
-            payables.post_document(&manager, COMPANY, bill.id).await?;
+            bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+                &payables, &admin, &manager, COMPANY, bill.id,
+            )
+            .await?;
         }
         let attachments = services.get::<Attachments>(bilibi_finance_attachments::SERVICE)?;
         let attachment = attachments
@@ -561,10 +562,10 @@ async fn main() -> Outcome<()> {
             },
         )
         .await?;
-    payables
-        .approve_document(&admin, COMPANY, laptop.id)
-        .await?;
-    payables.post_document(&manager, COMPANY, laptop.id).await?;
+    bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &payables, &admin, &manager, COMPANY, laptop.id,
+    )
+    .await?;
     let entry = ledger
         .post_entry(
             &manager,

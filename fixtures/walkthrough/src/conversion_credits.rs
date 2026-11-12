@@ -864,9 +864,14 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
             },
         )
         .await?;
-    ap.approve_document(&reviewer, company, backdated_ap.id)
-        .await?;
-    let backdated_ap = ap.post_document(&manager, company, backdated_ap.id).await?;
+    let backdated_ap = bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &ap,
+        &reviewer,
+        &manager,
+        company,
+        backdated_ap.id,
+    )
+    .await?;
     assert!(ap_read
         .call(
             &**client,

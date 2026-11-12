@@ -11,8 +11,8 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     error_sentence,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Alert, BackLink, Button, ButtonVariant, Choice, Combobox, EmptyState, ErrorSummary,
-    Facts, Field, Html, InputKind, StatusKind,
+    params, Alert, Attrs, BackLink, Button, ButtonVariant, Choice, Combobox, EmptyState,
+    ErrorSummary, Facts, Field, Html, InputKind, StatusKind,
 };
 use jiff::civil::Date;
 use serde_json::{json, Value};
@@ -82,22 +82,38 @@ impl PaymentForm {
         };
         self.units = Some(book.minor_units);
         self.currency = book.currency_code;
-        self.accounts = self
+        // Accounts linked to a bank account come first, then other asset
+        // accounts; the choice itself is as wide as it always was.
+        let linked = self
             .pages
             .ledger
-            .list_accounts(scope, company)
+            .bank_linked_account_ids(scope, company)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|a| {
-                a.postable()
-                    && matches!(a.account_type, AccountType::Asset | AccountType::Liability)
-            })
-            .collect();
+            .unwrap_or_default();
+        self.accounts = bilibi_finance_ledger::money_first(
+            self.pages
+                .ledger
+                .list_accounts(scope, company)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|a| {
+                    a.postable()
+                        && matches!(a.account_type, AccountType::Asset | AccountType::Liability)
+                })
+                .collect(),
+            &linked,
+        );
         let starting = !self.started;
         if starting {
             self.draft.date = self.pages.today(scope).await?.to_string();
             self.started = true;
+            // Start on the account the last request was paid from.
+            if let Ok(Some(last)) = self.pages.payables.last_paid_from(scope, company).await {
+                if self.accounts.iter().any(|a| a.id == last) {
+                    self.draft.account = last.to_string();
+                }
+            }
             if let Some(bill) = self.for_bill {
                 self.prefill(scope, company, bill).await;
             }
@@ -432,8 +448,7 @@ impl PaymentForm {
                         .map(|p| {
                             Choice::new(
                                 format!(
-                                    "{} · {} ({} {})",
-                                    p.party_key,
+                                    "{} · {} {} owed",
                                     p.party_name,
                                     p.total.display(units),
                                     self.currency
@@ -449,7 +464,12 @@ impl PaymentForm {
             field("description", "description", "Description", &d.description),
         ];
         let account = Combobox::new("payables-pay-account", format!("{PREFIX}[account]"))
-            .label("Paid from")
+            .label("Paid from *")
+            .attrs(Attrs {
+                required: true,
+                ..Attrs::default()
+            })
+            .aria_label("Paid from")
             .value(d.account.clone())
             .placeholder("Search accounts")
             .options(
@@ -459,7 +479,7 @@ impl PaymentForm {
                     .collect(),
             )
             .errors(self.errors_for("payables-pay-account"))
-            .hint("The bank, cash or card account the money leaves.");
+            .hint("The bank or cash account you pay from.");
         let mut rows = Vec::new();
         if let Some(party) = self.party() {
             for doc in &party.documents {
@@ -477,8 +497,7 @@ impl PaymentForm {
                         "Due {}",
                         bilibi_finance_ledger::dates::display(doc.due_date)
                     ),
-                    overdue: (doc.days_overdue > 0)
-                        .then(|| format!("{} days overdue", doc.days_overdue)),
+                    overdue: (doc.days_overdue > 0).then(|| late(doc.days_overdue)),
                     owed: format!(
                         "Owed {} {}",
                         doc.outstanding.display(units),
@@ -563,14 +582,23 @@ impl PaymentForm {
             none_owed,
             chosen,
             total,
-            save: render(Button {
-                id: "payables-pay-save",
-                button_type: "submit",
-                variant: ButtonVariant::Primary,
-                working: "Saving…",
-                body: Html::text("Request payment"),
-                ..Button::default()
-            })?,
+            actions: {
+                let mut buttons = render(Button {
+                    id: "payables-pay-cancel",
+                    href: PAYMENTS,
+                    body: Html::text("Cancel"),
+                    ..Button::default()
+                })?;
+                buttons.push(&render(Button {
+                    id: "payables-pay-save",
+                    button_type: "submit",
+                    variant: ButtonVariant::Primary,
+                    working: "Saving…",
+                    body: Html::text("Request payment"),
+                    ..Button::default()
+                })?);
+                f::actions(buttons)?
+            },
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -616,7 +644,7 @@ impl PaymentForm {
                 redirect: Some(to),
                 flash: Some((
                     StatusKind::Success,
-                    "Payment requested. It will post when approved.".into(),
+                    "Payment requested. Nothing is paid until someone else approves it.".into(),
                 )),
                 ..LiveBody::default()
             },
@@ -669,7 +697,12 @@ struct View {
     none_owed: bool,
     chosen: bool,
     total: Option<Html>,
-    save: Html,
+    actions: Html,
+}
+
+/// "1 day late", "10 days late": the words the aging pages use.
+fn late(days: i32) -> String {
+    format!("{days} day{} late", if days == 1 { "" } else { "s" })
 }
 
 #[derive(Template)]
