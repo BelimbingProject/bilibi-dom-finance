@@ -630,3 +630,32 @@ fn from_row(row: &Row) -> Result<BankAccount> {
         active: row.get(7),
     })
 }
+
+/// Tells the ledger which accounts this company's active bank accounts are
+/// linked to, so a sibling's "Paid from" or "Deposited to" lists them first
+/// (`bilibi_finance_ledger::BANK_LINKS`). The ledger authorizes its caller.
+struct Linked;
+impl bilibi_finance_ledger::BankLinks for Linked {
+    fn account_ids<'a>(
+        &'a self,
+        client: &'a dyn bilibi_agent_api::OperationClient,
+        tenant: i64,
+        company_id: i64,
+    ) -> bilibi_finance_ledger::BankLinksFuture<'a> {
+        Box::pin(async move {
+            let rows = client
+                .query(
+                    "SELECT ledger_account_id FROM finance_reconciliation_bank_accounts WHERE tenant_id=$1 AND company_id=$2 AND active ORDER BY id",
+                    &[&tenant, &company_id],
+                )
+                .await?;
+            Ok(rows.iter().map(|row| row.get(0)).collect())
+        })
+    }
+}
+inventory::submit! { bilibi_module_registry::Contribution::new(
+    bilibi_finance_ledger::BANK_LINKS,
+    "finance/reconciliation/bank_accounts",
+    bilibi_module_registry::Provenance { module: crate::MODULE, source: file!(), line: line!() },
+    &bilibi_finance_ledger::BankLinksDefinition { links: &Linked },
+) }

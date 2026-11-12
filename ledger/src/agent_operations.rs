@@ -1239,7 +1239,16 @@ impl ReadHandler for Read {
                     let next = has_more
                         .then(|| rows.last().map(|a| a.code.clone()))
                         .flatten();
-                    json!({"records":rows,"next_after_code":next})
+                    let linked = crate::bank_links::account_ids(client, tenant, company).await?;
+                    let records: Vec<Value> = rows
+                        .iter()
+                        .map(|a| {
+                            let mut record = json!(a);
+                            record["bank_linked"] = json!(linked.contains(&a.id));
+                            record
+                        })
+                        .collect();
+                    json!({"records":records,"next_after_code":next})
                 }
                 Self::Journal => {
                     let journal_id = id(input, "journal_id").map_err(invalid)?;
@@ -1682,7 +1691,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/ledger.operations",P
         Operation {key:"finance.ledger.opening_balances.get",title:"Read opening-balance progress",summary:"Read the latest opening submission, its approval status, posted entry and reversal. opening is null before submission; this does not measure a complete accounting conversion.",keywords:&["conversion"],capability:VIEW,input:target_schema,output,handler:Handler::Read(&Read::OpeningProgress),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.book.currencies",title:"Choose the book's currency",summary:"Currencies a book may open in (every current ISO 4217 currency, with its places and whether the tenant has used it; used ones first) matching a code or name, and the proposal: the company's base currency, else the tenant's. Opening the book marks its currency used. reference is unavailable when the list was never installed (a code is accepted unchecked).",keywords:&[],capability:VIEW,input:currencies_schema,output,handler:Handler::Read(&Read::Currencies),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.journal.get",title:"Read a journal",summary:"Read lines, submission, decision, the approved entry identifier and whether it is the book's opening balances journal.",keywords:&[],capability:VIEW,input:journal_schema,output,handler:Handler::Read(&Read::Journal),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.ledger.account.list",title:"List accounts",summary:"Read the chart by code with a bounded cursor page: accounts, and account groups marked is_group.",keywords:&[],capability:VIEW,input:accounts_schema,output,handler:Handler::Read(&Read::Accounts),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.ledger.account.list",title:"List accounts",summary:"Read the chart by code with a bounded cursor page: accounts, and account groups marked is_group. bank_linked marks an account linked to an active bank account, the usual one to pay from or deposit to.",keywords:&[],capability:VIEW,input:accounts_schema,output,handler:Handler::Read(&Read::Accounts),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.chart_balance.get",title:"Read the chart with balances",summary:"Read every account with its own balance and every account group with the total of the accounts under it, as of a date and counted through a pinned entry number. A group never has a balance of its own.",keywords:&[],capability:VIEW,input:trial_balance_schema,output,handler:Handler::Read(&Read::ChartBalances),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.chart_template.list",title:"List starter charts",summary:"Read the starter charts a company can start from, its optional sections, how many core groups and accounts each creates, how far an accountant has reviewed it, and whether it can be applied to this company now.",keywords:&[],capability:VIEW,input:target_schema,output,handler:Handler::Read(&Read::ChartTemplates),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.ledger.chart_template.get",title:"Preview a starter chart",summary:"Read the exact groups and accounts a starter chart would create with the optional `sections` chosen, and any code the company's chart already uses.",keywords:&[],capability:VIEW,input:template_schema,output,handler:Handler::Read(&Read::ChartTemplate),channels:Channels::Every,step_up:&[]},

@@ -574,8 +574,10 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await,
         |e| matches!(e, F::BillNotPosted),
     )?;
-    p.approve_document(&admin, COMPANY, draft.id).await?;
-    let bill = p.post_document(&manager, COMPANY, draft.id).await?;
+    let bill = bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &p, &admin, &manager, COMPANY, draft.id,
+    )
+    .await?;
     assert_eq!(bill.total_tax, money("21.60"));
     assert_eq!(bill.total, money("381.60"));
     let from_bill = f

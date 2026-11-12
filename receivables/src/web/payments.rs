@@ -213,12 +213,38 @@ impl Payments {
                     .set(StatusKind::Info, "That invoice owes nothing now."),
             }
         }
+        // Start on the account the last receipt was deposited to. A list cut
+        // short holds the oldest receipts, so it cannot say which was last.
+        if let Some(last) = self.all.iter().max_by_key(|p| p.id).filter(|_| !self.cut) {
+            if self
+                .deposit_accounts()
+                .iter()
+                .any(|a| a.id == last.deposit_account_id)
+            {
+                values.insert(
+                    "deposit_account_id".into(),
+                    last.deposit_account_id.to_string(),
+                );
+            }
+        }
         self.draft = Some(Draft {
             values,
             open: owed,
             errors: Errors::default(),
         });
         Ok(())
+    }
+
+    /// Where a receipt may be deposited: accounts linked to a bank account
+    /// first, then the other asset accounts, never the receivable control.
+    fn deposit_accounts(&self) -> Vec<&Account> {
+        let mut accounts: Vec<&Account> = self
+            .accounts
+            .iter()
+            .filter(|a| a.postable() && a.account_type == "asset" && Some(a.id) != self.control)
+            .collect();
+        accounts.sort_by_key(|a| !a.bank_linked);
+        accounts
     }
 
     async fn load(&mut self, scope: &Scope) -> Result<()> {
@@ -537,9 +563,8 @@ impl Payments {
             .map(|s| Choice::new(format!("{} ({})", s.name, s.code), s.id.to_string()))
             .collect();
         let deposits: Vec<Choice> = self
-            .accounts
-            .iter()
-            .filter(|a| a.postable() && a.account_type == "asset" && Some(a.id) != self.control)
+            .deposit_accounts()
+            .into_iter()
             .map(Account::choice)
             .collect();
         let mut who = Html::EMPTY;

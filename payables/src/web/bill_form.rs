@@ -545,7 +545,7 @@ impl BillForm {
         render(Modal {
             id: "payables-record-modal",
             title,
-            description: "Draft: no ref no and no posting until approved and posted.",
+            description: "A draft is not in the books until it is approved.",
             cancel_event: "cancel_record",
             width: ModalWidth::Wide,
             body,
@@ -556,7 +556,7 @@ impl BillForm {
     /// The success message the list shows once a draft is saved.
     pub(super) fn saved(&self) -> String {
         format!(
-            "{} saved as a draft. Approve and post it when it is ready.",
+            "{} saved as a draft. Approve it when it is ready.",
             if self.note { "Debit note" } else { "Bill" }
         )
     }
@@ -641,7 +641,7 @@ impl BillForm {
                 .hint(if self.note {
                     "Leave empty to use the document date."
                 } else {
-                    "Leave empty to use the vendor’s payment terms."
+                    "Leave empty to use the payment terms set for the supplier."
                 }),
             field("description", "description", "Description", &d.description),
         ];
@@ -679,7 +679,7 @@ impl BillForm {
                 description: line_field(
                     "description",
                     "description",
-                    "What it is for",
+                    "Description",
                     &l.description,
                 )
                 .required(),

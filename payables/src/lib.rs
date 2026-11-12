@@ -8,6 +8,7 @@ mod agent_operations;
 mod contributions;
 mod document_page;
 mod documents;
+pub use documents::NotPosted;
 mod opening;
 mod opening_csv;
 mod opening_lifecycle;

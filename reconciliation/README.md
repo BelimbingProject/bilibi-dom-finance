@@ -15,7 +15,9 @@ Depends on `finance/ledger` (the chart a bank account maps and the book a
 statement's amounts are held to) and `finance/attachments` (the bank's own
 file, kept whole as the statement's source document), Core Company and Base
 Tenancy. It reads the ledger only through that facade and never its tables;
-other modules call this facade and never read these tables.
+other modules call this facade and never read these tables. It tells the ledger which accounts its active bank
+accounts are linked to (`BANK_LINKS`, `src/bank_accounts.rs`), so Payables and
+Receivables list them first where money is paid from or deposited.
 
 ## Public API
 

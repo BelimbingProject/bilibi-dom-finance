@@ -629,8 +629,10 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &document(date(2026, 1, 20), &[("IS8", "250"), ("PX", "400")]),
         )
         .await?;
-    ap.approve_document(&admin, COMPANY, bill.id).await?;
-    ap.post_document(&manager, COMPANY, bill.id).await?;
+    bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &ap, &admin, &manager, COMPANY, bill.id,
+    )
+    .await?;
     let note = ap
         .create_debit_note(
             &manager,
@@ -639,8 +641,10 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &document(date(2026, 2, 10), &[("IS8", "50")]),
         )
         .await?;
-    ap.approve_document(&admin, COMPANY, note.id).await?;
-    ap.post_document(&manager, COMPANY, note.id).await?;
+    bilibi_finance_walkthrough_fixture::payables::approve_then_post(
+        &ap, &admin, &manager, COMPANY, note.id,
+    )
+    .await?;
     ledger
         .post_entry(
             &manager,

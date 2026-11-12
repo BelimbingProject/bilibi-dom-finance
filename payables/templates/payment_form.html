@@ -3,7 +3,7 @@
 {% import "forms.html" as form %}
 {% call ui::page(id="payables-pay", variant=bilibi_ui::PageVariant::Form) %}
 {# A new payment request has no stable record yet, so this page is not pinned. #}
-{% call ui::header(subtitle="A payment request posts when approved.", actions=back) %}Request a payment{% endcall %}
+{% call ui::header(subtitle="Nothing is paid until someone else approves the request.", actions=back) %}Request a payment{% endcall %}
 {% if let Some(summary) = summary %}{{ summary|safe }}{% endif %}
 {% if let Some(notice) = notice %}{{ notice|safe }}{% endif %}
 <form id="payables-pay-form" data-event="edit" data-change data-submit-event="save_payment" class="space-y-3">
@@ -27,6 +27,6 @@
 {% if let Some(buttons) = fill %}<div class="mt-2 flex flex-wrap items-center gap-2">{{ buttons.0|safe }}{{ buttons.1|safe }}</div>{% endif %}
 {% endcall %}
 {% if let Some(total) = total %}{{ total|safe }}{% endif %}
-<div class="flex flex-wrap items-center gap-2">{{ save|safe }}</div>
+{{ actions|safe }}
 </form>
 {% endcall %}

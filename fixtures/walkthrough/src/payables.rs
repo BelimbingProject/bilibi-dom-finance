@@ -78,8 +78,40 @@ fn draft(vendor: i64, number: &str, expense: i64, tax: i64, units: MinorUnits) -
         tax_lines: None,
     }
 }
-async fn approve(p: &Payables, s: &Scope, id: i64) -> Outcome<()> {
-    p.approve_document(s, COMPANY, id).await?;
+/// Approves a draft and answers it posted. Approval posts in the same write
+/// when the approver may post and nothing holds it; otherwise `poster` posts
+/// what approval left approved.
+pub async fn approve_then_post(
+    p: &Payables,
+    approver: &Scope,
+    poster: &Scope,
+    company: i64,
+    id: i64,
+) -> Result<bilibi_finance_payables::Document, PayablesError> {
+    let approved = p.approve_document(approver, company, id).await?;
+    if approved.status == "posted" {
+        return Ok(approved);
+    }
+    p.post_document(poster, company, id).await
+}
+/// Approves without posting, for the scenarios that post separately: the
+/// approver's permission to post is withheld for the call, so approval leaves
+/// the document approved, as it does for any approver who may not post.
+async fn approve(p: &Payables, grants: &Grants, admin: &Scope, s: &Scope, id: i64) -> Outcome<()> {
+    let user = s.user();
+    grants
+        .set_direct(
+            admin,
+            user,
+            bilibi_finance_payables::POST_DOCUMENTS,
+            Some(false),
+        )
+        .await?;
+    let approved = p.approve_document(s, COMPANY, id).await;
+    grants
+        .set_direct(admin, user, bilibi_finance_payables::POST_DOCUMENTS, None)
+        .await?;
+    assert_eq!(approved?.status, "approved");
     Ok(())
 }
 
@@ -293,7 +325,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let attachment = attachments
         .replace(&manager, COMPANY, attachment.id, &file)
         .await?;
-    approve(&p, &admin, bill.id).await?;
+    approve(&p, &grants, &admin, &admin, bill.id).await?;
     assert!(matches!(
         attachments
             .remove(&manager, COMPANY, attachment.id, "Cannot remove approved")
@@ -395,7 +427,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .create_debit_note(&manager, COMPANY, bill.id, &note)
         .await?;
     assert_eq!(note.party.name, bill.party.name);
-    approve(&p, &admin, note.id).await?;
+    approve(&p, &grants, &admin, &admin, note.id).await?;
     let mut config2 = config.clone();
     config2.settings.payable_account_id = second.id;
     config2.reason = Some("Changed control account".into());
@@ -423,8 +455,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let n2 = p
         .create_debit_note(&manager, COMPANY, bill.id, &excessive)
         .await?;
-    approve(&p, &admin, n1.id).await?;
-    approve(&p, &admin, n2.id).await?;
+    approve(&p, &grants, &admin, &admin, n1.id).await?;
+    approve(&p, &grants, &admin, &admin, n2.id).await?;
     p.post_document(&manager, COMPANY, n1.id).await?;
     refused(
         "outstanding checked again at posting",
@@ -456,7 +488,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     ledger
         .set_duty_separation(&manager, COMPANY, false, Some("Fixture small team"))
         .await?;
-    approve(&p, &manager, replacement.id).await?;
+    approve(&p, &grants, &admin, &manager, replacement.id).await?;
     assert!(ledger
         .list_approval_exceptions(&manager, COMPANY, &ApprovalExceptionQuery::default())
         .await?
@@ -473,7 +505,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &draft(vendor, "STALE-001", expense, code.id, units),
         )
         .await?;
-    approve(&p, &admin, stale.id).await?;
+    approve(&p, &grants, &admin, &admin, stale.id).await?;
     grants
         .set_direct(
             &admin,
@@ -517,7 +549,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &draft(vendor, "INACTIVE", retired.id, code.id, units),
         )
         .await?;
-    approve(&p, &admin, inactive.id).await?;
+    approve(&p, &grants, &admin, &admin, inactive.id).await?;
     ledger
         .update_account(
             &manager,
@@ -537,7 +569,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let mut early = draft(vendor, "NO-PERIOD", expense, code.id, units);
     early.document_date = date(2027, 1, 1);
     let early = p.create_bill(&manager, COMPANY, &early).await?;
-    approve(&p, &admin, early.id).await?;
+    approve(&p, &grants, &admin, &admin, early.id).await?;
     refused(
         "actual document date outside fiscal periods",
         p.post_document(&manager, COMPANY, early.id).await,
@@ -732,6 +764,72 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     println!(
         "tax half rounds up, party tax overrides computed tax, payables-only reader needs no ledger grant"
     );
+    // Approving posts in the same write when the approver may post.
+    let one = p
+        .create_bill(
+            &manager,
+            COMPANY,
+            &draft(vendor, "ONE-PRESS", expense, code.id, units),
+        )
+        .await?;
+    // A failure after the entry is inserted takes the approval back with it.
+    c.batch_execute(&format!("CREATE FUNCTION np1_refuse_post() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'NP1 injected document update failure' USING ERRCODE='check_violation'; END $$; CREATE TRIGGER np1_refuse_post BEFORE UPDATE ON finance_payables_documents FOR EACH ROW WHEN (NEW.id={} AND NEW.status='posted') EXECUTE FUNCTION np1_refuse_post()",one.id)).await?;
+    let failed = p.approve_document(&admin, COMPANY, one.id).await;
+    c.batch_execute("DROP TRIGGER np1_refuse_post ON finance_payables_documents; DROP FUNCTION np1_refuse_post()").await?;
+    refused("approve and post is one transaction", failed, |e| {
+        matches!(e, PayablesError::Failed(_))
+    })?;
+    assert_eq!(
+        p.get_document(&manager, COMPANY, one.id).await?.status,
+        "draft"
+    );
+    let done = p.approve_document(&admin, COMPANY, one.id).await?;
+    assert_eq!(done.status, "posted");
+    assert!(done.document_number.is_some());
+    assert_eq!(done.approved_by_user_id, Some(admin.user()));
+    assert_eq!(done.posted_by_user_id, Some(admin.user()));
+    let entry = ledger
+        .get_entry(&manager, COMPANY, done.entry_id.ok_or(Error::NotFound)?)
+        .await?;
+    assert_eq!(
+        entry.owner.as_ref().map(|o| o.record.as_str()),
+        Some(format!("document:{}", one.id).as_str())
+    );
+    refused(
+        "nothing left to post after approval",
+        p.post_document(&manager, COMPANY, one.id).await,
+        |e| matches!(e, PayablesError::NotApproved),
+    )?;
+    println!(
+        "one press: {} approved and posted by the approver with entry {}",
+        done.label(),
+        entry.entry_number
+    );
+    // Posting refused (no fiscal period): the approval stands, nothing posts.
+    let mut outside = draft(vendor, "NO-PERIOD-2", expense, code.id, units);
+    outside.document_date = date(2027, 1, 2);
+    let outside = p.create_bill(&manager, COMPANY, &outside).await?;
+    let kept = p.approve_document(&admin, COMPANY, outside.id).await?;
+    assert_eq!(kept.status, "approved");
+    assert_eq!(kept.entry_id, None);
+    assert_eq!(kept.document_number, None);
+    println!("approval kept when posting is refused: the bill stays approved and unposted");
+    refused(
+        "same-person approval still refused before any posting",
+        p.approve_document(
+            &manager,
+            COMPANY,
+            p.create_bill(
+                &manager,
+                COMPANY,
+                &draft(vendor, "OWN-WORK", expense, code.id, units),
+            )
+            .await?
+            .id,
+        )
+        .await,
+        |e| matches!(e, PayablesError::Ledger(LedgerError::SamePerson)),
+    )?;
     db_refuses(&c,"append to recorded draft",&format!("INSERT INTO finance_payables_document_lines(tenant_id,company_id,document_id,line_number,description,account_id,amount) VALUES(1,1,{},2,'Late draft line',{},1)",stated.id,expense)).await?;
     let header = |company: i64, number: &str| {
         format!(

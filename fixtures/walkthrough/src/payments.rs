@@ -71,8 +71,7 @@ async fn post_bill(
     input: &NewDocument,
 ) -> Outcome<Document> {
     let b = p.create_bill(writer, COMPANY, input).await?;
-    p.approve_document(reviewer, COMPANY, b.id).await?;
-    Ok(p.post_document(writer, COMPANY, b.id).await?)
+    Ok(crate::payables::approve_then_post(p, reviewer, writer, COMPANY, b.id).await?)
 }
 fn request(vendor: i64, bill: i64, bank: i64, amount: Money, date: Date) -> NewPayment {
     NewPayment {
@@ -273,6 +272,23 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         p.get_document(&manager, COMPANY, b.id).await?.outstanding,
         Some(money("100"))
     );
+    // The page asks before it offers Approve: the requester must wait for
+    // someone else, the reviewer need not, and nothing is recorded by asking.
+    assert!(
+        p.payment_awaits_someone_else(&manager, COMPANY, r.id)
+            .await?
+    );
+    assert!(
+        !p.payment_awaits_someone_else(&reviewer, COMPANY, r.id)
+            .await?
+    );
+    assert_eq!(
+        p.last_paid_from(&manager, COMPANY).await?,
+        Some(r.paid_from_account_id)
+    );
+    println!(
+        "requester waits for someone else; a new request starts on the last paid-from account"
+    );
     refused(
         "same person payment approval",
         p.approve_payment(&manager, COMPANY, r.id).await,
@@ -298,6 +314,10 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     ));
     assert_eq!(paid.payment_number, 1);
     assert_eq!(paid.posted_by_user_id, reviewer.user());
+    assert!(
+        !p.payment_awaits_someone_else(&manager, COMPANY, r.id)
+            .await?
+    );
     let decision = p.get_payment_request(&manager, COMPANY, r.id).await?;
     assert_eq!(decision.status, "posted");
     assert_eq!(

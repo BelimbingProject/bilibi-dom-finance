@@ -333,14 +333,14 @@ impl Bill {
         self.reason.clear();
         let mut reload = true;
         self.flash = Some(match written {
-            Written::Done(_) => {
+            Written::Done(answer) => {
                 // The page shows what the contract did, so read it back
                 // before wording the outcome (a post may be a hold).
                 self.reload(scope).await?;
                 reload = false;
                 let d = self.document.as_ref();
                 match action {
-                    "approve" => (StatusKind::Success, "Document approved.".into()),
+                    "approve" => approved(d, &answer["result"]["not_posted"]),
                     "post" if d.is_some_and(|d| d.status == "held") => (
                         StatusKind::Warning,
                         format!(
@@ -351,7 +351,8 @@ impl Bill {
                     "post" => (
                         StatusKind::Success,
                         format!(
-                            "Posted as number {}.",
+                            "{} posted as #{}.",
+                            d.map_or("Bill", |d| f::kind(&d.document_type)),
                             d.and_then(|d| d.document_number).unwrap_or_default()
                         ),
                     ),
@@ -416,6 +417,36 @@ impl LiveState<Scope, Error> for Bill {
             .into(),
             query: HashMap::new(),
         }]
+    }
+}
+
+/// What approving did: it posts in the same press, and says why when it
+/// could not (`NotPosted`, as the contract answers it).
+fn approved(d: Option<&Document>, not_posted: &Value) -> (StatusKind, String) {
+    let kind = d.map_or("Bill", |d| f::kind(&d.document_type));
+    match not_posted["reason"].as_str() {
+        None => match d.and_then(|d| d.document_number) {
+            Some(number) => (
+                StatusKind::Success,
+                format!("{kind} approved and posted as #{number}."),
+            ),
+            None => (StatusKind::Success, format!("{kind} approved.")),
+        },
+        Some("match") => (
+            StatusKind::Warning,
+            format!("{kind} approved. It differs from its purchase order, so it is not posted yet. Press Post to see the differences."),
+        ),
+        Some("permission") => (
+            StatusKind::Success,
+            format!("{kind} approved. Someone who may post bills can post it now."),
+        ),
+        Some(_) => (
+            StatusKind::Warning,
+            format!(
+                "{kind} approved, but not posted. {}",
+                not_posted["message"].as_str().unwrap_or_default()
+            ),
+        ),
     }
 }
 

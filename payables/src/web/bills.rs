@@ -315,6 +315,8 @@ impl Bills {
                             record_id: &d.id.to_string(),
                             href: &format!("{INDEX}/{}", d.id),
                             class: "font-medium whitespace-nowrap text-ink-strong hover:underline",
+                            // A bill not posted yet has no number of ours,
+                            // so the supplier's invoice number is its link.
                             body: Html::text(
                                 d.party_document_number.as_deref().unwrap_or("No number"),
                             ),
