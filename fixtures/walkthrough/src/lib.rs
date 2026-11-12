@@ -292,7 +292,9 @@ pub async fn initialize_journal_approvals(
 /// A sealed scope for one fixture account, as a signed-in session would hold.
 /// The account also gets the session row a sign-in writes (one per account,
 /// carrying the scope's empty CSRF value): Agent Access approves a connection
-/// from the person's own browser session and refuses a scope with none.
+/// from the person's own browser session and refuses a scope with none. Its id
+/// is a token's digest, as the Platform stores every session
+/// (`bilibi_session::session_id`).
 pub async fn sign_in(db: &Db, services: &Services, tenant: i64, user: i64) -> Result<Scope> {
     let authentication = services
         .get::<Authentication>("base/tenancy.authentication")
@@ -300,7 +302,7 @@ pub async fn sign_in(db: &Db, services: &Services, tenant: i64, user: i64) -> Re
     let client = db.get().await.map_err(Error::from)?;
     client
         .execute(
-            "INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,user_agent) VALUES($1,$2,$3,'',now()+interval '1 day','Walkthrough browser') ON CONFLICT DO NOTHING",
+            "INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,user_agent) VALUES(encode(sha256(convert_to($1,'UTF8')),'hex'),$2,$3,'',now()+interval '1 day','Walkthrough browser') ON CONFLICT DO NOTHING",
             &[&format!("walkthrough-{tenant}-{user}"), &tenant, &user],
         )
         .await
