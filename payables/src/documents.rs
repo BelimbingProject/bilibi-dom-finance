@@ -652,6 +652,9 @@ impl Payables {
         let d = store::document_record(c, s.tenant(), company, id)
             .await?
             .ok_or(PayablesError::DocumentNotFound)?;
+        if d.status == "posted" {
+            return Err(PayablesError::AlreadyPosted);
+        }
         if !matches!(d.status.as_str(), "approved" | "held") {
             return Err(PayablesError::NotApproved);
         }

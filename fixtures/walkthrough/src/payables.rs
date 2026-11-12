@@ -413,7 +413,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     refused(
         "repeat posting",
         p.post_document(&manager, COMPANY, bill.id).await,
-        |e| matches!(e, PayablesError::NotApproved),
+        |e| matches!(e, PayablesError::AlreadyPosted),
     )?;
     refused(
         "posted void",
@@ -528,7 +528,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
     assert!(matches!(
         (&a, &b),
-        (Ok(_), Err(PayablesError::NotApproved)) | (Err(PayablesError::NotApproved), Ok(_))
+        (Ok(_), Err(PayablesError::AlreadyPosted)) | (Err(PayablesError::AlreadyPosted), Ok(_))
     ));
     println!(
         "concurrent posting: one committed, one refused ({:?}, {:?})",
@@ -798,7 +798,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     refused(
         "nothing left to post after approval",
         p.post_document(&manager, COMPANY, one.id).await,
-        |e| matches!(e, PayablesError::NotApproved),
+        |e| matches!(e, PayablesError::AlreadyPosted),
     )?;
     println!(
         "one press: {} approved and posted by the approver with entry {}",

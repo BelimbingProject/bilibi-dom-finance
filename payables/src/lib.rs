@@ -111,6 +111,8 @@ pub enum PayablesError {
     NotDraft,
     #[error("The document is not approved")]
     NotApproved,
+    #[error("The document is already posted")]
+    AlreadyPosted,
     #[error("The document cannot be voided")]
     NotVoidable,
     #[error("The corrected document is not a posted bill")]
