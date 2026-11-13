@@ -117,16 +117,11 @@ pub fn services(
     Ok(services)
 }
 
-/// The Platform fixture's accounts and tenants, plus the Core default
-/// relationship roles (customer, supplier, ...) its tenants are installed
-/// without. A binary that skips [`install`] still calls this, never
-/// `bilibi_walkthrough_fixture::install` alone: a customer or supplier cannot
-/// be added until the tenant has its relationship roles.
+/// The Platform fixture's accounts and tenants. The Platform fixture inserts
+/// the Core default relationship roles (customer, vendor, ...) for them, so a
+/// customer or supplier can be added straight away.
 pub async fn install_platform(db: &Db) -> Result<()> {
     bilibi_walkthrough_fixture::install(db).await?;
-    let client = db.get().await.map_err(Error::from)?;
-    bilibi_company::ensure_default_relationship_roles(&**client, 1).await?;
-    bilibi_company::ensure_default_relationship_roles(&**client, 2).await?;
     Ok(())
 }
 
