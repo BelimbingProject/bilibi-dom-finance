@@ -39,6 +39,9 @@ pub(super) struct Returns {
     framed: bool,
     /// Today in the company's zone, which due dates are counted from.
     today: Date,
+    /// The day the first registration was recorded here. A period due before
+    /// it was filed before SST was kept here, so its date is not counted.
+    kept_from: Option<Date>,
     period_columns: ListColumns,
     list_columns: ListColumns,
 }
@@ -62,6 +65,7 @@ impl Returns {
             flash: None,
             framed: false,
             today: crate::today(),
+            kept_from: None,
             period_columns: columns(
                 "sst-periods-table",
                 &[("period", "Period"), ("due", "Due")],
@@ -97,22 +101,26 @@ impl Returns {
     }
 
     pub(super) async fn reload(&mut self, scope: &Scope) -> Result<()> {
-        self.today = f::today(&self.pages.display(scope).await?.timezone);
+        let timezone = self.pages.display(scope).await?.timezone;
+        self.today = f::today(&timezone);
         let sst = &self.pages.sst;
         let loaded = async {
             let company = company(scope).ok_or(SstError::Unauthorized)?;
-            let registration = sst.get_registration(scope, company).await?;
+            let registrations = sst.list_registrations(scope, company).await?;
             let periods = sst.taxable_periods(scope, company, None, Some(6)).await?;
             let returns = sst
                 .list_returns(scope, company, None, Some(500), None)
                 .await?;
-            Ok::<_, SstError>((registration, periods, returns))
+            Ok::<_, SstError>((registrations, periods, returns))
         }
         .await;
         match loaded {
-            Ok((registration, periods, mut returns)) => {
+            Ok((mut registrations, periods, mut returns)) => {
                 returns.reverse();
-                self.registration = registration;
+                self.kept_from = registrations
+                    .first()
+                    .and_then(|first| f::day(&first.recorded_at, &timezone));
+                self.registration = registrations.pop();
                 self.periods = periods;
                 self.returns = Some(returns);
                 self.refusal = None;
@@ -121,6 +129,7 @@ impl Returns {
             }
             Err(e) => {
                 self.registration = None;
+                self.kept_from = None;
                 self.periods.clear();
                 self.returns = None;
                 self.refusal = Some(e);
@@ -262,11 +271,15 @@ impl Returns {
             // and finalised only after it ends: the row says from when.
             let running = p.period_end >= crate::today();
             // The due date counts down until every registered tax's return
-            // of the period is finalised.
-            let owed = taxes.iter().any(|tax| {
-                self.standing(*tax, p.period_start)
-                    .is_none_or(|r| r.status != crate::ReturnStatus::Finalised)
-            });
+            // of the period is finalised: an open one always, and one not
+            // prepared yet unless it fell due before SST was kept here.
+            let kept = self.kept_from.is_none_or(|from| p.due_date >= from);
+            let owed = taxes
+                .iter()
+                .any(|tax| match self.standing(*tax, p.period_start) {
+                    None => kept,
+                    Some(r) => r.status == crate::ReturnStatus::Open,
+                });
             row = row
                 .slot(
                     "period",

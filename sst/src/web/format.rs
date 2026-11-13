@@ -143,6 +143,14 @@ pub(super) fn today(timezone: &str) -> Date {
     jiff::Timestamp::now().to_zoned(zone).date()
 }
 
+/// The day of an SST stamp (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) in the company's
+/// own zone.
+pub(super) fn day(at: &str, timezone: &str) -> Option<Date> {
+    let at: jiff::Timestamp = at.parse().ok()?;
+    let zone = jiff::tz::TimeZone::get(timezone).unwrap_or(jiff::tz::TimeZone::UTC);
+    Some(at.to_zoned(zone).date())
+}
+
 /// A return counts as due soon from this many days before its due date.
 const DUE_SOON_DAYS: i64 = 14;
 
