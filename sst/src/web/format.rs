@@ -136,15 +136,8 @@ pub(super) fn finalise_from(period_end: Date) -> String {
     dates::display(period_end.tomorrow().unwrap_or(period_end))
 }
 
-/// The date today in the company's own zone, which a due date is counted
-/// from.
-pub(super) fn today(timezone: &str) -> Date {
-    let zone = jiff::tz::TimeZone::get(timezone).unwrap_or(jiff::tz::TimeZone::UTC);
-    jiff::Timestamp::now().to_zoned(zone).date()
-}
-
-/// The day of an SST stamp (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) in the company's
-/// own zone.
+/// The day of an SST stamp (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) in the zone due
+/// dates are counted in.
 pub(super) fn day(at: &str, timezone: &str) -> Option<Date> {
     let at: jiff::Timestamp = at.parse().ok()?;
     let zone = jiff::tz::TimeZone::get(timezone).unwrap_or(jiff::tz::TimeZone::UTC);

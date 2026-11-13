@@ -15,7 +15,7 @@ pub(crate) use export::Downloads;
 use crate::{Sst, MODULE, VIEW};
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
-use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
+use bilibi_datetime::{Clock, DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_finance_ledger::Ledger;
 use bilibi_locale::Locales;
 use bilibi_module_registry::{
@@ -123,6 +123,13 @@ impl Pages {
     ) -> Result<bilibi_finance_ledger::People> {
         let c = self.db.get().await?;
         Ok(bilibi_finance_ledger::People::read(&self.directory, &**c, scope, ids).await)
+    }
+
+    /// The calendar a due date is counted in: today in the reader's display
+    /// zone, as the ledger's and payables' pages read it.
+    async fn clock(&self, scope: &Scope) -> Result<Clock> {
+        let display = self.display(scope).await?;
+        Ok(Clock::resolve(&display, None, jiff::Timestamp::now()))
     }
 
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {

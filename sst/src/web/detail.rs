@@ -374,7 +374,7 @@ impl Return {
                 id: "sst-return-due",
                 value: f::due(
                     r.due_date,
-                    f::today(&display.timezone),
+                    self.pages.clock(scope).await?.today,
                     r.status == ReturnStatus::Open,
                 )?,
             },

@@ -37,7 +37,7 @@ pub(super) struct Returns {
     dialog_error: Option<String>,
     flash: Option<(StatusKind, String)>,
     framed: bool,
-    /// Today in the company's zone, which due dates are counted from.
+    /// Today in the reader's display zone, which due dates are counted from.
     today: Date,
     /// The day the first registration was recorded here. A period due before
     /// it was filed before SST was kept here, so its date is not counted.
@@ -101,8 +101,8 @@ impl Returns {
     }
 
     pub(super) async fn reload(&mut self, scope: &Scope) -> Result<()> {
-        let timezone = self.pages.display(scope).await?.timezone;
-        self.today = f::today(&timezone);
+        let clock = self.pages.clock(scope).await?;
+        self.today = clock.today;
         let sst = &self.pages.sst;
         let loaded = async {
             let company = company(scope).ok_or(SstError::Unauthorized)?;
@@ -119,7 +119,7 @@ impl Returns {
                 returns.reverse();
                 self.kept_from = registrations
                     .first()
-                    .and_then(|first| f::day(&first.recorded_at, &timezone));
+                    .and_then(|first| f::day(&first.recorded_at, &clock.timezone));
                 self.registration = registrations.pop();
                 self.periods = periods;
                 self.returns = Some(returns);
