@@ -2,9 +2,11 @@
 //! (`web_routes.exs` and the menu of `Contributions`): the Returns, Return and
 //! Setup pages, the CSV download and the print page. Pages compose Base UI's
 //! components only and call the authorized facade, which asks again.
+mod blockers;
 mod detail;
 mod export;
 mod format;
+mod mapping;
 mod returns;
 mod setup;
 

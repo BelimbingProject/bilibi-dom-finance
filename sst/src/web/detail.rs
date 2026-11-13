@@ -9,12 +9,12 @@
 //! changes. Every write is a facade call that re-asks its capability, and the
 //! dialog holds the adjustment it withdraws, never a value the browser sends.
 use super::{
-    clear_flash, columns, company, dialog_actions, flash, format as f, render, table, time, Pages,
-    DENIED, INDEX, SETUP,
+    blockers, clear_flash, columns, company, dialog_actions, flash, format as f, mapping, render,
+    table, time, Pages, DENIED, INDEX,
 };
 use crate::{
     AdjustmentInput, BoxKind, ReturnReport, ReturnStatus, Sst, SstError, TaxType, AMEND_RETURNS,
-    FINALISE_RETURNS, PREPARE_RETURNS,
+    FINALISE_RETURNS, MANAGE_SETTINGS, PREPARE_RETURNS,
 };
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -24,8 +24,8 @@ use bilibi_finance_ledger::{
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{self, LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    params, Alert, BackLink, Cell, Choice, Combobox, CreateButton, EmptyState, Fact, Facts, Field,
-    FlashMap, FlexRow, Html, IconButton, ListColumns, RowMode, StatusKind,
+    params, Alert, BackLink, Cell, Choice, Combobox, CommitStates, CreateButton, EmptyState, Fact,
+    Facts, Field, FlashMap, FlexRow, Html, IconButton, ListColumns, RowMode, StatusKind,
 };
 use rust_decimal::Decimal;
 use std::{
@@ -62,6 +62,10 @@ pub(super) struct Return {
     can_prepare: bool,
     can_finalise: bool,
     can_amend: bool,
+    /// May choose a tax code's item, where a missing one blocks the return.
+    can_manage: bool,
+    /// Each blocking tax code's in-place outcome, keyed `source-id`.
+    statuses: CommitStates,
     modal: Option<Modal>,
     reason: String,
     adjustment: HashMap<String, String>,
@@ -114,6 +118,8 @@ impl Return {
             can_prepare: false,
             can_finalise: false,
             can_amend: false,
+            can_manage: false,
+            statuses: CommitStates::default(),
             modal: None,
             reason: String::new(),
             adjustment: HashMap::new(),
@@ -210,6 +216,7 @@ impl Return {
                 self.can_prepare = self.pages.allowed(scope, PREPARE_RETURNS).await?;
                 self.can_finalise = self.pages.allowed(scope, FINALISE_RETURNS).await?;
                 self.can_amend = self.pages.allowed(scope, AMEND_RETURNS).await?;
+                self.can_manage = self.pages.allowed(scope, MANAGE_SETTINGS).await?;
                 let change = report.amends.is_some();
                 if self.items.builtins().iter().any(|c| c.id == "change") != change {
                     self.items = items_columns(change)?;
@@ -237,57 +244,14 @@ impl Return {
                 self.can_prepare = false;
                 self.can_finalise = false;
                 self.can_amend = false;
+                self.can_manage = false;
             }
         }
         Ok(())
     }
 
     pub(super) fn title(&self) -> Option<String> {
-        self.report.as_ref().map(|r| {
-            format!(
-                "{} return {}",
-                f::tax_name(r.tax_return.tax_type),
-                r.tax_return.return_number
-            )
-        })
-    }
-
-    /// What keeps an open return from finalising: unmapped codes, rates that
-    /// do not fit, a period not yet ended.
-    fn blockers(report: &ReturnReport) -> Option<Blockers> {
-        let figures = report.figures.as_ref()?;
-        if report.tax_return.status != ReturnStatus::Open {
-            return None;
-        }
-        let blockers = Blockers {
-            period_end: (!report.period_ended)
-                .then(|| bilibi_finance_ledger::dates::display(report.tax_return.period_end)),
-            unmapped: figures
-                .unmapped
-                .iter()
-                .map(|u| Unmapped {
-                    source: u.source.as_str(),
-                    source_name: f::source_name(u.source),
-                    tax_code_id: u.tax_code_id,
-                    tax_code: u.tax_code.clone(),
-                })
-                .collect(),
-            rates: figures
-                .rate_mismatches
-                .iter()
-                .map(|r| Rate {
-                    line: r.line_number,
-                    tax_code: r.tax_code.clone(),
-                    rate: f::rate(r.rate),
-                    box_name: f::box_name(report.tax_return.tax_type, r.box_key.as_deref()),
-                })
-                .collect(),
-            setup: SETUP,
-        };
-        (blockers.period_end.is_some()
-            || !blockers.unmapped.is_empty()
-            || !blockers.rates.is_empty())
-        .then_some(blockers)
+        self.report.as_ref().map(|r| title(&r.tax_return))
     }
 
     pub(super) async fn body(&self, scope: &Scope) -> Result<String> {
@@ -333,6 +297,7 @@ impl Return {
             status.push_str(&format!(" v{v}"));
         }
         let subtitle = render(Subtitle {
+            number: r.return_number,
             status: f::badge(&status, f::status_kind(r.status), "")?,
             amends: r.amends_return_id.map(|_| {
                 format!(
@@ -403,11 +368,16 @@ impl Return {
                     bilibi_finance_ledger::dates::display(r.period_end)
                 ),
             ),
-            fact(
-                "Return and payment due",
-                "sst-return-due",
-                &bilibi_finance_ledger::dates::display(r.due_date),
-            ),
+            // The date counts down while the return is still open.
+            Fact {
+                title: "Return and payment due",
+                id: "sst-return-due",
+                value: f::due(
+                    r.due_date,
+                    f::today(&display.timezone),
+                    r.status == ReturnStatus::Open,
+                )?,
+            },
         ];
         if let Some(figures) = &report.figures {
             if tax_type == TaxType::ServiceTax {
@@ -421,20 +391,12 @@ impl Return {
                     f::basis_name(basis),
                 ));
             }
-            items.push(fact(
-                "Read through",
-                "sst-return-through",
-                &format!(
-                    "ledger entry {}, mapping {}",
-                    figures.through_entry_number, figures.through_mapping_number
-                ),
-            ));
         }
         let particulars = render(Facts {
             id: "sst-return-particulars",
             items,
         })?;
-        let blockers = Self::blockers(report);
+        let blockers = blockers::render_for(report, self.can_manage, &self.statuses)?;
         let open = r.status == ReturnStatus::Open;
         let controls = render(Controls {
             open,
@@ -453,7 +415,6 @@ impl Return {
                 && r.superseded_by_return_id.is_none()
                 && self.can_amend,
         })?;
-        let blockers = blockers.map(render).transpose()?;
 
         // Posted since this return was finalised.
         let posted_since = match &report.posted_since {
@@ -783,20 +744,13 @@ impl Return {
             })
             .transpose()?;
 
-        let title = format!(
-            "{} return {}: {} to {}",
-            f::tax_name(tax_type),
-            r.return_number,
-            bilibi_finance_ledger::dates::display(r.period_start),
-            bilibi_finance_ledger::dates::display(r.period_end)
-        );
         View {
             flash: flash(&self.flash),
             refusal,
             record: Some(RecordView {
                 record: r.id,
                 title_actions: bilibi_ui::Html::EMPTY,
-                title,
+                title: title(r),
                 subtitle,
                 actions,
                 particulars,
@@ -1005,6 +959,18 @@ impl Return {
                 Ok(false)
             }
             "finalise" => self.act(scope, FINALISE_RETURNS, Action::Finalise).await,
+            // A blocking tax code's item, chosen in its place on this page.
+            mapping::SAVE_EVENT => {
+                let saved = mapping::save(&self.pages, scope, v, &mut self.statuses).await?;
+                if saved {
+                    self.statuses = CommitStates::default();
+                    self.flash = Some((
+                        StatusKind::Success,
+                        "SST-02 item saved for the tax code.".into(),
+                    ));
+                }
+                Ok(saved)
+            }
             "open_modal" => {
                 self.modal = match v["modal"].as_str() {
                     Some("discard") => Some(Modal::Discard),
@@ -1092,6 +1058,15 @@ fn adjustment_values(v: &serde_json::Value) -> HashMap<String, String> {
         .iter()
         .map(|k| ((*k).to_owned(), text(v, "adjustment", k)))
         .collect()
+}
+
+/// A return's name: its tax and its taxable period.
+fn title(r: &crate::TaxReturn) -> String {
+    format!(
+        "{} return · {}",
+        f::tax_name(r.tax_type),
+        f::period(r.period_start, r.period_end)
+    )
 }
 
 fn fact<'a>(title: &'a str, id: &'a str, value: &str) -> Fact<'a> {
@@ -1211,10 +1186,11 @@ struct ModalView {
 
 #[derive(Template)]
 #[template(
-    source = r#"<span id="sst-return-status">{{ status|safe }}</span>{% if let Some(amends) = amends %}<span id="sst-return-amends" class="ml-2">{{ amends }}</span>{% endif %}{% if superseded %}<span id="sst-return-superseded" class="ml-2">amended by a later version</span>{% endif %}"#,
+    source = r#"<span id="sst-return-number" class="mr-2">Return {{ number }}</span><span id="sst-return-status">{{ status|safe }}</span>{% if let Some(amends) = amends %}<span id="sst-return-amends" class="ml-2">{{ amends }}</span>{% endif %}{% if superseded %}<span id="sst-return-superseded" class="ml-2">amended by a later version</span>{% endif %}"#,
     ext = "html"
 )]
 struct Subtitle {
+    number: i64,
     status: Html,
     amends: Option<String>,
     superseded: bool,
@@ -1229,27 +1205,6 @@ struct Controls {
     discard: bool,
     finalise_forbidden: Option<Html>,
     amend: bool,
-}
-
-#[derive(Template)]
-#[template(path = "return_blockers.html")]
-struct Blockers {
-    period_end: Option<String>,
-    unmapped: Vec<Unmapped>,
-    rates: Vec<Rate>,
-    setup: &'static str,
-}
-struct Unmapped {
-    source: &'static str,
-    source_name: &'static str,
-    tax_code_id: i64,
-    tax_code: String,
-}
-struct Rate {
-    line: i32,
-    tax_code: String,
-    rate: String,
-    box_name: String,
 }
 
 #[derive(Template)]

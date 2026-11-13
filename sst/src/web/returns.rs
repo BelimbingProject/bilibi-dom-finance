@@ -37,6 +37,8 @@ pub(super) struct Returns {
     dialog_error: Option<String>,
     flash: Option<(StatusKind, String)>,
     framed: bool,
+    /// Today in the company's zone, which due dates are counted from.
+    today: Date,
     period_columns: ListColumns,
     list_columns: ListColumns,
 }
@@ -59,6 +61,7 @@ impl Returns {
             ]),
             flash: None,
             framed: false,
+            today: crate::today(),
             period_columns: columns(
                 "sst-periods-table",
                 &[("period", "Period"), ("due", "Due")],
@@ -94,6 +97,7 @@ impl Returns {
     }
 
     pub(super) async fn reload(&mut self, scope: &Scope) -> Result<()> {
+        self.today = f::today(&self.pages.display(scope).await?.timezone);
         let sst = &self.pages.sst;
         let loaded = async {
             let company = company(scope).ok_or(SstError::Unauthorized)?;
@@ -217,10 +221,11 @@ impl Returns {
                 render(empty)
             })
             .transpose()?;
-        let periods = match &self.registration {
-            Some(registration) => Some(self.periods_card(registration)?),
-            None => None,
-        };
+        let periods = self
+            .registration
+            .is_some()
+            .then(|| self.periods_card())
+            .transpose()?;
         // Before the registration there is nothing to list, unless returns
         // were prepared under an earlier one.
         let list = match &self.returns {
@@ -247,25 +252,31 @@ impl Returns {
         .map_err(|_| Error::Internal)
     }
 
-    fn periods_card(&self, registration: &Registration) -> Result<PeriodsView> {
+    fn periods_card(&self) -> Result<PeriodsView> {
         let taxes = self.tax_types();
         let mut rows = Vec::new();
         for p in &self.periods {
             let mut row = FlexRow::new(p.period_start.to_string());
             row.dom_id = Some(format!("period-{}", p.period_start));
+            // A return of a period still running can be prepared and read,
+            // and finalised only after it ends: the row says from when.
+            let running = p.period_end >= crate::today();
+            // The due date counts down until every registered tax's return
+            // of the period is finalised.
+            let owed = taxes.iter().any(|tax| {
+                self.standing(*tax, p.period_start)
+                    .is_none_or(|r| r.status != crate::ReturnStatus::Finalised)
+            });
             row = row
-                .cell(
+                .slot(
                     "period",
-                    Cell::text(format!(
-                        "{} to {}",
-                        bilibi_finance_ledger::dates::display(p.period_start),
-                        bilibi_finance_ledger::dates::display(p.period_end)
-                    )),
+                    render(PeriodName {
+                        row: p.period_start.to_string(),
+                        name: f::period(p.period_start, p.period_end),
+                        finalise_from: running.then(|| f::finalise_from(p.period_end)),
+                    })?,
                 )
-                .cell(
-                    "due",
-                    Cell::text(bilibi_finance_ledger::dates::display(p.due_date)),
-                );
+                .slot("due", f::due(p.due_date, self.today, owed)?);
             for tax in &taxes {
                 let html = match self.standing(*tax, p.period_start) {
                     None if self.can_prepare => render(Button {
@@ -313,14 +324,7 @@ impl Returns {
                 render(empty)
             })
             .transpose()?;
-        Ok(PeriodsView {
-            description: format!(
-                "{}-month periods; a return is due by the date shown (moved to the next working day when it falls on a weekend or holiday).",
-                registration.period_months
-            ),
-            table,
-            forbidden,
-        })
+        Ok(PeriodsView { table, forbidden })
     }
 
     /// The "+ Return" dialog: the tax and the first day of its period, for a
@@ -392,16 +396,16 @@ impl Returns {
                 .cell("tax", Cell::text(f::tax_name(r.tax_type)))
                 .cell(
                     "period",
-                    Cell::text(format!(
-                        "{} to {}",
-                        bilibi_finance_ledger::dates::display(r.period_start),
-                        bilibi_finance_ledger::dates::display(r.period_end)
-                    )),
+                    Cell::text(f::period(r.period_start, r.period_end)),
                 )
                 .slot("status", status)
-                .cell(
+                .slot(
                     "due",
-                    Cell::text(bilibi_finance_ledger::dates::display(r.due_date)),
+                    f::due(
+                        r.due_date,
+                        self.today,
+                        r.status == crate::ReturnStatus::Open,
+                    )?,
                 )
                 .cell(
                     "tax_payable",
@@ -420,7 +424,7 @@ impl Returns {
         let mut empty = EmptyState::missing(
             "No returns yet",
             if self.can_prepare {
-                "Prepare a taxable period's return above, or any period's with + Return."
+                ""
             } else {
                 "Someone who prepares SST returns starts each one from its taxable period."
             },
@@ -569,7 +573,6 @@ struct View<'a> {
 }
 
 struct PeriodsView {
-    description: String,
     table: Html,
     forbidden: Option<Html>,
 }
@@ -609,4 +612,17 @@ struct Muted<'a> {
 )]
 struct Note<'a> {
     text: &'a str,
+}
+
+/// A taxable period's name, and under it the day its return can be
+/// finalised from while the period is still running.
+#[derive(Template)]
+#[template(
+    source = r#"<span>{{ name }}</span>{% if let Some(from) = finalise_from %}<span id="period-{{ row }}-finalise-from" class="block text-xs text-ink-muted">Can be finalised from {{ from }}</span>{% endif %}"#,
+    ext = "html"
+)]
+struct PeriodName {
+    row: String,
+    name: String,
+    finalise_from: Option<String>,
 }
