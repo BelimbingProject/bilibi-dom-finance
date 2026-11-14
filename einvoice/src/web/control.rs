@@ -62,12 +62,12 @@ impl State {
                         ("issued", "Issued"),
                         ("buyer", "Buyer"),
                         ("status", "Status"),
-                        ("payable", "Payable"),
+                        ("payable", "Total"),
                     ],
                 ),
                 (
                     "einvoice-consolidation-refused-table",
-                    &[("number", "Number"), ("payable", "Payable"), ("why", "Why")],
+                    &[("number", "Number"), ("payable", "Total"), ("why", "Why")],
                 ),
             ],
             "reconciliation" => &[
@@ -76,7 +76,7 @@ impl State {
                     &[
                         ("number", "Number"),
                         ("type", "Type"),
-                        ("payable", "Payable"),
+                        ("payable", "Total"),
                         ("reason", "Last failure"),
                     ],
                 ),
@@ -308,11 +308,11 @@ impl State {
         let (title, subtitle) = match self.operation {
             "consolidation" => (
                 "E-invoice consolidation",
-                "One consolidated document reports a month's sales that no buyer asked an individual e-invoice for.",
+                "Send one e-invoice for the sales in a month where the buyer did not ask for an e-invoice.",
             ),
             "reconciliation" => (
-                "E-invoice reconciliation",
-                "Validated documents without a ledger entry, and entries whose document is cancelled.",
+                "E-invoices not in the books",
+                "Valid e-invoices with no journal entry, and cancelled ones whose journal entry is not reversed.",
             ),
             _ => (
                 "E-invoice setup",
@@ -395,34 +395,38 @@ impl State {
             )?);
             return Ok(parts);
         };
-        let mut covered = instant("einvoice-consolidation-from", c.from, display)?;
-        covered.push(&Html::text(" to "));
-        covered.push(&instant("einvoice-consolidation-until", c.until, display)?);
-        let mut closes = instant("einvoice-consolidation-closes", c.closes_at, display)?;
-        closes.push(&Html::text(" "));
-        let window = if c.open {
+        // The month and the deadline as calendar days in the authority's
+        // own calendar, never as instants in another zone.
+        let covered = format!(
+            "1–{} {}",
+            c.month.days_in_month(),
+            bilibi_finance_ledger::dates::month(c.month)
+        );
+        let last_day = bilibi_finance_ledger::dates::display(
+            Einvoice::authority().consolidation_last_day(c.month),
+        );
+        let deadline = if c.open {
+            ("einvoice-consolidation-open", format!("Send it by {last_day}."))
+        } else if jiff::Timestamp::now() < c.until {
             (
-                "einvoice-consolidation-open",
-                "Open now",
-                BadgeKind::Success,
+                "einvoice-consolidation-closed",
+                format!("You can send it after the month ends, until {last_day}."),
             )
         } else {
             (
                 "einvoice-consolidation-closed",
-                "Not open now",
-                BadgeKind::Warning,
+                format!("The deadline passed on {last_day}."),
             )
         };
-        closes.push(&render(WindowBadge {
-            window_id: window.0,
-            label: window.1,
-            kind: window.2,
-        })?);
+        let deadline = render(Deadline {
+            deadline_id: deadline.0,
+            text: &deadline.1,
+        })?;
         let mut body = facts(
             "einvoice-consolidation-facts",
             vec![
-                ("Covers documents issued", covered),
-                ("May be issued until", closes),
+                ("Covers", Html::text(&covered)),
+                ("Deadline", deadline),
                 ("Environment", Html::text(&super::sentence(&c.environment))),
                 ("Documents", Html::text(&c.documents.len().to_string())),
                 (
@@ -430,7 +434,7 @@ impl State {
                     Html::text(&c.line_extension_amount.to_string()),
                 ),
                 ("Tax", Html::text(&c.tax_amount.to_string())),
-                ("Payable", Html::text(&c.payable_amount.to_string())),
+                ("Total", Html::text(&c.payable_amount.to_string())),
             ],
         )?;
         if c.open && !c.documents.is_empty() && self.allowed(scope, ISSUE).await? {
@@ -662,7 +666,7 @@ impl State {
         let mut parts = vec![section(
             "einvoice-connection",
             "Connection",
-            "Changed in this company's e-invoice settings.",
+            "",
             false,
             connection,
         )?];
@@ -1059,7 +1063,7 @@ struct EntryById {
 /// Where the posting accounts are chosen, above the documents they hold back.
 #[derive(Template)]
 #[template(
-    source = r#"<p id="einvoice-unposted-settings" class="px-5 pb-3 text-sm text-ink-muted">A posting refused for its accounts posts once they are chosen in the <a href="{{ href }}" class="text-link hover:underline">e-invoice settings</a>; then retry it here.</p>"#,
+    source = r#"<p id="einvoice-unposted-settings" class="px-5 pb-3 text-sm text-ink-muted"><a href="{{ href }}" class="text-link hover:underline">Choose the accounts</a>, then post these again.</p>"#,
     ext = "html"
 )]
 struct SettingsNote<'a> {
@@ -1092,20 +1096,19 @@ struct Instant<'a> {
 struct SupplierComplete {}
 #[derive(Template)]
 #[template(
-    source = "{% import \"components.html\" as ui %}<span id=\"{{ window_id }}\" class=\"ml-2\">{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}</span>",
+    source = r#"<span id="{{ deadline_id }}">{{ text }}</span>"#,
     ext = "html"
 )]
-struct WindowBadge<'a> {
-    window_id: &'a str,
-    label: &'a str,
-    kind: BadgeKind,
+struct Deadline<'a> {
+    deadline_id: &'a str,
+    text: &'a str,
 }
 
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "consolidation" => Some("E-invoice consolidation"),
-            "reconciliation" => Some("E-invoice reconciliation"),
+            "reconciliation" => Some("E-invoices not in the books"),
             "setup" => Some("E-invoice setup"),
             _ => None,
         }

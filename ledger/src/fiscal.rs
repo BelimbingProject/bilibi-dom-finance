@@ -17,7 +17,7 @@ use crate::MODULE;
 use bilibi_agent_api::OperationClient;
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError};
 use bilibi_tenancy::Scope;
-use bilibi_ui::params;
+use bilibi_ui::{params, BadgeKind, Html};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, pin::Pin, sync::OnceLock};
@@ -155,6 +155,38 @@ pub struct FiscalStanding {
     /// Whether a new fiscal document may be started for the record: this one
     /// does not stand.
     pub replaceable: bool,
+}
+
+#[derive(askama::Template)]
+#[template(
+    source = r#"<a href="{{ href }}" title="E-invoice {{ number }}" class="hover:underline">{{ badge|safe }}</a>"#,
+    ext = "html"
+)]
+struct StandingLink<'a> {
+    href: &'a str,
+    number: &'a str,
+    badge: Html,
+}
+
+impl FiscalStanding {
+    /// The status as a badge that opens the fiscal document, the same on the
+    /// record's list and page.
+    pub fn badge(&self) -> Html {
+        let kind = match self.tone {
+            FiscalTone::Good => BadgeKind::Success,
+            FiscalTone::Waiting => BadgeKind::Warning,
+            FiscalTone::Problem => BadgeKind::Danger,
+            FiscalTone::Ended => BadgeKind::Neutral,
+        };
+        let badge = bilibi_ui::status_badge(kind, &self.label);
+        // Only escaped text is written, so rendering cannot fail.
+        Html::render(&StandingLink {
+            href: &self.href,
+            number: &self.number,
+            badge: badge.clone(),
+        })
+        .unwrap_or(badge)
+    }
 }
 
 /// The fiscal documents of the records asked about, and the page that starts

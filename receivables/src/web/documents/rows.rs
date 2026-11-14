@@ -34,6 +34,10 @@ impl Documents {
                 ));
             }
         }
+        // The e-invoice is another module's record, so it starts from the menu.
+        if let Some(start) = &d.fiscal.start {
+            items.push(RecordAction::link("Submit e-invoice", start.clone()));
+        }
         if issued && !d.opening && matches!(d.kind.as_str(), "invoice" | "credit_note") {
             items.push(RecordAction::local(
                 "printer",
@@ -54,6 +58,16 @@ impl Documents {
             &Self::page_reference(d),
             items,
         )
+    }
+
+    /// Where the row's e-invoice stands, as a link to it; "No e-invoice" on
+    /// a row this person could submit one for.
+    pub(super) fn einvoice(d: &DocumentPageRow) -> Html {
+        match (&d.fiscal.document, &d.fiscal.start) {
+            (Some(document), _) => document.badge(),
+            (None, Some(_)) => Html::text("No e-invoice"),
+            (None, None) => Html::text("—"),
+        }
     }
 
     /// The type, and where the document came from when that is not the

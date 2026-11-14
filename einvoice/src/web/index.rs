@@ -73,7 +73,7 @@ struct View {
 /// The header's buttons to the two other document views.
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(id="einvoice-documents-consolidation", href="/finance/einvoice/consolidation") %}Consolidation{% endcall %}{% call ui::button(id="einvoice-documents-reconciliation", href="/finance/einvoice/reconciliation") %}Reconciliation{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(id="einvoice-documents-consolidation", href="/finance/einvoice/consolidation") %}Consolidation{% endcall %}{% call ui::button(id="einvoice-documents-reconciliation", href="/finance/einvoice/reconciliation") %}Not in the books{% endcall %}"#,
     ext = "html"
 )]
 struct HeaderLinks;

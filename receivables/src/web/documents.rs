@@ -111,6 +111,9 @@ pub(super) struct Documents {
     figures: f::Figures,
     /// The three figures above the list; absent when they cannot be read.
     summary: Option<OwedSummary>,
+    /// Whether this person may read e-invoices here; the column shows only
+    /// then.
+    fiscal: bool,
     total: u64,
     can_add: bool,
     can_receive: bool,
@@ -148,6 +151,7 @@ impl Documents {
                 .right(),
             BuiltinColumn::new("outstanding", "Owed").right(),
             BuiltinColumn::new("status", "Status"),
+            BuiltinColumn::new("einvoice", "E-invoice"),
         ];
         Ok(Self {
             pages,
@@ -173,6 +177,7 @@ impl Documents {
             series: vec![],
             figures: f::Figures::default(),
             summary: None,
+            fiscal: false,
             total: 0,
             can_add: false,
             can_receive: false,
@@ -237,6 +242,7 @@ impl Documents {
         self.documents =
             serde_json::from_value(page["documents"].clone()).map_err(|_| Error::Internal)?;
         self.total = page["total"].as_u64().ok_or(Error::Internal)?;
+        self.fiscal = page["fiscal_documents"] == json!(true);
         self.list.page = page["page"].as_u64().ok_or(Error::Internal)?;
         Ok(())
     }
@@ -591,18 +597,22 @@ impl Documents {
                         d.replaced,
                         Owed::read(d.payment_status, d.days_overdue),
                     )?,
-                );
+                )
+                .slot("einvoice", Self::einvoice(d));
             row.actions = self.row_actions(d)?;
             rows.push(row);
         }
-        let mut table = FlexTable::new(
-            "receivables-invoices-table",
-            self.columns.flex_columns(),
-            rows,
-        )
+        let mut columns = self.columns.flex_columns();
+        if !self.fiscal {
+            columns.retain(|column| column.id != "einvoice" && column.spec != "einvoice");
+        }
+        let mut table = FlexTable::new("receivables-invoices-table", columns, rows)
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Invoices and credit notes";
-        table.actions = self.can_add || self.can_receive || self.can_write_off;
+        table.actions = self.can_add
+            || self.can_receive
+            || self.can_write_off
+            || self.documents.iter().any(|d| d.fiscal.start.is_some());
         table.framed = false;
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();

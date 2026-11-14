@@ -192,6 +192,9 @@ impl Document {
                 ));
             }
         }
+        if let Some(start) = d.fiscal.start.as_ref().filter(|_| !historical) {
+            items.push(RecordAction::link("Submit e-invoice", start.clone()));
+        }
         if issued && d.opening.is_none() && matches!(d.kind.as_str(), "invoice" | "credit_note") {
             items.push(RecordAction::local(
                 "printer",
@@ -554,6 +557,9 @@ impl Document {
                         account_html(&self.accounts, id)?,
                     ));
                 }
+                if let Some(einvoice) = self.einvoice(d)? {
+                    items.push(f::fact_html("E-invoice", einvoice));
+                }
                 items.push(f::fact_html(
                     "Issued",
                     actor_at(
@@ -598,6 +604,32 @@ impl Document {
             body: b,
             ..Card::default()
         })
+    }
+
+    /// Where the e-invoice stands, as a link to it, or the button that
+    /// submits one while there is none; nothing when this person can do
+    /// neither.
+    fn einvoice(&self, d: &crate::Document) -> Result<Option<Html>> {
+        let start = d
+            .fiscal
+            .start
+            .as_ref()
+            .filter(|_| !self.balance_pins.is_object());
+        let mut html = match &d.fiscal.document {
+            Some(document) => document.badge(),
+            None if start.is_some() => Html::text("No e-invoice"),
+            None => return Ok(None),
+        };
+        if let Some(start) = start {
+            html.push(&Html::text(" "));
+            html.push(&render(Button {
+                id: "receivables-invoice-einvoice",
+                href: start,
+                body: Html::text("Submit e-invoice"),
+                ..Button::default()
+            })?);
+        }
+        Ok(Some(html))
     }
 
     /// What has been received or credited against an issued invoice.
