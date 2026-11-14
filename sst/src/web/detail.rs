@@ -1186,7 +1186,7 @@ struct ModalView {
 
 #[derive(Template)]
 #[template(
-    source = r#"<span id="sst-return-number" class="mr-2">Return {{ number }}</span><span id="sst-return-status">{{ status|safe }}</span>{% if let Some(amends) = amends %}<span id="sst-return-amends" class="ml-2">{{ amends }}</span>{% endif %}{% if superseded %}<span id="sst-return-superseded" class="ml-2">amended by a later version</span>{% endif %}"#,
+    source = r#"<span id="sst-return-number">Return {{ number }}</span><span id="sst-return-status" class="ml-2">{{ status|safe }}</span>{% if let Some(amends) = amends %}<span id="sst-return-amends" class="ml-2">{{ amends }}</span>{% endif %}{% if superseded %}<span id="sst-return-superseded" class="ml-2">amended by a later version</span>{% endif %}"#,
     ext = "html"
 )]
 struct Subtitle {
