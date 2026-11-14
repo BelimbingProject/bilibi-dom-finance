@@ -119,10 +119,12 @@ impl Index {
         }
         Ok(())
     }
-    /// Recording and sending take both grants.
+    /// Recording it against the invoice's journal entry and sending it take
+    /// all three grants.
     async fn can_start(&self, scope: &Scope) -> Result<bool> {
         Ok(self.pages.allowed(scope, crate::ISSUE).await?
-            && self.pages.allowed(scope, crate::SUBMIT).await?)
+            && self.pages.allowed(scope, crate::SUBMIT).await?
+            && self.pages.allowed(scope, bilibi_finance_ledger::VIEW).await?)
     }
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         let query = DocumentQuery {

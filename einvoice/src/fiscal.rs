@@ -143,9 +143,11 @@ impl FiscalDocuments for Issued {
                 .into_iter()
                 .map(|(record, id, number, status)| standing(record, id, number, status))
                 .collect();
-            // Starting one records it and sends it, so it takes both grants.
+            // Starting one records it against the record's journal entry
+            // and sends it, so it takes all three grants.
             let start = may(client, scope, company_id, ISSUE).await?
-                && may(client, scope, company_id, SUBMIT).await?;
+                && may(client, scope, company_id, SUBMIT).await?
+                && may(client, scope, company_id, bilibi_finance_ledger::VIEW).await?;
             Ok(FiscalStandings {
                 readable: true,
                 documents,
@@ -244,7 +246,7 @@ impl Einvoice {
         // A credit note's e-invoice refers to the e-invoice of its invoice.
         let original = match source.corrects.as_ref().filter(|_| credit_note) {
             Some(corrected) => {
-                newest(client, tenant, company_id, module, &[corrected.clone()])
+                newest(client, tenant, company_id, module, std::slice::from_ref(corrected))
                     .await?
                     .pop()
             }
