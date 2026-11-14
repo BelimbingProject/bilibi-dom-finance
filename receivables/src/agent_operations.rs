@@ -526,7 +526,10 @@ impl ReadHandler for Read {
                         if !input["as_of"].is_null()||["through_entry_number","through_opening_batch_id","through_settlement_number"].iter().any(|key|!input[key].is_null()) {
                             service.document_at(scope,company,id(input,"document_id")?,input).await?
                         } else {
-                            json!(documents::read(client,tenant,company,id(input,"document_id")?).await?)
+                            let mut document = documents::read(client,tenant,company,id(input,"document_id")?).await?;
+                            let asked = [(document.id, document.kind.as_str(), document.status.as_str(), document.opening.is_some())];
+                            document.fiscal = service.fiscal_on(client, scope, company, &asked).await?.0.pop().unwrap_or_default();
+                            json!(document)
                         }
                     },
                     Self::DocumentPage => crate::document_page::page(client, service, scope, company, input).await?,

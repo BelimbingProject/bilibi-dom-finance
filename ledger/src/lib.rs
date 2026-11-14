@@ -76,6 +76,7 @@ pub mod dates;
 mod duties;
 mod entries;
 mod evidence;
+mod fiscal;
 mod groups;
 mod journal_approvals;
 mod journal_list;
@@ -99,6 +100,11 @@ pub use contributions::{
 };
 pub use conversion::OpeningContext;
 pub use evidence::EvidencePage;
+pub use fiscal::{
+    FiscalChoice, FiscalDocuments, FiscalDocumentsDefinition, FiscalFuture, FiscalLine,
+    FiscalParty, FiscalSource, FiscalSourceKind, FiscalSources, FiscalSourcesDefinition,
+    FiscalStanding, FiscalStandings, FiscalStart, FiscalTone, FISCAL_DOCUMENTS, FISCAL_SOURCES,
+};
 pub use money::{MinorUnits, Money, MoneyError};
 pub use opening::{OpeningBalances, OpeningImport, OpeningProgress};
 pub use saved_templates::NewChartTemplate;
@@ -141,6 +147,7 @@ inventory::submit! {
         services: &[Service { id: SERVICE, factory: |services| {
             journal_approvals::bind(services.get(bilibi_workflow::SERVICE)?)?;
             bank_links::bind()?;
+            fiscal::bind()?;
             saved_templates::bind(services.get("base/settings.store")?)?;
             currency::bind(
                 services.get("core/currency.currencies")?,
@@ -1420,6 +1427,49 @@ impl Ledger {
         let client = self.db.get().await.map_err(Error::from)?;
         agent_operations::authorize_on(&**client, scope, company_id, VIEW).await?;
         Ok(bank_links::account_ids(&**client, scope.tenant(), company_id).await?)
+    }
+
+    /// One posted record of `module`, as that module describes it for its
+    /// fiscal document (`FISCAL_SOURCES`), on the connection handed in. The
+    /// module authorizes the person with its own view capability; `None` when
+    /// it has no such posted record, the person may not view it, or the
+    /// module is not mounted.
+    pub async fn fiscal_source_on(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        module: &str,
+        record: &str,
+    ) -> Result<Option<FiscalSource>> {
+        Ok(fiscal::source(client, scope, company_id, module, record).await?)
+    }
+
+    /// The newest posted records a fiscal document can be made for, each
+    /// under the module that posted it, at most `limit` a module.
+    pub async fn fiscal_sources_on(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        limit: i64,
+    ) -> Result<Vec<(&'static str, FiscalChoice)>> {
+        Ok(fiscal::recent(client, scope, company_id, limit).await?)
+    }
+
+    /// Where the fiscal documents of `module`'s records stand
+    /// (`FISCAL_DOCUMENTS`), on the connection handed in, for that module's
+    /// own list and page. The issuing module authorizes the person with its
+    /// own view capability; nothing when it is not mounted.
+    pub async fn fiscal_standing_on(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        module: &str,
+        records: &[String],
+    ) -> Result<FiscalStandings> {
+        Ok(fiscal::standing(client, scope, company_id, module, records).await?)
     }
 
     /// Adds an account (`finance.ledger.accounts.manage`). `retained_earnings`

@@ -8,6 +8,7 @@ mod contributions;
 mod document_page;
 mod documents;
 mod evidence;
+mod fiscal;
 mod opening;
 mod opening_csv;
 mod opening_lifecycle;
@@ -30,6 +31,7 @@ pub use contributions::{
     POST_PAYMENTS, SUBMIT_WRITE_OFFS, VIEW,
 };
 pub use evidence::EvidencePage;
+pub use fiscal::Fiscal;
 pub use orders::SalesOrder;
 pub use pdf::PdfFile;
 pub use records::{
