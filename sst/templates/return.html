@@ -13,7 +13,7 @@
 {% call ui::header(subtitle_html=r.subtitle, title_actions=r.title_actions, actions=r.actions) %}{{ r.title }}{% endcall %}
 <div class="space-y-4">
 {% call ui::card(id="sst-return-facts", inner_class="p-5 sm:p-6", role="region", labelledby="sst-return-facts-heading") %}
-{% call ui::section_heading(id="sst-return-facts-heading", title="Part A", description="Finalising fixes these figures. It does not submit the return or pay the tax.") %}{% endcall %}
+{% call ui::section_heading(id="sst-return-facts-heading", title="Return details", description="Finalising locks these figures. You still file the return and pay in MySST.") %}{% endcall %}
 {{ r.particulars|safe }}
 {{ r.controls|safe }}
 {% endcall %}
@@ -37,7 +37,7 @@
 {% endif %}
 {% if let Some(adjustments) = r.adjustments %}
 {% call ui::card(id="sst-return-adjustments", inner_class="p-0", role="region", labelledby="sst-return-adjustments-heading") %}
-{% call ui::section_heading(id="sst-return-adjustments-heading", title="Adjustments", count=adjustments.count, class="p-5 pb-0", description="Amounts the documents cannot show: approved bad debt relief, a deduction, goods taken for own use, a recovered bad debt. Each adds to its item.", actions=adjustments.add) %}{% endcall %}
+{% call ui::section_heading(id="sst-return-adjustments-heading", title="Adjustments", count=adjustments.count, class="p-5 pb-0", description="Add amounts that are not on invoices or bills, such as bad debt relief or goods taken for own use.", actions=adjustments.add) %}{% endcall %}
 {{ adjustments.table|safe }}
 {% endcall %}
 {% endif %}
@@ -49,7 +49,7 @@
 {% endif %}
 {% if let Some(accounts) = r.accounts %}
 {% call ui::card(id="sst-return-reconciliation", inner_class="p-0", role="region", labelledby="sst-return-reconciliation-heading") %}
-{% call ui::section_heading(id="sst-return-reconciliation-heading", title="Ledger reconciliation", class="p-5 pb-0", description="Each tax account's postings in the period against the tax its documents posted. A difference is an entry no document explains, such as a payment of an earlier return or a manual journal.") %}{% endcall %}
+{% call ui::section_heading(id="sst-return-reconciliation-heading", title="Ledger reconciliation", class="p-5 pb-0", description="Tax in the books compared with tax on invoices and bills. A difference is usually a tax payment or a manual journal.") %}{% endcall %}
 {{ accounts|safe }}
 {% endcall %}
 {% endif %}

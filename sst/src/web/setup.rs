@@ -6,22 +6,19 @@
 //! place on its row. Both histories fold away under the card they record.
 //! Every write is a facade call that re-asks its capability.
 use super::{
-    clear_flash, columns, company, dialog_actions, flash, format as f, nav_button, render, table,
-    time, Pages, DENIED, INDEX,
+    clear_flash, columns, company, dialog_actions, flash, format as f,
+    mapping::{self, ItemChoice},
+    nav_button, render, table, time, Pages, DENIED, INDEX,
 };
-use crate::{
-    Mapping, MappingInput, Registration, RegistrationInput, Sst, SstError, TaxCodeMapping, TaxType,
-    MANAGE_SETTINGS,
-};
+use crate::{Mapping, Registration, RegistrationInput, SstError, TaxCodeMapping, MANAGE_SETTINGS};
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::FieldError;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Alert, Button, ButtonVariant, Cell, Choice, Combobox, CommitStates, CommitStatus,
-    EmptyState, Fact, Facts, Field, FlashMap, FlexRow, Fold, Html, InlineChoice, InlineField,
-    InputKind, ListColumns, StatusKind,
+    params, Alert, Button, ButtonVariant, Cell, Choice, CommitStates, EmptyState, Fact, Facts,
+    Field, FlashMap, FlexRow, Fold, Html, InputKind, ListColumns, StatusKind,
 };
 use std::collections::HashMap;
 
@@ -379,8 +376,13 @@ impl Setup {
                             "Taxable period",
                             "sst-cycle",
                             &format!(
-                                "{} months, the first from {}",
+                                "{} {}, the first from {}",
                                 r.period_months,
+                                if r.period_months == 1 {
+                                    "month"
+                                } else {
+                                    "months"
+                                },
                                 bilibi_finance_ledger::dates::display(r.period_start)
                             ),
                         ),
@@ -499,7 +501,7 @@ impl Setup {
             .kind(InputKind::Number)
             .attr("min", "1")
             .attr("max", "12")
-            .hint("Two, unless the Director General approved another."),
+            .hint("Usually 2. Use another number only if Customs approved it."),
             d.field(
                 "registration",
                 "period_start",
@@ -555,7 +557,7 @@ impl Setup {
             description: if changing {
                 "Saved as a new version. Returns already prepared keep the version they were prepared with."
             } else {
-                "The numbers and the taxable period cycle the company's returns are prepared with."
+                ""
             },
             alert,
             fields,
@@ -603,51 +605,16 @@ impl Setup {
         })
     }
 
-    /// A tax code's item, chosen in place on its row from the items its
-    /// source can report in ("Not reported" too), by someone who manages
+    /// A tax code's item, chosen in place on its row by someone who manages
     /// the setup; read alone by anyone else.
     fn reports_in(&self, code: &TaxCodeMapping) -> Result<Html> {
-        let key = format!("{}-{}", code.source.as_str(), code.id);
-        let current = code.mapping.as_ref().map(|m| m.box_key.clone());
-        let display = match &current {
-            None => f::badge(
-                "Not chosen",
-                bilibi_ui::BadgeKind::Warning,
-                "whitespace-nowrap",
-            )?,
-            Some(None) => Html::text("Not reported"),
-            Some(Some(b)) => box_html(b)?,
-        };
-        let value = match &current {
-            None => String::new(),
-            Some(None) => NOT_REPORTED.to_owned(),
-            Some(Some(b)) => b.clone(),
-        };
-        let label = format!("Reports in, for {}", code.code);
-        let mut field = InlineField::new(format!("sst-map-{key}"), "box", &label, value.clone())
-            .version(0)
-            .status(self.statuses.get(&key));
-        field.id_value = key.clone();
-        field.save_event = "save_mapping".into();
-        if !self.can_manage {
-            field = field.readonly();
+        ItemChoice {
+            source: code.source,
+            tax_code_id: code.id,
+            code: &code.code,
+            current: code.mapping.as_ref().map(|m| m.box_key.as_deref()),
         }
-        let mut options = vec![Choice::new("Not reported", NOT_REPORTED)];
-        options.extend(Sst::mappable_boxes(code.source).into_iter().map(|b| {
-            Choice::new(box_title(b.form_box.key), b.form_box.key)
-                .detail(format!("item {}", b.form_box.item))
-        }));
-        let editor = Combobox::new(format!("sst-map-{key}-input"), "box")
-            .aria_label(&label)
-            .placeholder("Search SST-02 items")
-            .wrapper_class("mb-0")
-            .value(value)
-            .options(options);
-        render(InlineChoice {
-            field,
-            display,
-            editor: render(editor)?,
-        })
+        .render(self.can_manage, &self.statuses)
     }
 
     async fn register(&mut self, scope: &Scope) -> Result<bool> {
@@ -685,14 +652,25 @@ impl Setup {
             Err(SstError::Invalid(errors))
         };
         match result {
-            Ok(r) => {
-                self.flash = Some((
-                    StatusKind::Success,
-                    format!("Registration version {} recorded.", r.version),
-                ));
+            Ok(_) => {
                 self.registering = false;
                 self.registration_alert = None;
                 self.reload(scope).await?;
+                // Point to the next step while a tax code still has no item.
+                let unchosen = self
+                    .tax_codes
+                    .iter()
+                    .flatten()
+                    .any(|code| code.mapping.is_none());
+                self.flash = Some((
+                    StatusKind::Success,
+                    if unchosen {
+                        "SST registration saved. Next, choose an SST-02 item for each tax code below."
+                    } else {
+                        "SST registration saved."
+                    }
+                    .into(),
+                ));
                 self.reset_registration_form();
                 Ok(false)
             }
@@ -718,60 +696,6 @@ impl Setup {
             }
             Err(e) => {
                 self.registration_alert = Some(f::refusal(&e));
-                Ok(false)
-            }
-        }
-    }
-
-    /// One tax code's item saved from its row (`id` is `source-id`); the
-    /// outcome shows on the row.
-    async fn map(&mut self, scope: &Scope, v: &serde_json::Value) -> Result<bool> {
-        let key = v["id"].as_str().ok_or(Error::Invalid)?.to_owned();
-        let (source, tax_code_id) = key
-            .split_once('-')
-            .and_then(|(s, id)| Some((s.to_owned(), id.parse::<i64>().ok()?)))
-            .ok_or(Error::Invalid)?;
-        let submitted = v["value"].as_str().ok_or(Error::Invalid)?.trim().to_owned();
-        if submitted.is_empty() {
-            self.statuses.put(
-                key,
-                CommitStatus::refusal(
-                    "Reports in",
-                    &submitted,
-                    &["choose an item or Not reported"],
-                ),
-            );
-            return Ok(false);
-        }
-        if !self.can_manage {
-            self.statuses.put(key, CommitStatus::Error(DENIED.into()));
-            return Ok(false);
-        }
-        let input = MappingInput {
-            source,
-            tax_code_id,
-            box_key: (submitted != NOT_REPORTED).then_some(submitted.clone()),
-            reason: None,
-        };
-        let result = match company(scope) {
-            Some(c) => self.pages.sst.map_tax_code(scope, c, &input).await,
-            None => Err(SstError::Unauthorized),
-        };
-        match result {
-            Ok(_) => {
-                self.statuses.put(key, CommitStatus::Saved);
-                Ok(true)
-            }
-            Err(SstError::Invalid(errors)) => {
-                let reasons: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
-                self.statuses.put(
-                    key,
-                    CommitStatus::refusal("Reports in", &submitted, &reasons),
-                );
-                Ok(false)
-            }
-            Err(e) => {
-                self.statuses.put(key, CommitStatus::Error(f::refusal(&e)));
                 Ok(false)
             }
         }
@@ -824,9 +748,9 @@ impl Setup {
                 self.registration_alert = None;
                 self.register(scope).await
             }
-            "save_mapping" => {
+            mapping::SAVE_EVENT => {
                 self.can_manage = self.pages.allowed(scope, MANAGE_SETTINGS).await?;
-                self.map(scope, v).await
+                mapping::save(&self.pages, scope, v, &mut self.statuses).await
             }
             _ => Err(Error::Invalid),
         }
@@ -869,10 +793,6 @@ impl LiveState<Scope, Error> for Setup {
     }
 }
 
-/// The value an item editor sends for "Not reported" (a combobox's empty
-/// value means nothing chosen).
-const NOT_REPORTED: &str = "none";
-
 /// "3 changes", the folded mapping history's summary.
 fn changes(n: usize) -> String {
     match n {
@@ -880,44 +800,6 @@ fn changes(n: usize) -> String {
         1 => "1 change".to_owned(),
         n => format!("{n} changes"),
     }
-}
-
-/// An item's name without its number ("Sales tax: Taxable sales at 10%").
-fn box_title(key: &str) -> String {
-    TaxType::ALL
-        .into_iter()
-        .find_map(|tax_type| {
-            Sst::boxes(tax_type)
-                .iter()
-                .find(|b| b.key == key)
-                .map(|b| format!("{}: {}", f::tax_name(tax_type), b.label))
-        })
-        .unwrap_or_else(|| key.to_owned())
-}
-
-/// An item as its row shows it: the name, then its number muted, as the
-/// combobox draws the choice.
-fn box_html(key: &str) -> Result<Html> {
-    let item = TaxType::ALL.into_iter().find_map(|tax_type| {
-        Sst::boxes(tax_type)
-            .iter()
-            .find(|b| b.key == key)
-            .map(|b| b.item)
-    });
-    render(BoxName {
-        name: box_title(key),
-        item: item.map(|i| format!("item {i}")).unwrap_or_default(),
-    })
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"<span>{{ name }}</span>{% if !item.is_empty() %} <span class="italic text-ink-muted">{{ item }}</span>{% endif %}"#,
-    ext = "html"
-)]
-struct BoxName {
-    name: String,
-    item: String,
 }
 
 fn dash(text: &Option<String>) -> &str {

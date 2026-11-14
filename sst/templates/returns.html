@@ -10,7 +10,7 @@
 {% if let Some(unregistered) = unregistered %}{{ unregistered|safe }}{% endif %}
 {% if let Some(periods) = periods %}
 {% call ui::card(id="sst-periods", inner_class="p-0", role="region", labelledby="sst-periods-heading") %}
-{% call ui::section_heading(id="sst-periods-heading", title="Taxable periods", class="p-5 pb-0", description=periods.description) %}{% endcall %}
+{% call ui::section_heading(id="sst-periods-heading", title="Taxable periods", class="p-5 pb-0") %}{% endcall %}
 {{ periods.table|safe }}
 {% if let Some(forbidden) = periods.forbidden %}{{ forbidden|safe }}{% endif %}
 {% endcall %}

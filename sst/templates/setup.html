@@ -19,7 +19,7 @@
 {% if let Some(codes_forbidden) = codes_forbidden %}{{ codes_forbidden|safe }}{% endif %}
 {% if let Some(c) = codes %}
 {% call ui::card(id="sst-mappings", inner_class="p-0", role="region", labelledby="sst-mappings-heading") %}
-{% call ui::section_heading(id="sst-mappings-heading", title="Tax codes and SST-02 items", count=c.count, class="p-5 pb-0", description="A return counts each tax code's documents in its item; a code with tax and no item stops a return finalising.") %}{% endcall %}
+{% call ui::section_heading(id="sst-mappings-heading", title="Tax codes and SST-02 items", count=c.count, class="p-5 pb-0", description="Choose where each tax code is reported on the SST-02 form. A return cannot be finalised while a tax code in use has no item.") %}{% endcall %}
 {{ c.table|safe }}
 {% if let Some(mapping_history) = mapping_history %}<div class="p-5">{{ mapping_history|safe }}</div>{% endif %}
 {% endcall %}
