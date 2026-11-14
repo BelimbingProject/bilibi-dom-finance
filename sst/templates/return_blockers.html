@@ -1,6 +1,6 @@
-{# Bilimbi ReturnLive's "Before it can be finalised" list. #}
-<ul class="mt-2 list-disc pl-5 text-sm">
-{% if let Some(end) = period_end %}<li id="blocker-period">The period ends on {{ end }}; a return is finalised after its period ends.</li>{% endif %}
-{% for u in unmapped %}<li id="blocker-unmapped-{{ u.source }}-{{ u.tax_code_id }}">{{ u.source_name }} tax code {{ u.tax_code }} has tax in the period and no SST-02 item: <a href="{{ setup }}#tax-code-{{ u.source }}-{{ u.tax_code_id }}" class="text-link hover:underline">choose its item</a>.</li>{% endfor %}
+{# The "Before it can be finalised" list; a tax code with no item is chosen here. #}
+<ul class="mt-2 space-y-2 text-sm">
+{% if let Some(from) = finalise_from %}<li id="blocker-period">This return can be finalised from {{ from }}, after its period ends.</li>{% endif %}
+{% for u in unmapped %}<li id="blocker-unmapped-{{ u.source }}-{{ u.tax_code_id }}" class="flex flex-wrap items-center gap-x-3 gap-y-1"><span>Tax code {{ u.tax_code }} has no SST-02 item yet.</span>{% if let Some(choice) = u.choice %}{{ choice|safe }}{% else %}<span class="text-ink-muted">Ask someone who manages SST setup to choose it.</span>{% endif %}</li>{% endfor %}
 {% for r in rates %}<li id="blocker-rate-{{ r.line }}">Tax code {{ r.tax_code }} at {{ r.rate }}% does not fit {{ r.box_name }}.</li>{% endfor %}
 </ul>
