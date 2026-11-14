@@ -376,8 +376,13 @@ impl Setup {
                             "Taxable period",
                             "sst-cycle",
                             &format!(
-                                "{} months, the first from {}",
+                                "{} {}, the first from {}",
                                 r.period_months,
+                                if r.period_months == 1 {
+                                    "month"
+                                } else {
+                                    "months"
+                                },
                                 bilibi_finance_ledger::dates::display(r.period_start)
                             ),
                         ),
