@@ -338,10 +338,98 @@ impl WriteHandler for Issue {
     }
 }
 
+/// Queues an issued document's submission to the authority, as the page's
+/// Submit does. A refusal reads as the page words it.
+struct Submit;
+fn submit_failure(error: EinvoiceError) -> bilibi_agent_api::Error {
+    match error {
+        EinvoiceError::Failed(_)
+        | EinvoiceError::Unauthorized
+        | EinvoiceError::CompanyNotFound
+        | EinvoiceError::DocumentNotFound => failure(error),
+        other => bilibi_agent_api::Error::InvalidInput(BTreeMap::from([(
+            "base".into(),
+            vec![crate::web::submit_refusal(other)],
+        )])),
+    }
+}
+impl WriteHandler for Submit {
+    fn owner(&self) -> &'static str {
+        MODULE
+    }
+    fn preview<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let service = owner()?;
+            let company = id(input, "company_id").map_err(failure)?;
+            let document = id(input, "document_id").map_err(failure)?;
+            let target = service
+                .operation_company(client, scope, company, SUBMIT)
+                .await
+                .map_err(failure)?;
+            if target.archived {
+                return Err(submit_failure(EinvoiceError::CompanyArchived));
+            }
+            let recorded = documents::fetch(client, scope.tenant(), company, document)
+                .await?
+                .ok_or(bilibi_agent_api::Error::NotFound)?;
+            if !crate::clearance::submittable(recorded.status()) {
+                return Err(submit_failure(EinvoiceError::NotSubmittable));
+            }
+            let d = &recorded.document;
+            Ok(json!({"company_id":company,"authority":Einvoice::authority().id(),
+                "summary":"Send this e-invoice to the tax authority. Its answer arrives as a new status.",
+                "changes":{"document_id":d.id,"code_number":d.code_number,"environment":d.environment,
+                    "payable_amount":d.payable_amount,"currency_code":d.currency_code}})
+            .into())
+        })
+    }
+    fn commit<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let service = owner()?;
+            let company = id(input, "company_id").map_err(failure)?;
+            let document = id(input, "document_id").map_err(failure)?;
+            authorize(tx.sql(), scope, company, SUBMIT)
+                .await
+                .map_err(failure)?;
+            bilibi_company::require_writable(tx.sql(), scope, company, true)
+                .await
+                .map_err(|e| {
+                    submit_failure(match e {
+                        WriteError::Archived => EinvoiceError::CompanyArchived,
+                        WriteError::NotFound => EinvoiceError::CompanyNotFound,
+                        WriteError::Access(e) => refusal(e),
+                        _ => EinvoiceError::Failed(Error::Internal),
+                    })
+                })?;
+            let job = service
+                .submit_document_on(tx, scope, company, document)
+                .await
+                .map_err(submit_failure)?;
+            Ok(json!({"record":{"document_id":document,"job_id":job},"path":null}).into())
+        })
+    }
+}
+
 enum Read {
     Get,
     List,
     PrefillParty,
+    /// The posted records an e-invoice can be started for.
+    Sources,
+    /// The draft an e-invoice of one posted record starts from.
+    SourceDraft,
+    /// The code lists a draft's choices come from.
+    Codes,
 }
 impl ReadHandler for Read {
     fn owner(&self) -> &'static str {
@@ -371,6 +459,27 @@ impl ReadHandler for Read {
                         .await
                         .map_err(failure)?)
                 }
+                Self::Sources => service
+                    .sources_on(client, scope, company)
+                    .await
+                    .map_err(failure)?,
+                Self::SourceDraft => {
+                    let text = |key: &str| {
+                        input["source"][key]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty() && text.len() <= 100)
+                            .ok_or_else(|| failure(invalid("source", "names a module and a record")))
+                    };
+                    service
+                        .source_draft_on(client, scope, company, text("module")?, text("record")?)
+                        .await
+                        .map_err(failure)?
+                }
+                Self::Codes => service
+                    .choice_codes_on(client, scope, company)
+                    .await
+                    .map_err(failure)?,
                 Self::Get => json!(service
                     .operation_document(
                         client,
@@ -464,6 +573,15 @@ fn prefill_party() -> Value {
         json!({"company_id":identifier(),"counterparty_id":identifier()}),
     )
 }
+fn company_only() -> Value {
+    object(&["company_id"], json!({"company_id":identifier()}))
+}
+fn source_draft() -> Value {
+    object(
+        &["company_id", "source"],
+        json!({"company_id":identifier(),"source":object(&["module","record"],json!({"module":string(100),"record":string(100)}))}),
+    )
+}
 fn output() -> Value {
     json!({"type":"object","description":"Immutable fiscal document with exact decimal strings and ISO instants, a newest-first summary cursor page, or reviewed immutable issue snapshots. No credentials. Issuance returns a null navigation path."})
 }
@@ -471,9 +589,13 @@ fn output() -> Value {
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/einvoice.operations",Provenance {module:MODULE,source:file!(),line:line!()},&Definitions {
     operations:&[
         Operation {key:"finance.einvoice.document.issue",title:"Issue an e-invoice document",summary:"Record an immutable fiscal document linked to a Receivables or Payables entry. Requires ledger view too. Does not submit or post a second entry.",keywords:&["invoice","self-billed","tax document"],capability:ISSUE,input:issue,output,handler:Handler::SafeWrite(&Issue),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.einvoice.document.submit",title:"Send an e-invoice to the tax authority",summary:"Queue an issued, released, refused or invalid document for submission. The authority's answer arrives later as a new status; read the document to see it.",keywords:&["submit","send","MyInvois"],capability:SUBMIT,input:get,output,handler:Handler::SafeWrite(&Submit),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.einvoice.document.get",title:"Read an e-invoice document",summary:"Read immutable parties, lines and totals, status events, authority identifiers, source links and ledger follow-up flags.",keywords:&[],capability:VIEW,input:get,output,handler:Handler::Read(&Read::Get),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.einvoice.document.list",title:"List e-invoice documents",summary:"Read document summaries newest first with an exclusive before cursor; at most 100 per page, default 50.",keywords:&[],capability:VIEW,input:list,output,handler:Handler::Read(&Read::List),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.einvoice.party.prefill",title:"Prefill an e-invoice party",summary:"Read visible Core company facts for a fiscal draft; restricted facts refuse the prefill.",keywords:&[],capability:VIEW,input:prefill_party,output,handler:Handler::Read(&Read::PrefillParty),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.einvoice.source.list",title:"List records that can get an e-invoice",summary:"Read the newest issued invoices and credit notes with no e-invoice that stands, each as the source to start one from.",keywords:&["invoice","credit note"],capability:VIEW,input:company_only,output,handler:Handler::Read(&Read::Sources),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.einvoice.document.prefill",title:"Prefill an e-invoice from its source",summary:"Read the draft an e-invoice of one issued invoice or credit note starts from: its buyer and lines, with the codes this company last sent for them. Records nothing.",keywords:&["draft","invoice"],capability:VIEW,input:source_draft,output,handler:Handler::Read(&Read::SourceDraft),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.einvoice.code.list",title:"List e-invoice codes",summary:"Read the company's classification, state, country, tax type and registration type codes with their names, for a draft's choices.",keywords:&["classification","tax type","state"],capability:VIEW,input:company_only,output,handler:Handler::Read(&Read::Codes),channels:Channels::Every,step_up:&[]},
     ],
     guides:&[Guide {key:"finance.einvoice",title:"Source-linked fiscal documents",summary:"Review and issue fiscal documents without duplicating source accounting; inspect documents and their clearance status.",keywords:&[],capability:VIEW,body:include_str!("../guide.md")}],
 }) }

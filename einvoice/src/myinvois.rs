@@ -179,6 +179,10 @@ impl Authority for MyInvois {
         ID
     }
 
+    fn name(&self) -> &'static str {
+        "MyInvois"
+    }
+
     fn issuable_document_types(&self) -> Vec<&'static str> {
         let mut types = vec![INVOICE];
         types.extend(NOTES);

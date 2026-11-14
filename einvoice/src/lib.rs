@@ -35,6 +35,7 @@ mod document;
 mod documents;
 mod draft;
 mod evidence;
+mod fiscal;
 mod list;
 pub mod myinvois;
 mod pdf;
@@ -124,6 +125,7 @@ inventory::submit! {
             Service { id: web::PAGES, factory: |services| Ok(Arc::new(
                 bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                     einvoice: services.get(SERVICE)?,
+                    contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
                     directory: services.get(bilibi_finance_ledger::PEOPLE)?,

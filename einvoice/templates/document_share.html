@@ -2,7 +2,7 @@
 {% if let Some(link) = url %}
 <div id="einvoice-document-share" data-hook="ClipboardCopy" data-copy-event="link-copied" class="mt-4 space-y-2">
   <div id="einvoice-document-qr" class="w-40" aria-label="QR code of the validation link">{{ qr }}</div>
-  <a id="einvoice-document-validation-link" href="{{ link }}" target="_blank" rel="noopener noreferrer" class="break-all text-sm text-action hover:underline">{{ link }}</a>
+  <a id="einvoice-document-validation-link" href="{{ link }}" target="_blank" rel="noopener noreferrer" class="text-sm text-action hover:underline">Open the validation page</a>
   <div class="flex items-center gap-2">
     <span data-copy-text="{{ link }}">{% call ui::button(id="einvoice-document-copy-link", button_type="button") %}Copy share link{% endcall %}</span>
     {% if copied == Some(true) %}<span id="einvoice-document-copied" class="text-xs text-ink-muted">Copied</span>{% endif %}

@@ -3,6 +3,7 @@ pub(crate) mod control;
 mod detail;
 mod index;
 mod messages;
+mod new_document;
 
 use crate::{contributions::provenance, Authority, Einvoice, EinvoiceError, MODULE};
 use askama::Template;
@@ -59,15 +60,45 @@ inventory::submit! { Contribution::new(DOWNLOADS, "finance/einvoice.pdf", proven
     access: Access::Capability(crate::VIEW),
 }) }
 
+/// A refused submission as the pages word it, for the contract that an
+/// agent calls too.
+pub(crate) fn submit_refusal(error: EinvoiceError) -> String {
+    messages::refusal("submit", error)
+}
+
 #[derive(Clone)]
 pub(crate) struct Pages {
     pub einvoice: Arc<Einvoice>,
+    pub contracts: Arc<bilibi_agent_api::page::PageContracts>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 
 impl Pages {
+    /// One read contract for the current company; the answer is its `result`.
+    pub(crate) async fn read(
+        &self,
+        scope: &Scope,
+        key: &str,
+        mut input: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use bilibi_agent_api::Error as ContractError;
+        input["company_id"] = serde_json::json!(company(scope)?);
+        let mut answer = self
+            .contracts
+            .read(scope, key, &input)
+            .await
+            .map_err(|error| match error {
+                ContractError::Backend(error) => error,
+                ContractError::Forbidden => Error::Forbidden,
+                ContractError::NotFound => Error::NotFound,
+                ContractError::InvalidInput(_) => Error::Invalid,
+                _ => Error::Internal,
+            })?;
+        Ok(answer["result"].take())
+    }
+
     /// The names of the people a page mentions.
     pub(crate) async fn people(
         &self,
@@ -110,7 +141,7 @@ fn status_badge(status: &str) -> Result<Html> {
         },
         dot: true,
         class: "",
-        body: Html::text(&sentence(status)),
+        body: Html::text(crate::fiscal::status_label(status)),
     })
 }
 fn table(
@@ -204,7 +235,10 @@ impl Page<Scope, Error> for Pages {
                     title: detail.title(),
                 });
             }
-            let mut state = self.state(&request)?;
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            let mut index = index::Index::new(self, request.query, request.framed)?;
+            index.open_requested(scope).await?;
+            let mut state: Box<dyn LiveState<Scope, Error>> = Box::new(index);
             let body = state
                 .update(LiveRequest {
                     scope: request.scope.ok_or(Error::Unauthorized)?,
@@ -220,7 +254,16 @@ impl Page<Scope, Error> for Pages {
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
-        Box::pin(async move { Ok(Some(self.state(&request)?)) })
+        Box::pin(async move {
+            if request.operation != "index" {
+                return Ok(Some(self.state(&request)?));
+            }
+            let mut index = index::Index::new(self, request.query, request.framed)?;
+            index
+                .open_requested(request.scope.ok_or(Error::Unauthorized)?)
+                .await?;
+            Ok(Some(Box::new(index) as Box<dyn LiveState<Scope, Error>>))
+        })
     }
 }
 
@@ -257,8 +300,9 @@ impl Download<Scope, Error> for Downloads {
 // the facade rather than an operation contract (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, PAGES, bilibi_module_registry::Provenance { module: MODULE, source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: PAGES,
-    contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Submitting, refreshing and cancelling documents and generating their PDFs write through the Einvoice facade; no contract yet." },
+    // New e-invoice records the document, then sends it.
+    contracts: &[(new_document::EVENT, new_document::ISSUE), (new_document::EVENT, new_document::SUBMIT)],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Refreshing and cancelling documents, generating their PDFs and Submit to authority on a document's page write through the Einvoice facade; no contract yet." },
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, control::SERVICE, bilibi_module_registry::Provenance { module: MODULE, source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: control::SERVICE,

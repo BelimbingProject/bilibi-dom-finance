@@ -1,11 +1,12 @@
 {% import "components.html" as ui %}
 {% import "lists.html" as lists %}
 {% call ui::page(id="einvoice-documents") %}
-  {% call ui::header(subtitle="Fiscal documents this company issued, newest first.", title_actions=title_actions, actions=actions) %}E-invoices{% endcall %}
+  {% call ui::header(title_actions=title_actions, actions=actions) %}E-invoices{% endcall %}
   {{ toolbar }}
   {% if unavailable %}
     {% call lists::empty_state(e=EmptyState::missing("Documents unavailable", "This company's documents cannot be read with your current access.").id("einvoice-documents-unavailable")) %}{% endcall %}
   {% else %}
     <div class="mt-4">{{ table }}{{ pagination }}</div>
   {% endif %}
+  {{ dialog }}
 {% endcall %}

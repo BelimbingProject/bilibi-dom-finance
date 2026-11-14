@@ -433,6 +433,9 @@ pub trait Authority {
     /// The authority's stable ID, stored on each document and code override.
     fn id(&self) -> &'static str;
 
+    /// The name people know the authority's system by.
+    fn name(&self) -> &'static str;
+
     /// The document types a company may issue.
     fn issuable_document_types(&self) -> Vec<&'static str>;
 

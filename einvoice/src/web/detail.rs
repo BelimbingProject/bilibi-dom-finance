@@ -4,7 +4,7 @@ use crate::{Attention, DocumentView, PartySnapshot, StatusEvent, CANCEL, SUBMIT,
 use bilibi_finance_ledger::Money;
 use bilibi_ui::{
     params, BackLink, BuiltinColumn, Button, ButtonVariant, ConfirmDialog, EmptyState, Fact, Facts,
-    Field, FlashMap, IconButton, InputKind, Modal, RecordLink, StatusKind, NO_FLASH,
+    Field, FlashMap, Fold, IconButton, InputKind, Modal, RecordLink, StatusKind, NO_FLASH,
 };
 use std::collections::HashMap;
 
@@ -218,20 +218,46 @@ fn party_lines(p: &PartySnapshot) -> Vec<String> {
     .filter(|v| !v.is_empty())
     .collect()
 }
-/// An event's facts; the ledger entry it names is a link to its journal.
+/// What an event means to a person; the authority's identifiers and answer
+/// codes wait under a Details fold, and the ledger entry it names is a link
+/// to its journal.
 fn event_detail(e: &StatusEvent) -> Result<Html> {
-    let text = [
-        e.authority_status.as_ref().map(|v| format!("status {v}")),
-        e.submission_uid.as_ref().map(|v| format!("submission {v}")),
+    // A transport code is for the fold, never the sentence.
+    let reason = e
+        .reason
+        .as_deref()
+        .filter(|reason| !reason.starts_with("HTTP "));
+    let text = match (e.event.as_str(), reason) {
+        (_, Some(reason)) => reason.to_owned(),
+        ("submitted", None) => format!("Sent to {}", Einvoice::authority().name()),
+        _ => String::new(),
+    };
+    let identifiers = [
+        e.authority_status
+            .as_ref()
+            .map(|v| format!("Status at the authority: {v}")),
+        e.submission_uid.as_ref().map(|v| format!("Submission {v}")),
         e.document_uuid.as_ref().map(|v| format!("UUID {v}")),
-        e.http_status.map(|v| format!("HTTP {v}")),
-        e.reason.clone(),
+        e.http_status.map(|v| format!("Answer code {v}")),
+        e.reason
+            .as_ref()
+            .filter(|reason| reason.starts_with("HTTP "))
+            .cloned(),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
     let mut html = Html::text(&text);
+    if !identifiers.is_empty() {
+        html.push(&render(Fold {
+            id: &format!("einvoice-event-{}-details", e.sequence),
+            title: "Details",
+            summary: "",
+            open: false,
+            body: Html::text(&identifiers),
+        })?);
+    }
     if let Some(id) = e.ledger_entry_id {
         if !text.is_empty() {
             html.push(&Html::text(" · "));
@@ -252,19 +278,45 @@ fn actor(e: &StatusEvent, people: &bilibi_finance_ledger::People) -> String {
 }
 /// A posting or reversal that needs attention is retried on the
 /// reconciliation page, at this document's row.
-fn attention(flag: Attention, id: i64) -> Result<(&'static str, Html)> {
-    let (key, message) = attention_text(flag);
-    let retry = match flag {
+fn attention(flag: Attention, d: &DocumentView) -> Result<(&'static str, Html)> {
+    let id = d.document.id;
+    let (key, mut message) = attention_text(flag);
+    // Why the last try failed, in the words the posting recorded.
+    let why = |event: &str| {
+        d.events
+            .iter()
+            .rev()
+            .find(|e| e.event == event)
+            .and_then(|e| e.reason.clone())
+    };
+    let mut retry = match flag {
         Attention::Unposted | Attention::PostingFailed => Some((
             format!("/finance/einvoice/reconciliation#einvoice-unposted-{id}"),
-            "Go to posting retry",
+            "Post it again",
         )),
         Attention::Unreversed | Attention::ReversalFailed => Some((
             format!("/finance/einvoice/reconciliation#einvoice-unreversed-{id}"),
-            "Go to reversal retry",
+            "Reverse it again",
         )),
         _ => None,
     };
+    match flag {
+        Attention::PostingFailed => {
+            if let Some(reason) = why("posting_failed") {
+                // Accounts not chosen yet are chosen on the setup page.
+                if reason.starts_with("Choose the ") {
+                    retry = Some(("/finance/einvoice/setup".into(), "Choose accounts"));
+                }
+                message = format!("Valid, but not in the books yet. {reason}");
+            }
+        }
+        Attention::ReversalFailed => {
+            if let Some(reason) = why("reversal_failed") {
+                message = format!("Cancelled, but its journal entry is not reversed yet. {reason}");
+            }
+        }
+        _ => {}
+    }
     let html = match retry {
         Some((href, link)) => render(WithLink {
             text: &message,
@@ -293,21 +345,18 @@ fn attention_text(flag: Attention) -> (&'static str, String) {
                 authority.cancellation_window_hours()
             ),
         ),
-        Attention::Unposted => (
-            "unposted",
-            "Validated but not yet posted to the ledger.".into(),
-        ),
+        Attention::Unposted => ("unposted", "Valid, but not in the books yet.".into()),
         Attention::PostingFailed => (
             "posting_failed",
-            "The ledger posting failed; the last posting event says why.".into(),
+            "Valid, but not in the books yet.".into(),
         ),
         Attention::Unreversed => (
             "unreversed",
-            "Cancelled but its ledger entry has not been reversed.".into(),
+            "Cancelled, but its journal entry is not reversed yet.".into(),
         ),
         Attention::ReversalFailed => (
             "reversal_failed",
-            "The ledger reversal failed; see the last reversal event.".into(),
+            "Cancelled, but its journal entry is not reversed yet.".into(),
         ),
     }
 }
@@ -344,7 +393,7 @@ impl Detail {
                     ("issued", "Issued"),
                     ("buyer", "Buyer"),
                     ("lines", "On lines"),
-                    ("payable", "Payable"),
+                    ("payable", "Total"),
                 ],
             )?,
             events: columns(
@@ -561,7 +610,7 @@ impl Detail {
             view.attention = d
                 .attention
                 .iter()
-                .map(|flag| attention(*flag, d.document.id))
+                .map(|flag| attention(*flag, d))
                 .collect::<Result<_>>()?;
             view.actions = Actions {
                 submit: can_submit
@@ -704,7 +753,7 @@ impl Detail {
                     ("Tax exclusive", d.document.tax_exclusive_amount),
                     ("Tax", d.document.tax_amount),
                     ("Tax inclusive", d.document.tax_inclusive_amount),
-                    ("Payable", d.document.payable_amount),
+                    ("Total", d.document.payable_amount),
                 ]
                 .iter()
                 .map(|(title, amount)| Fact {
