@@ -68,6 +68,7 @@ fn id(input: &Value, field: &str) -> Result<i64> {
 #[derive(Clone, Copy)]
 enum Write {
     Configure,
+    SendInvoice,
     Code(Table, Option<&'static str>),
     Draft(bool),
     Discard,
@@ -80,6 +81,7 @@ impl Write {
     fn capability(self) -> &'static str {
         match self {
             Self::Configure => MANAGE_SETUP,
+            Self::SendInvoice => MANAGE_DOCUMENTS,
             Self::Code(t, _) => {
                 if t.name == CUSTOMERS.name {
                     MANAGE_CUSTOMERS
@@ -108,6 +110,7 @@ impl Write {
             Self::BadDebt(_) => {
                 "Reject the proposed bad-debt journal without posting; retain its evidence and decision."
             }
+            Self::SendInvoice => "Queue the reviewed invoice and PDF for email delivery.",
             Self::Configure => {
                 "Change document defaults or the printed layout; issued invoices keep their original control account."
             }
@@ -172,6 +175,7 @@ impl Write {
             .await?;
         let mut prepared_issue = None;
         let changes = match self {
+            Self::SendInvoice => service.review_mail(client, scope, company, input).await?,
             Self::BadDebt(action) => {
                 service
                     .review_write_off(client, scope, company, action, input)
@@ -331,6 +335,7 @@ impl Write {
         match self {
             Self::BadDebt(_) => json!(format!("{INVOICES}/{}", record["document_id"])),
             Self::Configure => json!(SETTINGS),
+            Self::SendInvoice => json!(format!("{INVOICES}/{}", record["document_id"])),
             Self::Code(table, _) if table.name == CUSTOMERS.name => record_page(CUSTOMER_PAGES),
             Self::Code(..) => json!(SETTINGS),
             Self::Draft(_) | Self::Discard | Self::Issue => record_page(INVOICES),
@@ -388,6 +393,7 @@ impl WriteHandler for Write {
                             .write_off_on(tx, scope, company, action, input)
                             .await?
                     ),
+                    Self::SendInvoice => service.queue_mail_on(tx, scope, company, input).await?,
                     Self::Configure => {
                         json!(service.configure_on(tx, scope, company, input).await?)
                     }
@@ -778,6 +784,9 @@ fn document_summary() -> Value {
         json!({"as_of":{"type":"string","format":"date","description":"The day overdue is counted against: today where the company is. Defaults to today in UTC."}}),
     )
 }
+fn send_invoice() -> Value {
+    schema(&["document_id", "recipient", "subject", "body"], json!({"document_id":identifier(), "recipient":string(254), "subject":string(200), "body":string(16000)}))
+}
 fn aging() -> Value {
     complete_pins(schema(
         &["as_of"],
@@ -821,6 +830,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.draft.create",title:"Create a receivables draft",summary:"Save an unnumbered invoice or credit note with derived amounts. Also requires ledger view and configured setup.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_create,output,handler:Handler::SafeWrite(&Write::Draft(false)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.update",title:"Change a receivables draft",summary:"Change header or atomically replace lines; omit lines to keep snapshots. Also requires ledger view.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_update,output,handler:Handler::SafeWrite(&Write::Draft(true)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.discard",title:"Discard a receivables draft",summary:"Keep the draft and its lines permanently as discarded, without numbering or posting.",keywords:&[],capability:MANAGE_DOCUMENTS,input:document,output,handler:Handler::SafeWrite(&Write::Discard),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.send",title:"Send an invoice",summary:"Queue an email with the issued invoice PDF.",keywords:&[],capability:MANAGE_DOCUMENTS,input:send_invoice,output,handler:Handler::SafeWrite(&Write::SendInvoice),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.issue",title:"Issue an invoice or credit note",summary:"Freeze the saved draft, number it and post its owned entry atomically. Also requires ledger view and entries.post.",keywords:&[],capability:ISSUE,input:document,output,handler:Handler::SafeWrite(&Write::Issue),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.record",title:"Record a receipt",summary:"Number and post a fully allocated payment using each invoice's original control. Also requires ledger view and entries.post.",keywords:&[],capability:POST_PAYMENTS,input:payment_record,output,handler:Handler::SafeWrite(&Write::Payment),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.reverse",title:"Reverse a receipt",summary:"Correct a payment once with a dated owned mirror entry and reason. Also requires ledger entries.post, not ledger view.",keywords:&[],capability:POST_PAYMENTS,input:payment_reverse,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},

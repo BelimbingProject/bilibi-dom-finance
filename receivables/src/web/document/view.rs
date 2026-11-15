@@ -169,6 +169,7 @@ impl Document {
             }
         }
         if issued && !historical && d.kind == "invoice" {
+            if self.can_manage && d.opening.is_none() { items.push(RecordAction::here("mail", "Send invoice", &here, "send")); }
             if owed && self.can_receive {
                 primary = Some(render(Button {
                     id: "receivables-invoice-receive",
@@ -708,6 +709,7 @@ impl Document {
         {
             return Ok(Some(dialog));
         }
+        if let Some(mailing) = &self.mailing { return Ok(Some(self.mail_dialog(mailing)?)); }
         if let Some(editing) = &self.editing {
             return Ok(Some(self.lines_dialog(editing)?));
         }

@@ -23,12 +23,14 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
     params, Button, ButtonVariant, CommitStates, CommitStatus, Form, Html, ListColumns, ModalWidth,
-    StatusKind,
+    StatusKind, Field, InputKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// The draft's lines being edited, and what the last save was refused for.
+struct Mailing { values: HashMap<String, String>, errors: Errors }
+
 struct Editing {
     lines: Lines,
     errors: Errors,
@@ -58,6 +60,7 @@ pub(super) struct Document {
     statuses: CommitStates,
     flash: Flash,
     discarding: bool,
+    mailing: Option<Mailing>,
     /// The reviewed issue that waits for the person's confirmation.
     issuing: Option<Issue>,
     /// Where to go once this event is answered: the page itself after an
@@ -100,6 +103,7 @@ impl Document {
             statuses: CommitStates::default(),
             flash: Flash::default(),
             discarding: false,
+            mailing: None,
             issuing: None,
             redirect: None,
             editing: None,
@@ -168,6 +172,13 @@ impl Document {
     /// A local action, reached through its icon button's link.
     async fn open(&mut self, scope: &Scope, action: &str) -> Result<()> {
         match action {
+            "send" => {
+                if self.can_manage {
+                    if let Some(d) = self.record.as_ref().filter(|d| d.status == "issued" && d.kind == "invoice" && d.opening.is_none()) {
+                        self.mailing = Some(Mailing { values: [("recipient".into(), d.party_email.clone().unwrap_or_default()), ("subject".into(), format!("Invoice {}", d.document_reference.as_deref().unwrap_or(""))), ("body".into(), "Please find your invoice attached.".into())].into(), errors: Errors::default() });
+                    }
+                }
+            }
             "discard" => {
                 self.discarding = self.editable();
             }
@@ -382,6 +393,19 @@ impl Document {
         )
     }
 
+    fn mail_dialog(&self, d: &Mailing) -> Result<Html> {
+        let mut body = Html::EMPTY;
+        for (key, label) in [("recipient", "Email address"), ("subject", "Subject"), ("body", "Message")] {
+            let mut field = Field::in_form("mail", key).id(format!("invoice-mail-{key}")).label(label).value(d.values.get(key).cloned().unwrap_or_default()).errors(d.errors.under(key, label)).required();
+            if key == "body" { field = field.kind(InputKind::Textarea); }
+            body.push(&render(field)?);
+        }
+        let mut actions = render(Button { id: "invoice-mail-cancel", button_type: "button", event: "cancel_dialog", body: Html::text("Cancel"), ..Button::default() })?;
+        actions.push(&render(Button { id: "invoice-mail-send", button_type: "submit", variant: ButtonVariant::Primary, working: "Sending…", body: Html::text("Send invoice"), ..Button::default() })?);
+        let form = render(Form { id: "invoice-mail-form", event: "send_invoice", change: false, class: "mt-4", body, actions: f::actions(actions)? })?;
+        f::modal("invoice-mail-modal", "Send invoice", "The invoice PDF will be attached.", "cancel_dialog", ModalWidth::Narrow, &self.flash, form)
+    }
+
     async fn save_field(&mut self, scope: &Scope, credential: &str, v: &Value) -> Result<()> {
         let key = v["field"].as_str().ok_or(Error::Invalid)?;
         let label = match key {
@@ -482,9 +506,21 @@ impl Document {
                 self.applied_cols.handle(&params::string_values(v));
             }
             "save_draft" => self.save_field(scope, credential, v).await?,
+            "send_invoice" => {
+                if let Some(d) = &mut self.mailing {
+                    d.values.extend(params::form_values(v, "mail"));
+                    let input = json!({"document_id":self.id, "recipient":d.values.get("recipient"), "subject":d.values.get("subject"), "body":d.values.get("body")});
+                    match self.pages.write(scope, credential, "send_invoice", "finance.receivables.document.send", input).await? {
+                        Written::Done(_) => { self.mailing = None; self.flash.set(StatusKind::Success, "Invoice queued for sending."); }
+                        Written::Invalid(fields) => d.errors = Errors(fields),
+                        Written::Refused(message) => self.flash.set(StatusKind::Error, message),
+                    }
+                }
+            }
             "cancel_dialog" => {
                 self.discarding = false;
                 self.issuing = None;
+                self.mailing = None;
             }
             "ask_issue" => {
                 if self.can_issue && self.draft() {
