@@ -339,7 +339,7 @@ impl State {
                 "",
             ),
             _ => (
-                "E-invoice setup",
+                "E-invoice settings",
                 "Credentials, certificate, supplier profile and posting accounts for this company.",
             ),
         };
@@ -1168,7 +1168,7 @@ impl Page<Scope, Error> for Pages {
         match operation {
             "consolidation" => Some("E-invoice consolidation"),
             "reconciliation" => Some("E-invoices not in the books"),
-            "setup" => Some("E-invoice setup"),
+            "setup" => Some("E-invoice settings"),
             _ => None,
         }
     }
