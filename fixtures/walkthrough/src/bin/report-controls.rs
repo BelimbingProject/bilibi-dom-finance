@@ -285,34 +285,39 @@ async fn main() -> Outcome<()> {
     let initial = refresh(approvals.as_mut(), &manager).await?;
     contains(&initial, "exceptions-period-period");
     contains(&initial, "Override");
+    assert!(!initial.contains("id=\"duty-separation-toggle\""));
+    contains(
+        &refresh(book.as_mut(), &manager).await?,
+        "duty-separation-toggle",
+    );
     event(
-        approvals.as_mut(),
+        book.as_mut(),
         &manager,
         json!({"type":"open_dialog","dialog":"separation"}),
     )
     .await?;
     let invalid = event(
-        approvals.as_mut(),
+        book.as_mut(),
         &manager,
         json!({"type":"change_separation","dialog[text]":""}),
     )
     .await?;
     contains(&invalid, "Give a reason of 1 to 500 characters.");
     event(
-        approvals.as_mut(),
+        book.as_mut(),
         &manager,
         json!({"type":"change_separation","dialog[text]":"Only one finance preparer this month"}),
     )
     .await?;
     assert!(!ledger.get_duty_separation(&manager, 1).await?.required);
     event(
-        approvals.as_mut(),
+        book.as_mut(),
         &manager,
         json!({"type":"open_dialog","dialog":"separation"}),
     )
     .await?;
     event(
-        approvals.as_mut(),
+        book.as_mut(),
         &manager,
         json!({"type":"change_separation","dialog[text]":""}),
     )
