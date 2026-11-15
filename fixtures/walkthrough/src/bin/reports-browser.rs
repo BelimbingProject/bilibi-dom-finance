@@ -22,7 +22,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = bilibi_web::App::new(db.clone(), &origin)?;
     bilibi_finance_walkthrough_fixture::without_step_up(&app.services)?;
     install(&db, &app.services).await?;
-    bilibi_finance_walkthrough_fixture::reports::earnings_split(&db, &app.services).await?;
+    let root = std::env::var("FINANCE_UI_STORAGE")?;
+    std::fs::create_dir_all(&root)?;
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    let admin = bilibi_finance_walkthrough_fixture::sign_in(&db, &app.services, 1, 4).await?;
+    bilibi_finance_walkthrough_fixture::attachments::configure_storage(
+        &db,
+        &app.services,
+        &admin,
+        &root,
+    )
+    .await?;
+    if std::env::args().nth(1).as_deref() != Some("serve") {
+        bilibi_finance_walkthrough_fixture::reports::earnings_split(&db, &app.services).await?;
+    }
     let listener = tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?;
     println!("Reports UI listening at {origin}");
     axum::serve(listener, bilibi_web::router(app)).await?;
