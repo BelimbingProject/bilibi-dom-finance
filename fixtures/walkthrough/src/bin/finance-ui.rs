@@ -671,24 +671,70 @@ async fn main() -> Outcome<()> {
         content: b"Date,Details,Ref,Amount,Balance\n2026-10-01,Deposit,DEP1,100.00,1100.00\n2026-10-02,Bank charge,FEE1,-5.00,1095.00\n".to_vec(),
         content_type: Some("text/csv".into()),
     }).await?;
-    let counts = reconciliation
-        .unmatched_statement_counts(&manager, COMPANY)
+    let unmatched_count = |expected: i64| {
+        let reconciliation = &reconciliation;
+        let manager = &manager;
+        async move {
+            let counts = reconciliation
+                .unmatched_statement_counts(manager, COMPANY)
+                .await?;
+            assert_eq!(
+                counts
+                    .iter()
+                    .find(|c| c.bank_account_id == bank.id)
+                    .map(|c| c.count),
+                Some(expected)
+            );
+            let items = reconciliation
+                .unmatched_items(manager, COMPANY, bank.id, None)
+                .await?;
+            assert_eq!(items.lines.len() as i64, expected);
+            Ok::<_, Error>(items)
+        }
+    };
+    let items = unmatched_count(2).await?;
+    let charge_line = items
+        .lines
+        .iter()
+        .find(|l| l.line.reference.as_deref() == Some("FEE1"))
+        .ok_or(Error::Internal)?
+        .line
+        .id;
+    let charge = ledger
+        .post_entry(
+            &manager,
+            COMPANY,
+            &NewEntry {
+                entry_date: date(2026, 10, 2),
+                description: "Bank charge".into(),
+                reference: Some("FEE1".into()),
+                lines: vec![
+                    NewLine::debit(
+                        account("5000")?,
+                        Money::parse("5", installed.book.minor_units)?,
+                    ),
+                    NewLine::credit(
+                        account("1000")?,
+                        Money::parse("5", installed.book.minor_units)?,
+                    ),
+                ],
+            },
+            &PostOptions::default(),
+        )
         .await?;
-    assert_eq!(
-        counts
-            .iter()
-            .find(|c| c.bank_account_id == bank.id)
-            .map(|c| c.count),
-        Some(2)
-    );
-    assert_eq!(
-        reconciliation
-            .unmatched_items(&manager, COMPANY, bank.id, None)
-            .await?
-            .lines
-            .len(),
-        2
-    );
+    let charge_match = reconciliation
+        .record_match(
+            &manager,
+            COMPANY,
+            bank.id,
+            &bilibi_finance_reconciliation::NewMatch {
+                statement_line_ids: vec![charge_line],
+                entry_ids: vec![charge.id],
+                note: None,
+            },
+        )
+        .await?;
+    unmatched_count(1).await?;
     let sst = services.get::<bilibi_finance_sst::Sst>(bilibi_finance_sst::SERVICE)?;
     sst.register(
         &manager,
@@ -719,7 +765,7 @@ async fn main() -> Outcome<()> {
             &json!({"company_id":COMPANY,"as_of":today,"timezone":zone}),
         )
         .await?;
-    assert_eq!(home["result"]["bank_accounts"][0]["count"], 2);
+    assert_eq!(home["result"]["bank_accounts"][0]["count"], 1);
     let periods = home["result"]["due_periods"]
         .as_array()
         .ok_or(Error::Internal)?;
@@ -744,7 +790,16 @@ async fn main() -> Outcome<()> {
     println!(
         "Finance home: the open return for an ended period is due; no running period is listed"
     );
-    println!("Finance home: two unmatched statement lines agree with the reconciliation facade");
+    reconciliation
+        .unmatch(
+            &manager,
+            COMPANY,
+            charge_match.id,
+            Some("Walkthrough unmatch"),
+        )
+        .await?;
+    unmatched_count(2).await?;
+    println!("Finance home: one line left to match after a match agrees with the reconciliation facade; an unmatch counts it again");
     println!("Bank account: /finance/reconciliation/accounts/{}", bank.id);
     historical_payroll(
         &db,

@@ -130,7 +130,7 @@ impl Einvoice {
 /// Refused and invalid documents in the company's current environment that
 /// still need someone: not a consolidated document (it released its sources
 /// and is never sent again) and not followed by a newer document for the same
-/// source record.
+/// source record that stands or is itself counted as failed.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FailedDocuments {
     pub environment: String,
@@ -158,7 +158,16 @@ impl Einvoice {
                    JOIN finance_einvoice_source_links n ON n.tenant_id = l.tenant_id
                      AND n.company_id = l.company_id AND n.source_module = l.source_module
                      AND n.source_record = l.source_record AND n.document_id > l.document_id
-                   WHERE l.tenant_id = $1 AND l.company_id = $2 AND l.document_id = d.id))
+                   CROSS JOIN LATERAL (SELECT e.event, e.recorded_at
+                     FROM finance_einvoice_status_events e
+                     WHERE e.tenant_id = $1 AND e.company_id = $2 AND e.document_id = n.document_id
+                       AND e.event = ANY($4) ORDER BY e.sequence DESC LIMIT 1) latest
+                   WHERE l.tenant_id = $1 AND l.company_id = $2 AND l.document_id = d.id
+                     AND (latest.event IN ('submitted', 'valid', 'rejected', 'consolidated',
+                                           'refused', 'invalid')
+                       OR EXISTS (SELECT 1 FROM finance_einvoice_submissions s
+                         WHERE s.document_id = n.document_id
+                           AND s.recorded_at > latest.recorded_at))))
              SELECT count(*) FILTER (WHERE status = 'refused'),
                count(*) FILTER (WHERE status = 'invalid') FROM failed",
                 &[
