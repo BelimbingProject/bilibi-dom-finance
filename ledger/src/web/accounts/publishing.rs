@@ -214,7 +214,7 @@ impl Publication {
             title: if self.proposal {
                 "Proposed starter chart"
             } else {
-                "Save reusable chart"
+                "Save as starter chart"
             },
             description: &format!(
                 "Saves the chart of {} so other companies can start from it.",

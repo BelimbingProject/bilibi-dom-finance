@@ -284,7 +284,6 @@ pub(crate) fn type_label(account_type: &str) -> &'static str {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct LateRecording {
     pub days: i32,
-    pub status: String,
     pub review: Option<LateReview>,
 }
 #[derive(Clone, Debug, Deserialize)]

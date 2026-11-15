@@ -359,7 +359,7 @@ impl Accounts {
             {
                 for (event, label) in [
                     ("propose_chart", "Starter chart"),
-                    ("publish_chart", "Save reusable chart"),
+                    ("publish_chart", "Save as starter chart"),
                 ] {
                     if event == "publish_chart" && chart.is_empty() {
                         continue;
