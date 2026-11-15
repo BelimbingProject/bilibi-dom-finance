@@ -253,7 +253,10 @@ impl Detail {
                 })?
             }
             (None, Some(_)) => {
-                let mut html = entry_link(Some(a.entry_id), Some(a.entry_number))?;
+                let mut html = render(EntryLink {
+                    id: a.entry_id,
+                    label: &format!("Journal {}", a.entry_number),
+                })?;
                 if let Some(c) = company(s) {
                     if let Ok(entry) = self
                         .pages

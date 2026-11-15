@@ -658,6 +658,22 @@ async fn main() -> Outcome<()> {
     has(&refresh(&mut missing, &manager).await?, "Asset unavailable");
     println!("NX3: page writes, lists, pagination, escaping, charges, corrections, confirmation, permissions and column controls passed");
     if std::env::args().any(|a| a == "serve") {
+        ledger
+            .post_entry(
+                &manager,
+                COMPANY,
+                &NewEntry {
+                    entry_date: date(2026, 1, 17),
+                    description: "Unregistered equipment purchase".into(),
+                    reference: None,
+                    lines: vec![
+                        NewLine::debit(cost.id, money("120")),
+                        NewLine::credit(find("3000"), money("120")),
+                    ],
+                },
+                &PostOptions::default(),
+            )
+            .await?;
         let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4333".into());
         println!("NX3 browser fixture ready at {origin}; asset {}", ids[0]);
         axum::serve(
