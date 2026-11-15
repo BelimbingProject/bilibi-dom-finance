@@ -567,7 +567,11 @@ impl Journals {
             // offered in the column picker rather than shown on every row.
             columns: ListColumns::mount("ledger-journals-table", columns)
                 .map_err(|_| Error::Internal)?
-                .with_record_fields([bilibi_ui::RecordField::new("request", "Request")]),
+                .with_record_fields([bilibi_ui::RecordField::new(
+                    "request",
+                    "Request",
+                    bilibi_ui::RecordFieldType::String,
+                )]),
             flash: Flash::default(),
             loaded_keys: None,
             draft: None,

@@ -213,8 +213,16 @@ impl Accounts {
             columns: ListColumns::mount("ledger-accounts-table", columns())
                 .map_err(|_| Error::Internal)?
                 .with_record_fields([
-                    bilibi_ui::RecordField::new("company", "Company"),
-                    bilibi_ui::RecordField::new("currency", "Currency"),
+                    bilibi_ui::RecordField::new(
+                        "company",
+                        "Company",
+                        bilibi_ui::RecordFieldType::String,
+                    ),
+                    bilibi_ui::RecordField::new(
+                        "currency",
+                        "Currency",
+                        bilibi_ui::RecordFieldType::String,
+                    ),
                 ]),
             compared_columns: ListColumns::mount("ledger-accounts-all-table", compared)
                 .map_err(|_| Error::Internal)?,
