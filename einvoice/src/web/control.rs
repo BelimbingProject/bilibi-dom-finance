@@ -273,10 +273,19 @@ impl State {
                 self.load(scope).await?;
             }
             ("setup", super::posting_accounts::SAVE) => {
-                let allowed = self.allowed(scope, SETTINGS).await?;
-                self.posting
-                    .save(&self.pages.einvoice, scope, company, allowed, value)
-                    .await?;
+                // Without the grant the page shows no setup to put a refusal
+                // beside, so the page itself says it.
+                if self.allowed(scope, SETTINGS).await? {
+                    self.posting
+                        .save(&self.pages.einvoice, scope, company, value)
+                        .await?;
+                } else {
+                    self.flash = Some((
+                        StatusKind::Error,
+                        "Nothing was changed: you do not have permission to manage e-invoice settings."
+                            .into(),
+                    ));
+                }
                 self.load(scope).await?;
             }
             ("setup", "test_connection") => {

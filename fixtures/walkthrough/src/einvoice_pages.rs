@@ -623,7 +623,7 @@ pub async fn run() -> Outcome<()> {
     grants.set_direct(&admin, 1, SETTINGS, Some(false)).await?;
     has(
         &event(&mut setup, &manager, choose("4000")).await?,
-        "You do not have permission to do that.",
+        "Nothing was changed: you do not have permission to manage e-invoice settings.",
     );
     has(
         &event(&mut setup, &manager, json!({"type":"test_connection"})).await?,

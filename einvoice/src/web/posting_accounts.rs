@@ -21,17 +21,19 @@ const DENIED: &str = "You do not have permission to do that.";
 /// What the section holds between events.
 #[derive(Default)]
 pub(super) struct PostingAccounts {
-    /// The accounts that take postings; empty when they cannot be read.
+    /// The accounts that take postings.
     accounts: Vec<Account>,
+    /// Whether the chart could be read; when not, a chosen code is shown as
+    /// it is instead of being called unknown.
+    readable: bool,
     statuses: CommitStates,
 }
 
 impl PostingAccounts {
     pub(super) async fn load(&mut self, einvoice: &Einvoice, scope: &Scope, company: i64) {
-        self.accounts = einvoice
-            .posting_choices(scope, company)
-            .await
-            .unwrap_or_default();
+        let chart = einvoice.posting_choices(scope, company).await;
+        self.readable = chart.is_ok();
+        self.accounts = chart.unwrap_or_default();
     }
 
     /// One account chosen in place: saved, or refused beside its field.
@@ -40,16 +42,13 @@ impl PostingAccounts {
         einvoice: &Einvoice,
         scope: &Scope,
         company: i64,
-        allowed: bool,
         value: &Value,
     ) -> Result<()> {
         let field = value["field"].as_str().ok_or(Error::Invalid)?;
         let account = PostingAccount::of_field(field).ok_or(Error::Invalid)?;
         let submitted = value["value"].as_str().ok_or(Error::Invalid)?.trim();
         self.statuses.clear_saved();
-        let status = if !allowed {
-            CommitStatus::Error(DENIED.into())
-        } else if submitted.is_empty() {
+        let status = if submitted.is_empty() {
             CommitStatus::refusal(account.label(), submitted, &["must be chosen"])
         } else {
             match einvoice
@@ -93,6 +92,7 @@ impl PostingAccounts {
                 })
                 .map_err(|_| Error::Internal)?,
                 None if code.is_empty() => Html::text("Choose an account"),
+                None if !self.readable => Html::text(code),
                 // A code that no longer names an account that takes postings.
                 None => Html::text(&format!("{code} · not an active account")),
             };
