@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = bilibi_web::App::new(db.clone(), &origin)?;
     bilibi_finance_walkthrough_fixture::without_step_up(&app.services)?;
     install(&db, &app.services).await?;
+    bilibi_finance_walkthrough_fixture::reports::earnings_split(&db, &app.services).await?;
     let listener = tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?;
     println!("Reports UI listening at {origin}");
     axum::serve(listener, bilibi_web::router(app)).await?;
