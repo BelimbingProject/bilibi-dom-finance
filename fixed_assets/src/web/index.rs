@@ -236,48 +236,49 @@ impl Index {
             },
             Kind::Categories => self.categories.new = Some(Draft::default()),
             Kind::Runs => {
-                let c = company(s).ok_or(Error::Invalid)?;
-                if let Ok(runs) = self
-                    .pages
-                    .read::<Vec<Run>>(
-                        s,
-                        "finance.fixed_assets.run.list",
-                        serde_json::json!({"company_id": c}),
-                        "records",
-                    )
-                    .await
-                {
-                    self.run_list = runs;
-                }
                 let today = self.clock(s).await?.today;
-                let period = if let Some(last) = self.run_list.iter().map(|r| r.period).max() {
-                    last.checked_add(1.month())
-                        .unwrap_or(today.first_of_month())
-                } else {
-                    self.pages
-                        .read::<RegisterReport>(
+                let mut period = None;
+                if let Some(c) = company(s) {
+                    if let Ok(runs) = self
+                        .pages
+                        .read::<Vec<Run>>(
                             s,
-                            "finance.fixed_assets.register.get",
-                            serde_json::json!({"company_id": c, "as_of": today.to_string()}),
-                            "report",
+                            "finance.fixed_assets.run.list",
+                            serde_json::json!({"company_id": c}),
+                            "records",
                         )
                         .await
-                        .ok()
-                        .and_then(|report| {
-                            report
-                                .rows
-                                .iter()
-                                .filter(|r| !r.voided && !r.disposed)
-                                .map(|r| {
-                                    r.asset
-                                        .opening_date
-                                        .unwrap_or(r.asset.in_service_date)
-                                        .first_of_month()
-                                })
-                                .min()
-                        })
-                        .unwrap_or(today.first_of_month())
-                };
+                    {
+                        self.run_list = runs;
+                    }
+                    period = match self.run_list.iter().map(|r| r.period).max() {
+                        Some(last) => last.checked_add(1.month()).ok(),
+                        None => self
+                            .pages
+                            .read::<RegisterReport>(
+                                s,
+                                "finance.fixed_assets.register.get",
+                                serde_json::json!({"company_id": c, "as_of": today.to_string()}),
+                                "report",
+                            )
+                            .await
+                            .ok()
+                            .and_then(|report| {
+                                report
+                                    .rows
+                                    .iter()
+                                    .filter(|r| !r.voided && !r.disposed)
+                                    .map(|r| {
+                                        r.asset
+                                            .opening_date
+                                            .unwrap_or(r.asset.in_service_date)
+                                            .first_of_month()
+                                    })
+                                    .min()
+                            }),
+                    };
+                }
+                let period = period.unwrap_or(today.first_of_month());
                 let mut draft = Draft::default();
                 draft.values.insert("period".into(), period.to_string());
                 self.runs.new = Some(draft);
@@ -425,7 +426,9 @@ impl Index {
         if self.kind != Kind::Register || !self.pages.allowed(s, ACQUIRE).await? {
             return Ok(Html::EMPTY);
         }
-        let c = company(s).ok_or(Error::Invalid)?;
+        let Some(c) = company(s) else {
+            return Ok(Html::EMPTY);
+        };
         let Ok(categories): std::result::Result<Vec<Category>, _> = self
             .pages
             .read(
