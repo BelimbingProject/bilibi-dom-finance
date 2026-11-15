@@ -173,7 +173,10 @@ impl Handler for SendInvoice {
             match self.run(execution, args).await {
                 Ok(()) => Outcome::Completed,
                 Err(ReceivableError::Unauthorized) => Outcome::Cancel("actor_refused"),
-                Err(_) => Outcome::Retry("invoice_mail_failed"),
+                Err(error) => {
+                    eprintln!("Invoice email delivery failed: {error}");
+                    Outcome::Retry("invoice_mail_failed")
+                }
             }
         })
     }

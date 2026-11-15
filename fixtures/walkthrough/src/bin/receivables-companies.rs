@@ -62,6 +62,42 @@ async fn main() -> Outcome<()> {
     let installed = install(&db, &app.services).await?;
     let manager = sign_in(&db, &app.services, 1, 1).await?;
     let admin = sign_in(&db, &app.services, 1, 4).await?;
+    if let (Ok(binary), Ok(root)) = (
+        std::env::var("BILIBI_PDF_CHROMIUM"),
+        std::env::var("BILIBI_ATTACHMENTS_DEMO_ROOT"),
+    ) {
+        std::fs::create_dir_all(&root)?;
+        bilibi_finance_walkthrough_fixture::attachments::configure_storage(
+            &db,
+            &app.services,
+            &admin,
+            &root,
+        )
+        .await?;
+        let boundary = app
+            .services
+            .get::<MutationBoundary>("base/database.mutations")?;
+        let settings = app
+            .services
+            .get::<bilibi_settings::Settings>("base/settings.store")?;
+        let mut client = db.get().await?;
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.mutation_context("walkthrough.pdf_settings"),
+            )
+            .await?;
+        settings
+            .put(
+                &mut tx,
+                &admin,
+                bilibi_settings::Target::Global,
+                "pdf.chromium.binary",
+                json!(binary),
+            )
+            .await?;
+        tx.commit().await?;
+    }
     let ar = app
         .services
         .get::<Receivables>(bilibi_finance_receivables::SERVICE)?;
@@ -352,6 +388,11 @@ async fn main() -> Outcome<()> {
         .get(0);
     assert_eq!(count, 0, "rolled-back send must leave no email or job");
     println!("PASS: invoice send reviews the recipient and rolls back with its plan");
+    if std::env::var_os("BILIBI_PDF_CHROMIUM").is_some() {
+        let pdf = ar.print_document(&manager, 1, draft.id).await?;
+        assert!(pdf.bytes.starts_with(b"%PDF-"));
+        println!("PASS: the issued invoice renders as a PDF");
+    }
     let frozen = ar.get_document(&manager, 1, draft.id).await?;
     assert_eq!(frozen.party_line1.as_deref(), Some(long_line.as_str()));
     println!(
