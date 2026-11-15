@@ -448,6 +448,7 @@ impl Payments {
             self.columns.flex_columns(),
             rows,
         )
+        .phone_columns(&["customer", "amount", "status"])
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Receipts";
         table.actions = self.can_record;

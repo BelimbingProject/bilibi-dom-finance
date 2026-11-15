@@ -64,7 +64,8 @@ impl Vendors {
         {
             rows.push(self.row(s, v, &accounts, &taxes).await?);
         }
-        let mut table = FlexTable::new("payables-vendors-table", self.columns.flex_columns(), rows);
+        let mut table = FlexTable::new("payables-vendors-table", self.columns.flex_columns(), rows)
+            .phone_columns(&["company", "owed", "overdue"]);
         table.caption = "Suppliers";
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();

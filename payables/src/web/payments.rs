@@ -254,7 +254,8 @@ impl Payments {
                 rows.push(row);
             }
             let mut table =
-                FlexTable::new("payables-payments-table", self.columns.flex_columns(), rows);
+                FlexTable::new("payables-payments-table", self.columns.flex_columns(), rows)
+                    .phone_columns(&["party", "amount", "status"]);
             table.event = "payments_grid";
             table.caption = "Payments";
             table.framed = false;

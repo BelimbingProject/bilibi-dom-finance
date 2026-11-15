@@ -607,6 +607,7 @@ impl Documents {
             columns.retain(|column| column.id != "einvoice" && column.spec != "einvoice");
         }
         let mut table = FlexTable::new("receivables-invoices-table", columns, rows)
+            .phone_columns(&["customer", "outstanding", "status"])
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Invoices and credit notes";
         table.actions = self.can_add
