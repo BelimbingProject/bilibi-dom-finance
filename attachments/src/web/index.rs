@@ -156,7 +156,11 @@ impl Index {
             // in the column picker.
             columns: ListColumns::mount("attachments", attachment_columns())
                 .map_err(|_| Error::Internal)?
-                .with_record_fields([RecordField::new("sha256", "SHA-256")]),
+                .with_record_fields([RecordField::new(
+                    "sha256",
+                    "SHA-256",
+                    bilibi_ui::RecordFieldType::String,
+                )]),
             change_columns: ListColumns::mount("attachments-retention-changes", change_columns())
                 .map_err(|_| Error::Internal)?,
             shown: Vec::new(),

@@ -105,7 +105,11 @@ impl Index {
             // waits in the picker.
             columns: ListColumns::mount("einvoice-documents", columns)
                 .map_err(|_| Error::Internal)?
-                .with_record_fields([bilibi_ui::RecordField::new("environment", "Environment")]),
+                .with_record_fields([bilibi_ui::RecordField::new(
+                    "environment",
+                    "Environment",
+                    bilibi_ui::RecordFieldType::String,
+                )]),
             documents: None,
             framed,
             requested: FiscalStart::read(query),

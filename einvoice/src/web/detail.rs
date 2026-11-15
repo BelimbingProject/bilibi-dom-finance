@@ -385,7 +385,11 @@ impl Detail {
                     ("tax", "Tax"),
                 ],
             )?
-            .with_record_fields([bilibi_ui::RecordField::new("unit", "Unit")]),
+            .with_record_fields([bilibi_ui::RecordField::new(
+                "unit",
+                "Unit",
+                bilibi_ui::RecordFieldType::String,
+            )]),
             sources: columns(
                 "einvoice-sources",
                 &[
