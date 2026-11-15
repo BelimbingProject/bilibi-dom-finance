@@ -4,7 +4,7 @@
 {% import "components.html" as ui %}
 {% import "lists.html" as lists %}
 {% call ui::page(id="payables-aged") %}
-{% call ui::header(subtitle="What you owe suppliers, and how late it is.", title_actions=title_actions) %}Aged payables{% endcall %}
+{% call ui::header(subtitle="What you owe suppliers, and how late it is.", title_actions=title_actions) %}Aging{% endcall %}
 {% call lists::filter_toolbar(toolbar=toolbar) %}{% endcall %}
 {% call ui::stack(parts=cards, wide=true) %}{% endcall %}
 {% endcall %}

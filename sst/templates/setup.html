@@ -5,7 +5,7 @@
 {% import "dialog.html" as dialog %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="sst-setup") %}
-{% call ui::header(subtitle="The company's Sales and Service Tax registration and which SST-02 item each tax code reports in.", title_actions=title_actions, actions=actions) %}SST setup{% endcall %}
+{% call ui::header(subtitle="The company's Sales and Service Tax registration and which SST-02 item each tax code reports in.", title_actions=title_actions, actions=actions) %}SST settings{% endcall %}
 {% if let Some(forbidden) = forbidden %}{{ forbidden|safe }}{% endif %}
 {% if let Some(r) = registration %}
 {% call ui::card(id="sst-registration", inner_class="p-5 sm:p-6", role="region", labelledby="sst-registration-heading") %}
