@@ -413,6 +413,69 @@ async fn main() -> Outcome<()> {
         .get(0);
     assert_eq!(count, 0, "rolled-back send must leave no email or job");
     println!("PASS: invoice send reviews the recipient and rolls back with its plan");
+    // Sales workflow (staff@example.test, Company 001 only) prepares drafts but
+    // never issues, so it is refused sending the issued invoice outside the company.
+    raw.batch_execute(
+        "INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(7,1,'person_7','Sam Sales','human','staff@example.test') ON CONFLICT DO NOTHING;
+         INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(7,1,7,1,'Sales') ON CONFLICT DO NOTHING;
+         UPDATE users SET person_id=7 WHERE tenant_id=1 AND id=3 AND person_id IS NULL;
+         INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=3 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+         SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));
+         SELECT setval(pg_get_serial_sequence('person_affiliations','id'),(SELECT max(id) FROM person_affiliations))",
+    )
+    .await?;
+    let roles: Vec<i64> = raw
+        .query(
+            "SELECT role_id FROM principal_roles WHERE tenant_id=1 AND user_id=3",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    for role in roles {
+        grants.assign_role(&admin, 3, role, false).await?;
+    }
+    let sales_role: i64 = raw
+        .query_one(
+            "SELECT id FROM roles WHERE tenant_id=1 AND code='sales_workflow'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let mut tx = mutations
+        .begin(&mut raw, admin.mutation_context("walkthrough.sales_role"))
+        .await?;
+    grants
+        .assign_role_with_in(
+            &mut tx,
+            &admin,
+            3,
+            sales_role,
+            true,
+            &bilibi_authz::grants::Assignment {
+                company_id: Some(1),
+                purpose: "Sales team".into(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    tx.commit().await?;
+    let sales = sign_in(&db, &app.services, 1, 3).await?;
+    assert_eq!(ar.get_document(&sales, 1, draft.id).await?.status, "issued");
+    let mut tx = mutations
+        .begin(&mut raw, sales.mutation_context("walkthrough.sales_send"))
+        .await?;
+    assert!(matches!(
+        send.preview(tx.sql(), &sales, &mail).await,
+        Err(bilibi_agent_api::Error::Forbidden)
+    ));
+    assert!(matches!(
+        send.commit(&mut tx, &sales, &mail).await,
+        Err(bilibi_agent_api::Error::Forbidden)
+    ));
+    tx.rollback().await?;
+    println!("PASS: sales workflow reads the issued invoice but its send is refused");
     let key = "finance.receivables.statement.send";
     let statement = handler(&registry, key);
     let input = json!({"company_id":1,"customer_id":customer.id,"as_of":"2026-11-15","recipient":"finance@orchid.example.test","subject":"Your statement","body":"Please see the attached statement."});
