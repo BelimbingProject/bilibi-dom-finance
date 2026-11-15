@@ -374,7 +374,8 @@ impl Bills {
                 rows.push(row);
             }
             let mut table =
-                FlexTable::new("payables-bills-table", self.columns.flex_columns(), rows);
+                FlexTable::new("payables-bills-table", self.columns.flex_columns(), rows)
+                    .phone_columns(&["party", "outstanding", "status"]);
             table.actions = self.can_create || self.can_approve || self.can_match || self.can_pay;
             table.event = "bills_grid";
             table.caption = "Bills";

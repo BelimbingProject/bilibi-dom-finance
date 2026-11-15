@@ -1013,7 +1013,8 @@ impl Journals {
             rows.push(row);
         }
         let actions = rows.iter().any(|row| !row.actions.is_empty());
-        let mut table = FlexTable::new("ledger-journals-table", self.columns.flex_columns(), rows);
+        let mut table = FlexTable::new("ledger-journals-table", self.columns.flex_columns(), rows)
+            .phone_columns(&["number", "description", "amount", "status"]);
         table.actions = actions;
         table.caption = "Journals";
         table.framed = false;

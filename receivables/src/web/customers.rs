@@ -353,6 +353,7 @@ impl Customers {
             self.columns.flex_columns(),
             flex_rows,
         )
+        .phone_columns(&["name", "owed", "overdue"])
         .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Customers";
         table.actions = self.actions.any();
