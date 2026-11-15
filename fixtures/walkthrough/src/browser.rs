@@ -237,15 +237,14 @@ async fn prove_invoice_einvoice(
         )
         .await?["result"]
         .clone();
-    let Some(invoice) = listed["documents"]
+    // The fixture issues invoices before any e-invoice exists, so one must
+    // offer the start.
+    let invoice = listed["documents"]
         .as_array()
         .into_iter()
         .flatten()
         .find(|d| d["fiscal"]["start"].is_string())
-    else {
-        println!("NU1: no issued invoice without an e-invoice; the invoice proof is skipped");
-        return Ok(());
-    };
+        .ok_or("no issued invoice offers New e-invoice")?;
     assert_eq!(listed["fiscal_documents"], json!(true));
     let id = invoice["id"].as_i64().ok_or("invoice id")?;
     let number = invoice["document_reference"]

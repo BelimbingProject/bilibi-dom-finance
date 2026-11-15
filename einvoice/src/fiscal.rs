@@ -179,6 +179,11 @@ pub struct SourceRecord {
 /// More source links than this are not named one by one (a consolidated
 /// document covers a month of them).
 pub(crate) const NAMED_SOURCES: usize = 5;
+/// How many records of a module "+ E-invoice" looks among: the readers' own
+/// cap.
+const SOURCES_READ: i64 = 500;
+/// How many records of a module "+ E-invoice" offers.
+const SOURCES_SHOWN: usize = 100;
 
 impl Einvoice {
     /// The records a document's source links name (`finance.einvoice.view`),
@@ -219,7 +224,9 @@ impl Einvoice {
 
     /// The posted records an e-invoice can be started for
     /// (`finance.einvoice.view`), newest first: those with no e-invoice, or
-    /// whose e-invoice no longer stands.
+    /// whose e-invoice no longer stands, at most `SOURCES_SHOWN` a module,
+    /// looked for among its `SOURCES_READ` newest; `complete` is false when a
+    /// module may have older records than were read.
     pub(crate) async fn sources_on(
         &self,
         client: &dyn OperationClient,
@@ -231,10 +238,11 @@ impl Einvoice {
             .map_err(crate::refusal)?;
         let choices = self
             .ledger
-            .fiscal_sources_on(client, scope, company_id, 100)
+            .fiscal_sources_on(client, scope, company_id, SOURCES_READ)
             .await
             .map_err(ledger_error)?;
         let mut open = Vec::new();
+        let mut complete = true;
         let mut modules: Vec<&str> = choices.iter().map(|(module, _)| *module).collect();
         modules.dedup();
         for module in modules {
@@ -243,12 +251,15 @@ impl Einvoice {
                 .filter(|(owner, _)| *owner == module)
                 .map(|(_, choice)| choice.record.clone())
                 .collect();
+            complete &= records.len() < SOURCES_READ as usize;
             let taken = newest(client, scope.tenant(), company_id, module, &records).await?;
+            let mut shown = 0;
             for (_, choice) in choices.iter().filter(|(owner, _)| *owner == module) {
                 let stands = taken
                     .iter()
                     .any(|(record, _, _, status)| *record == choice.record && !replaceable(status));
-                if !stands {
+                if !stands && shown < SOURCES_SHOWN {
+                    shown += 1;
                     open.push(json!({
                         "module": module, "record": choice.record, "number": choice.number,
                         "party_name": choice.party_name, "issue_date": choice.issue_date,
@@ -256,7 +267,7 @@ impl Einvoice {
                 }
             }
         }
-        Ok(json!({ "records": open }))
+        Ok(json!({ "records": open, "complete": complete }))
     }
 
     /// The draft an e-invoice of one posted record starts from
@@ -336,8 +347,11 @@ impl Einvoice {
                 let tax_type = authority
                     .tax_type_for(line.tax_rate)
                     .map(str::to_owned)
-                    .or_else(|| memory.map(|row| row.get::<_, String>(2)))
-                    .filter(|_| taxed || authority.tax_type_for(line.tax_rate).is_some());
+                    .or_else(|| {
+                        memory
+                            .map(|row| row.get::<_, String>(2))
+                            .filter(|code| !(taxed && authority.untaxed(code)))
+                    });
                 json!({
                     "description": line.description,
                     "quantity": line.quantity.normalize().to_string(),

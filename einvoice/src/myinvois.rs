@@ -279,6 +279,14 @@ impl Authority for MyInvois {
         rate.is_none_or(|rate| rate.is_zero()).then_some(UNTAXED[0])
     }
 
+    fn untaxed(&self, tax_type: &str) -> bool {
+        UNTAXED.contains(&tax_type)
+    }
+
+    fn exempt(&self, tax_type: &str) -> bool {
+        tax_type == EXEMPT
+    }
+
     fn consolidation_last_day(&self, month: Date) -> Date {
         last_of_month_plus_one(month)
             .checked_add(jiff::Span::new().days(CONSOLIDATION_DAYS - 1))

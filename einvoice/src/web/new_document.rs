@@ -8,6 +8,7 @@
 //! `finance.einvoice.document.issue` and sends it with
 //! `finance.einvoice.document.submit`, the contracts an agent calls.
 use super::{company, render, Pages, ADDRESS, PAGES};
+use crate::{Authority, Einvoice};
 use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_database::{Error, Result};
 use bilibi_finance_ledger::{dates, Money};
@@ -54,6 +55,7 @@ struct Line {
     detail: String,
     classification: String,
     tax_type: String,
+    exemption_reason: String,
 }
 
 /// What the dialog holds between events.
@@ -110,6 +112,12 @@ fn without_nulls(value: &mut Value) {
     }
 }
 
+/// The line number and field of a refusal at `lines.N.field`.
+fn line_field(path: &str) -> Option<(usize, &str)> {
+    let (n, field) = path.strip_prefix("lines.")?.split_once('.')?;
+    Some((n.parse().ok()?, field))
+}
+
 fn key(module: &str, record: &str) -> String {
     format!("{module}|{record}")
 }
@@ -137,9 +145,11 @@ impl NewDocument {
                     .collect();
                 if dialog.choices.is_empty() {
                     dialog.refused = true;
-                    dialog.notice = Some(
-                        "Every issued invoice and credit note already has an e-invoice.".into(),
-                    );
+                    dialog.notice = Some(if answer["complete"] == json!(false) {
+                        "The newest issued invoices and credit notes already have an e-invoice. Start an older one from its own invoice page.".into()
+                    } else {
+                        "Every issued invoice and credit note already has an e-invoice.".into()
+                    });
                 }
             }
             Err(error) => dialog.refuse(error)?,
@@ -263,6 +273,7 @@ impl NewDocument {
                     ),
                     classification: text(&line["classification_code"]),
                     tax_type: text(&line["tax_type"]),
+                    exemption_reason: text(&line["tax_exemption_reason"]),
                 }
             })
             .collect();
@@ -340,6 +351,9 @@ impl NewDocument {
             if let Some(code) = field(&format!("tax_type_{n}")) {
                 line.tax_type = code;
             }
+            if let Some(reason) = field(&format!("tax_exemption_reason_{n}")) {
+                line.exemption_reason = reason;
+            }
         }
     }
 
@@ -371,9 +385,16 @@ impl NewDocument {
                 _ => {}
             }
         }
+        let authority = Einvoice::authority();
         for (n, line) in self.lines.iter().enumerate() {
             input["lines"][n]["classification_code"] = json!(line.classification.trim());
             input["lines"][n]["tax_type"] = json!(line.tax_type.trim());
+            input["lines"][n]["tax_exemption_reason"] = match line.exemption_reason.trim() {
+                reason if authority.exempt(line.tax_type.trim()) && !reason.is_empty() => {
+                    json!(reason)
+                }
+                _ => Value::Null,
+            };
         }
         if input["buyer"]["name"].is_null() {
             input["buyer"]["name"] = json!("");
@@ -483,11 +504,11 @@ impl NewDocument {
                     .filter(|leaf| BUYER.iter().any(|(key, _, _)| key == leaf))
                     .map(str::to_owned)
                     .or_else(|| {
-                        let mut parts = p.strip_prefix("lines.")?.splitn(2, '.');
-                        let n = parts.next()?.parse::<usize>().ok()?;
-                        match parts.next()? {
+                        let (n, field) = line_field(p)?;
+                        match field {
                             "classification_code" => Some(format!("classification_{n}")),
                             "tax_type" | "tax_rate" => Some(format!("tax_type_{n}")),
+                            "tax_exemption_reason" => Some(format!("tax_exemption_reason_{n}")),
                             _ => None,
                         }
                     }),
@@ -518,7 +539,24 @@ impl NewDocument {
                     }
                     "currency_code" => format!("The currency {message}."),
                     "buyer.name" => format!("The customer name {message}."),
-                    _ => format!("Line details: {message}."),
+                    p => match line_field(p) {
+                        Some((n, field)) => format!(
+                            "Line {}: the {} {message}.",
+                            n + 1,
+                            match field {
+                                "description" => "description",
+                                "quantity" => "quantity",
+                                "unit_price" => "unit price",
+                                "unit_code" => "unit",
+                                "origin_country_code" => "country of origin",
+                                "tariff_code" => "tariff code",
+                                "discount_amount" => "discount",
+                                "charge_amount" => "charge",
+                                _ => "line",
+                            }
+                        ),
+                        None => format!("The e-invoice {message}."),
+                    },
                 }),
             }
         }
@@ -689,6 +727,20 @@ impl NewDocument {
                         ..Attrs::default()
                     }),
                 )?);
+                if Einvoice::authority().exempt(line.tax_type.trim()) {
+                    fields.push(&render(
+                        Field::in_form(FORM, &format!("tax_exemption_reason_{n}"))
+                            .id(at(&format!("tax-exemption-reason-{n}")))
+                            .label("Reason for exemption")
+                            .value(&line.exemption_reason)
+                            .required()
+                            .attr("maxlength", "300")
+                            .errors(self.errors(
+                                &format!("tax_exemption_reason_{n}"),
+                                "Reason for exemption",
+                            )),
+                    )?);
+                }
                 lines.push(&render(LineRow {
                     n,
                     description: &line.description,

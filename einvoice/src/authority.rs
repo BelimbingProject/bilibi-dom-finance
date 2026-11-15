@@ -474,6 +474,13 @@ pub trait Authority {
     /// tax); `None` when a person must say which tax it is.
     fn tax_type_for(&self, rate: Option<rust_decimal::Decimal>) -> Option<&'static str>;
 
+    /// Whether a tax type takes no tax, so it suits only a line at a zero
+    /// rate.
+    fn untaxed(&self, tax_type: &str) -> bool;
+
+    /// Whether a line of this tax type must say why it is exempt.
+    fn exempt(&self, tax_type: &str) -> bool;
+
     /// The last day, in the authority's calendar, on which the consolidated
     /// document of the month holding `month` may be issued.
     fn consolidation_last_day(&self, month: jiff::civil::Date) -> jiff::civil::Date;
