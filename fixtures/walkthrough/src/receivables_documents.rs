@@ -1237,7 +1237,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         "boundaries: due-today bucket zero; tax entry pins; competing settlements/reversals serialize; received-tax fractions stay unrounded"
     );
     let datasets = Receivables::evidence_datasets();
-    assert_eq!(datasets.len(), 20);
+    assert_eq!(datasets.len(), 21);
     for dataset in datasets {
         let mut after = None;
         let mut count = 0;
@@ -1272,6 +1272,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
                     dataset,
                     "write_off"
                         | "write_off_event"
+                        | "mail"
                         | "opening_stage"
                         | "opening_decision"
                         | "opening_batch"
