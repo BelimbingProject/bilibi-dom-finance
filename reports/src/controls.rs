@@ -649,8 +649,8 @@ impl State {
                 })?;
                 links.push(&html(Button {
                     id: "controls-late-journals",
-                    href: "/finance/ledger/journals?review=pending",
-                    body: Html::text("Journals awaiting late-recording review"),
+                    href: "/finance/ledger/journals?entered_late=pending",
+                    body: Html::text("Entries awaiting review"),
                     ..Button::default()
                 })?);
                 links

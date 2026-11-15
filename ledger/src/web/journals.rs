@@ -61,15 +61,8 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
                 ),
             ),
             (
-                "recording".into(),
-                Filter::one_of(
-                    &["all", "on_time", "approaching", "late", "unposted"],
-                    "all",
-                ),
-            ),
-            (
-                "review".into(),
-                Filter::one_of(&["all", "pending", "reviewed"], "all"),
+                "entered_late".into(),
+                Filter::one_of(&["all", "late", "pending", "reviewed"], "all"),
             ),
             ("after".into(), Filter::string("")),
             ("source".into(), Filter::string("")),
@@ -725,10 +718,10 @@ impl Journals {
         if self.filter("status") != "all" {
             input["status"] = json!(self.filter("status"));
         }
-        for key in ["recording", "review"] {
-            if self.filter(key) != "all" {
-                input[key] = json!(self.filter(key));
-            }
+        match self.filter("entered_late") {
+            "late" => input["recording"] = json!("late"),
+            "pending" | "reviewed" => input["review"] = json!(self.filter("entered_late")),
+            _ => {}
         }
         if !self.filter("source").is_empty() {
             input["source"] = json!(self.filter("source"));
@@ -807,12 +800,14 @@ impl Journals {
                 ),
                 ToolbarControl::select(
                     "ledger-journals-recording",
-                    "recording",
+                    "entered_late",
                     "Entered late",
-                    &form["recording"],
+                    &form["entered_late"],
                     vec![
                         Choice::new("All entries", "all"),
                         Choice::new("Entered late", "late"),
+                        Choice::new("Not reviewed", "pending"),
+                        Choice::new("Reviewed", "reviewed"),
                     ],
                 ),
                 ToolbarControl::select(
