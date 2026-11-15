@@ -1,4 +1,4 @@
-//! The Payroll posting accounts page: the two accounts owed to staff chosen
+//! The Payroll settings page: the two accounts owed to staff chosen
 //! in place (before setup the first waits for the second, so both save
 //! together), the "+ Mapping" dialog, each mapping's accounts chosen in place
 //! on its row, and the change history folded away.
