@@ -1,5 +1,17 @@
 # Payroll posting
 
+Post recognised payroll and staff claims to the ledger.
+
+## Start here
+
+Choose posting accounts and mappings, then post an available payroll run or approved claim.
+
+## Keep in mind
+
+This module does not calculate payroll, pay staff or file statutory returns. Source posting depends on the People events described below.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
 `finance/payroll` recognises finalised payroll runs and approved staff claims in the ledger. It mirrors Bilimbi `Bilimbi.Finance.Payroll` at `4abfaf829321f8540581d833752a086b21b45ba9`. It does not calculate payroll, submit statutory returns, pay salaries or settle reimbursements.
 
 ## Pages

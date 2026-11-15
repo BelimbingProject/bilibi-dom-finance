@@ -1,5 +1,17 @@
 # Fixed assets
 
+Keep an asset register and post depreciation.
+
+## Start here
+
+Register an eligible purchase, review its schedule and run depreciation for the month. Compare the register with the ledger.
+
+## Keep in mind
+
+A projected schedule is not posted depreciation. Opening registers follow a separate conversion process.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
 `finance/fixed_assets` mirrors Bilimbi's `Bilimbi.Finance.FixedAssets` at `4abfaf829321f8540581d833752a086b21b45ba9`: immutable categories and acquisitions (NX1), monthly depreciation, corrections, reconciled reports and evidence (NX2). The four NX3 pages compose shared Base UI components and contribute the three reference menu items. This module owns no CSS or JavaScript.
 
 ## Facade

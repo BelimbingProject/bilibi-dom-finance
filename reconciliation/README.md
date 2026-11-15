@@ -1,29 +1,24 @@
 # Bank reconciliation
 
-Module ID: `finance/reconciliation` (Bilimbi `Bilimbi.Finance.Reconciliation`).
-A company's bank accounts, each mapped one-to-one to a ledger account; the
-bank statements imported for them, immutable once imported; the matches
-between statement lines and the ledger's postings on that account; the
-reconciliations of an account as of a statement end date; and the bank charges
-and interest posted from statement lines. This version carries Bilimbi's
-schema, facade and four pages: bank accounts and an account's statements
-(`NC3`), and matching and one reconciliation (`NC4`). It also owns the
-reviewed conversion bank bridge operations and their additions to the account
-and matching pages.
+Compare bank statements with the postings in the books.
 
-Depends on `finance/ledger` (the chart a bank account maps and the book a
-statement's amounts are held to) and `finance/attachments` (the bank's own
-file, kept whole as the statement's source document), Core Company and Base
-Tenancy. It reads the ledger only through that facade and never its tables;
-other modules call this facade and never read these tables. It tells the ledger which accounts its active bank
-accounts are linked to (`BANK_LINKS`, `src/bank_accounts.rs`), so Payables and
-Receivables list them first where money is paid from or deposited.
+## Start here
+
+Add a bank account linked to a ledger account, import a statement, match its lines and finalise a reconciliation.
+
+## Keep in mind
+
+Review the suggested column mapping on the first import. Imported statements are immutable, and outstanding lines need attention.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
+Module ID: `finance/reconciliation` (Bilimbi `Bilimbi.Finance.Reconciliation`). A company's bank accounts, each mapped one-to-one to a ledger account; the bank statements imported for them, immutable once imported; the matches between statement lines and the ledger's postings on that account; the reconciliations of an account as of a statement end date; and the bank charges and interest posted from statement lines. This version carries Bilimbi's schema, facade and four pages: bank accounts and an account's statements (`NC3`), and matching and one reconciliation (`NC4`). It also owns the reviewed conversion bank bridge operations and their additions to the account and matching pages.
+
+Depends on `finance/ledger` (the chart a bank account maps and the book a statement's amounts are held to) and `finance/attachments` (the bank's own file, kept whole as the statement's source document), Core Company and Base Tenancy. It reads the ledger only through that facade and never its tables; other modules call this facade and never read these tables. It tells the ledger which accounts its active bank accounts are linked to (`BANK_LINKS`, `src/bank_accounts.rs`), so Payables and Receivables list them first where money is paid from or deposited.
 
 ## Public API
 
-Resolve the `Reconciliation` service (`finance/reconciliation.reconciliation`)
-and call it with a sealed `Scope` and an explicit company id. Results are plain
-records; the schema is private.
+Resolve the `Reconciliation` service (`finance/reconciliation.reconciliation`) and call it with a sealed `Scope` and an explicit company id. Results are plain records; the schema is private.
 
 | Function | Capability | Does |
 | --- | --- | --- |
@@ -50,253 +45,59 @@ records; the schema is private.
 | `post_statement_line` | `finance.reconciliation.statement-lines.post` | Posts an unmatched line as a `charge` or `interest` entry the line owns, matched to it |
 | `reverse_statement_line` | `finance.reconciliation.statement-lines.manage` | Unmatches a posted line and reverses its entry through the owner path, with a needed reason |
 
-Lists page by `PageOptions` (`limit` 1 to 500, 100 by default; `after`, the
-last id read); anything else is `InvalidOption`.
+Lists page by `PageOptions` (`limit` 1 to 500, 100 by default; `after`, the last id read); anything else is `InvalidOption`.
 
-The eight capability keys are Bilimbi's, verbatim, all granted to
-`tenant_owner`: `finance.reconciliation.view`, `.bank-accounts.manage`,
-`.statements.import`, `.matches.manage`, `.reconciliations.manage`,
-`.reconciliations.finalise`, `.statement-lines.post` and
-`.statement-lines.manage`. The module declares the verbs `import` and
-`finalise`; `post` is the ledger's, `view` and `manage` are Base's. Every call
-authorizes the capability for the scope's actor and the target company when it
-runs; a write holds the company's row lock in an audited `MutationBoundary`
-transaction, so an archived company is `CompanyArchived` and one company's
-reconciliation writes run one at a time. A call that reads the chart (adding or
-changing a bank account, importing, matching, reconciling) also needs
-`finance.ledger.view`, because the ledger authorizes its own calls; the
-import needs `finance.attachments.create` for the file, and posting or
-reversing a statement line `finance.ledger.entries.post`. Inside a write the
-ledger is read with its `*_on` methods on the write's own transaction (entries
-through `Ledger::list_entries_on`, totals through `account_totals_on`), never on
-a second pooled connection while the company lock is held.
+The eight capability keys are Bilimbi's, verbatim, all granted to `tenant_owner`: `finance.reconciliation.view`, `.bank-accounts.manage`, `.statements.import`, `.matches.manage`, `.reconciliations.manage`, `.reconciliations.finalise`, `.statement-lines.post` and `.statement-lines.manage`. The module declares the verbs `import` and `finalise`; `post` is the ledger's, `view` and `manage` are Base's. Every call authorizes the capability for the scope's actor and the target company when it runs; a write holds the company's row lock in an audited `MutationBoundary` transaction, so an archived company is `CompanyArchived` and one company's reconciliation writes run one at a time. A call that reads the chart (adding or changing a bank account, importing, matching, reconciling) also needs `finance.ledger.view`, because the ledger authorizes its own calls; the import needs `finance.attachments.create` for the file, and posting or reversing a statement line `finance.ledger.entries.post`. Inside a write the ledger is read with its `*_on` methods on the write's own transaction (entries through `Ledger::list_entries_on`, totals through `account_totals_on`), never on a second pooled connection while the company lock is held.
 
-Amounts are `Money` of the book's minor units. A stored amount is read back
-with `Money::new(value, MinorUnits::new(4))` (the columns are `numeric(20,4)`),
-since the ledger keeps `Money::stored` private.
+Amounts are `Money` of the book's minor units. A stored amount is read back with `Money::new(value, MinorUnits::new(4))` (the columns are `numeric(20,4)`), since the ledger keeps `Money::stored` private.
 
-Errors are `ReconciliationError` variants with Bilimbi's refusal names
-(`Unauthorized`, `CompanyNotFound`, `BankAccountNotFound`,
-`BankAccountInactive`, `DuplicateFile`, `DuplicateLines`, `InvalidLines`,
-`MissingHeaders`, `NoLines`, `TooManyLines`, `RunningBalanceMismatch`, ...);
-refused values come back as `Invalid(Vec<FieldError>)`. A refusal is decided
-before the audited write, and a storage or ledger refusal is passed on as
-`Attachment(..)` or `Ledger(..)`.
+Errors are `ReconciliationError` variants with Bilimbi's refusal names (`Unauthorized`, `CompanyNotFound`, `BankAccountNotFound`, `BankAccountInactive`, `DuplicateFile`, `DuplicateLines`, `InvalidLines`, `MissingHeaders`, `NoLines`, `TooManyLines`, `RunningBalanceMismatch`, ...); refused values come back as `Invalid(Vec<FieldError>)`. A refusal is decided before the audited write, and a storage or ledger refusal is passed on as `Attachment(..)` or `Ledger(..)`.
 
 ## Bank accounts
 
-A bank account names an active asset account of the ledger that no other bank
-account maps, and keeps it for good: every match and reconciliation reads that
-account's postings. It carries the expense account bank charges post to and the
-income account interest posts to (each optional until needed), the window in
-days a suggested match's dates may differ by (0 to 90, default 5), and its
-import mapping. Its name, counter accounts, window, mapping and active flag
-change in place, and every change is appended to
-`finance_reconciliation_bank_account_changes` with the field, the values
-before and after, the actor, the reason (trimmed, cut at 500 characters) and
-the database's time. A new account's first values are logged with no old
-value. An account may be added without a mapping: its first import maps the
-columns (`import_statement_mapped`) and keeps them, so later files import in
-one step. A mapping is logged as JSON with its keys in order (Bilimbi logs an
-Elixir `inspect` of the map). A bank account is never deleted; deactivate it,
-and it imports and reconciles no more.
+A bank account names an active asset account of the ledger that no other bank account maps, and keeps it for good: every match and reconciliation reads that account's postings. It carries the expense account bank charges post to and the income account interest posts to (each optional until needed), the window in days a suggested match's dates may differ by (0 to 90, default 5), and its import mapping. Its name, counter accounts, window, mapping and active flag change in place, and every change is appended to `finance_reconciliation_bank_account_changes` with the field, the values before and after, the actor, the reason (trimmed, cut at 500 characters) and the database's time. A new account's first values are logged with no old value. An account may be added without a mapping: its first import maps the columns (`import_statement_mapped`) and keeps them, so later files import in one step. A mapping is logged as JSON with its keys in order (Bilimbi logs an Elixir `inspect` of the map). A bank account is never deleted; deactivate it, and it imports and reconciles no more.
 
 ### Import mapping
 
-`ImportMapping` says how the bank's CSV export is read, so a bank's layout is a
-company's data, never code: the column separator, how many rows precede the
-data (the last being the header row, or none), which columns hold the date,
-description, optional reference, either one signed amount column (with which
-sign means money in) or a debit column (money out) and a credit column (money
-in), the optional running balance, the date format (nine common forms), and
-the decimal separator. A column is named by its header text, or by its 1-based
-position when the file has no header row. `ImportMapping::parse` builds it
-from the map a company enters, filling the defaults, and refuses an unknown
-setting, a missing required column, both an amount and debit or credit columns,
-and a value that is not one of the choices, in Bilimbi's words. Amounts may
-carry thousands separators, parentheses, a leading or trailing minus, or a
-`CR` or `DR` marker.
+`ImportMapping` says how the bank's CSV export is read, so a bank's layout is a company's data, never code: the column separator, how many rows precede the data (the last being the header row, or none), which columns hold the date, description, optional reference, either one signed amount column (with which sign means money in) or a debit column (money out) and a credit column (money in), the optional running balance, the date format (nine common forms), and the decimal separator. A column is named by its header text, or by its 1-based position when the file has no header row. `ImportMapping::parse` builds it from the map a company enters, filling the defaults, and refuses an unknown setting, a missing required column, both an amount and debit or credit columns, and a value that is not one of the choices, in Bilimbi's words. Amounts may carry thousands separators, parentheses, a leading or trailing minus, or a `CR` or `DR` marker.
 
-For an account whose columns are not mapped yet, `preview_statement` guesses
-a mapping from the file (`src/guess.rs`): the separator its lines share, the
-rows above the first row holding a date, the usual header words of a bank's
-export ("Date", "Description", "Withdrawal", "Deposit", "Balance", ...), then
-the values (the first column of dates, of numbers, the widest text), the first
-date format every date reads with, and a decimal comma when amounts end in
-one. It only proposes; the person sees the first lines read through it.
+For an account whose columns are not mapped yet, `preview_statement` guesses a mapping from the file (`src/guess.rs`): the separator its lines share, the rows above the first row holding a date, the usual header words of a bank's export ("Date", "Description", "Withdrawal", "Deposit", "Balance", ...), then the values (the first column of dates, of numbers, the widest text), the first date format every date reads with, and a decimal comma when amounts end in one. It only proposes; the person sees the first lines read through it.
 
 ## Statements
 
-`import_statement` takes the file's name and bytes (and its content type,
-`text/csv` unless given), reads it with the account's mapping, keeps the file
-whole as the statement's source document through `finance/attachments`
-(`STATEMENT_SOURCE`, `finance/reconciliation/statement`; a records-grade
-document retained for the company's retention years after the end of the
-financial year the statement ends in), and records one numbered statement with
-its lines and the mapping it was read through in one transaction. Every check
-below runs before the file is stored (the active bank account again inside the
-transaction, under the company lock), and the store runs before the
-transaction, as Base Artifacts asks; a refused import stores nothing, and a
-storage refusal imports nothing. A statement line's `amount` is signed from the
-account holder's side, money in positive and money out negative, which is the
-sign of a debit less a credit on the asset account it is matched against, and
-is held as `Money` in the book's minor units: a figure finer than the book's
-currency is an unreadable row, not a rounded one. A row whose amount is zero is
-skipped and counted in `skipped_count`.
+`import_statement` takes the file's name and bytes (and its content type, `text/csv` unless given), reads it with the account's mapping, keeps the file whole as the statement's source document through `finance/attachments` (`STATEMENT_SOURCE`, `finance/reconciliation/statement`; a records-grade document retained for the company's retention years after the end of the financial year the statement ends in), and records one numbered statement with its lines and the mapping it was read through in one transaction. Every check below runs before the file is stored (the active bank account again inside the transaction, under the company lock), and the store runs before the transaction, as Base Artifacts asks; a refused import stores nothing, and a storage refusal imports nothing. A statement line's `amount` is signed from the account holder's side, money in positive and money out negative, which is the sign of a debit less a credit on the asset account it is matched against, and is held as `Money` in the book's minor units: a figure finer than the book's currency is an unreadable row, not a rounded one. A row whose amount is zero is skipped and counted in `skipped_count`.
 
-With a running balance column, each line's balance must be the previous
-line's plus its amount; a file written newest first is read in reverse, and one
-that chains in neither direction is refused
-(`RunningBalanceMismatch(row)`), which catches a mapping whose sign is wrong.
-The statement then records its opening and closing balances. Without one, the
-lines are kept in file order, oldest first (a file whose first date is after
-its last is read in reverse).
+With a running balance column, each line's balance must be the previous line's plus its amount; a file written newest first is read in reverse, and one that chains in neither direction is refused (`RunningBalanceMismatch(row)`), which catches a mapping whose sign is wrong. The statement then records its opening and closing balances. Without one, the lines are kept in file order, oldest first (a file whose first date is after its last is read in reverse).
 
-The same file is refused a second time by its SHA-256
-(`DuplicateFile { statement_number }`, company-wide). The same line is refused
-by its fingerprint, a hash of its date, description, reference, amount, running
-balance and its occurrence among identical lines of the same file, so a
-statement may carry two identical movements on one day while an overlapping
-export is refused whole, naming each line already on file and the statement and
-line that hold it (`DuplicateLines`). Amounts are fingerprinted without
-trailing zeros, so `12.5` and `12.50` are the same line (Bilimbi's text hash
-tells them apart). A row the mapping cannot read refuses the file with every
-faulty row and why (`InvalidLines`); a file holds at most 10,000 lines, 5 MiB
-and valid UTF-8, and the reader (an RFC 4180 reader: one delimiter, quoted
-fields with doubled quotes, fields spanning lines, CRLF, LF or CR line ends, a
-byte-order mark) refuses a stray or unterminated quote naming the row.
-Statements and lines are never changed or deleted. Once an opening bridge is
-recorded for the account, an import containing any statement line before its
-conversion date is refused whole; a conversion-day line is allowed.
+The same file is refused a second time by its SHA-256 (`DuplicateFile { statement_number }`, company-wide). The same line is refused by its fingerprint, a hash of its date, description, reference, amount, running balance and its occurrence among identical lines of the same file, so a statement may carry two identical movements on one day while an overlapping export is refused whole, naming each line already on file and the statement and line that hold it (`DuplicateLines`). Amounts are fingerprinted without trailing zeros, so `12.5` and `12.50` are the same line (Bilimbi's text hash tells them apart). A row the mapping cannot read refuses the file with every faulty row and why (`InvalidLines`); a file holds at most 10,000 lines, 5 MiB and valid UTF-8, and the reader (an RFC 4180 reader: one delimiter, quoted fields with doubled quotes, fields spanning lines, CRLF, LF or CR line ends, a byte-order mark) refuses a stray or unterminated quote naming the row. Statements and lines are never changed or deleted. Once an opening bridge is recorded for the account, an import containing any statement line before its conversion date is refused whole; a conversion-day line is allowed.
 
-`StatementSource` describes a statement to `finance/attachments` ("Bank
-statement", `Statement <number>`, dated its end date, always final), so
-`finance.reconciliation.view` is also needed to read its file; it reads the
-statement on the connection it is handed.
+`StatementSource` describes a statement to `finance/attachments` ("Bank statement", `Statement <number>`, dated its end date, always final), so `finance.reconciliation.view` is also needed to read its file; it reads the statement on the connection it is handed.
 
 ## Matching
 
-A match groups statement lines of one bank account with entries posted to its
-ledger account whose two sides agree: the lines' amounts sum to the entries'
-debits less credits on that account (an entry whose postings there cancel is
-not an item). One line may match several entries and the other way round.
-`record_match` refuses, in this order, an empty side or an id below 1
-(`InvalidSelection`), a line of another bank account or company
-(`StatementLineNotFound`), an unknown entry (`EntryNotFound`), an entry with
-no posting on the account (`EntryNotOnAccount`), a line or entry already in a
-standing match (`StatementLineMatched`, `EntryMatched`) and sides that differ
-(`Unbalanced { statement_side, ledger_side }`); a note is trimmed, blank as
-none, and at most 500 characters. A repeated id counts once. The match keeps
-each entry's number, date, description, reference and amount as matched, so a
-match and a finalised reconciliation read without the ledger.
+A match groups statement lines of one bank account with entries posted to its ledger account whose two sides agree: the lines' amounts sum to the entries' debits less credits on that account (an entry whose postings there cancel is not an item). One line may match several entries and the other way round. `record_match` refuses, in this order, an empty side or an id below 1 (`InvalidSelection`), a line of another bank account or company (`StatementLineNotFound`), an unknown entry (`EntryNotFound`), an entry with no posting on the account (`EntryNotOnAccount`), a line or entry already in a standing match (`StatementLineMatched`, `EntryMatched`) and sides that differ (`Unbalanced { statement_side, ledger_side }`); a note is trimmed, blank as none, and at most 500 characters. A repeated id counts once. The match keeps each entry's number, date, description, reference and amount as matched, so a match and a finalised reconciliation read without the ledger.
 
-Outstanding opening items use the separate reviewed match and unmatch
-operations described under [Opening bank bridge](#opening-bank-bridge).
-`record_match` remains the ordinary statement-to-entry path.
+Outstanding opening items use the separate reviewed match and unmatch operations described under [Opening bank bridge](#opening-bank-bridge). `record_match` remains the ordinary statement-to-entry path.
 
-A match stands from its `matched` event until its `unmatched` event, which
-`unmatch` appends with a needed reason (trimmed, at most 500 characters):
-its lines and entries are free again and a new match is a new record. A match
-that no longer stands is `MatchNotStanding`, and one a finalised
-reconciliation counted is kept for good (`MatchFinalised`).
+A match stands from its `matched` event until its `unmatched` event, which `unmatch` appends with a needed reason (trimmed, at most 500 characters): its lines and entries are free again and a new match is a new record. A match that no longer stands is `MatchNotStanding`, and one a finalised reconciliation counted is kept for good (`MatchFinalised`).
 
-`unmatched_items` returns the unmatched lines (by date, statement and line,
-each with its statement number), the unmatched entries (by date and id), the
-current unmatched opening items, and ordinary statement-to-entry
-`suggestions`: for each line in that order, the unmatched entry of the same
-amount dated within the account's match window, preferring one whose reference
-or description contains the line's reference (or whose reference the line's
-description contains), compared in lower case on letters and digits only, then
-the nearest date, then the lowest entry number; each entry is suggested once.
+`unmatched_items` returns the unmatched lines (by date, statement and line, each with its statement number), the unmatched entries (by date and id), the current unmatched opening items, and ordinary statement-to-entry `suggestions`: for each line in that order, the unmatched entry of the same amount dated within the account's match window, preferring one whose reference or description contains the line's reference (or whose reference the line's description contains), compared in lower case on letters and digits only, then the nearest date, then the lowest entry number; each entry is suggested once.
 
 ## Reconciliations
 
-A reconciliation is a bank account's figures as of a statement end date
-against the balance the statement shows that day. Its `figures` are read at
-four pins, the last entry, statement, match event and opening bridge they count
-(each the latest unless pinned): the book balance (the ledger account's debits
-less credits through the end date, summed by PostgreSQL through
-`account_totals_on`), and the items that explain the difference: each
-statement line through the end date with no standing match (`statement_line`),
-each entry through the end date with none (`entry`, described
-`Entry <number>: <description>`), and each standing match whose two sides
-through the end date differ (`timing`, `Match <number>: cleared after the
-statement date`, signed book side less statement side). A current outstanding
-opening item is an `opening_item`; the opening journal entry itself is omitted
-because those items represent its clearing side. The `difference` is the
-statement balance less the book balance, less the `statement_line` items, plus
-the `entry`, `opening_item` and `timing` items; zero means the two balances are
-explained. `preview_reconciliation` reads them without opening anything
-(a missing end date, a balance that is not money of the book or a negative pin
-is `InvalidOption`), and at a finalised reconciliation's pinned numbers it
-reproduces its snapshot whatever has been posted, imported or matched since.
+A reconciliation is a bank account's figures as of a statement end date against the balance the statement shows that day. Its `figures` are read at four pins, the last entry, statement, match event and opening bridge they count (each the latest unless pinned): the book balance (the ledger account's debits less credits through the end date, summed by PostgreSQL through `account_totals_on`), and the items that explain the difference: each statement line through the end date with no standing match (`statement_line`), each entry through the end date with none (`entry`, described `Entry <number>: <description>`), and each standing match whose two sides through the end date differ (`timing`, `Match <number>: cleared after the statement date`, signed book side less statement side). A current outstanding opening item is an `opening_item`; the opening journal entry itself is omitted because those items represent its clearing side. The `difference` is the statement balance less the book balance, less the `statement_line` items, plus the `entry`, `opening_item` and `timing` items; zero means the two balances are explained. `preview_reconciliation` reads them without opening anything (a missing end date, a balance that is not money of the book or a negative pin is `InvalidOption`), and at a finalised reconciliation's pinned numbers it reproduces its snapshot whatever has been posted, imported or matched since.
 
-`open_reconciliation` needs an active bank account, an end date and a balance
-no finer than the book's currency, one open reconciliation per account, and an
-end date after the last finalised one (`Invalid` with Bilimbi's words beside
-`end_date`, `statement_balance` and `bank_account_id`). `finalise_reconciliation`
-asks `Ledger::check_approval` on its own write with the opener as preparer
-(source `finance/reconciliation`, action `reconciliation_finalisation`,
-subject `Reconciliation <n> of <bank account> to <end date>`): the opener, or
-whoever impersonated them or was impersonated by them, is `SamePerson` while
-the company separates duties, and is recorded as a same-person approval
-exception while it does not. It then reads the figures on that write, refuses
-a difference other than zero (`Difference(amount)`), and records the
-`finalised` event with the book balance, the difference and the four pins,
-and the items as they stood, numbered from 1. Statement lines the books do
-not have explain the difference too, so it can be zero while a customer
-payment or a bank charge is missing from the books
-(`Figures::lines_not_in_books`). Such a finalisation is not blocked, because
-outstanding items are legitimate, but it needs a `reason` (trimmed, at most
-500 characters; `LinesNotInBooks(count)` without one), kept on the `finalised`
-event; a reason given when no line waits is kept as well. The facade decides
-this, not the database: the event's `reason` column already allowed one, and
-no migration was added. This is this port's rule; Bilimbi finalises without
-asking. `abandon_reconciliation` records
-`abandoned` with a needed reason. A finalised or abandoned reconciliation never
-changes (`ReconciliationFinalised`, `ReconciliationAbandoned`), and
-`get_reconciliation` shows an open one's figures read now, a finalised one's
-stored snapshot and an abandoned one's none.
+`open_reconciliation` needs an active bank account, an end date and a balance no finer than the book's currency, one open reconciliation per account, and an end date after the last finalised one (`Invalid` with Bilimbi's words beside `end_date`, `statement_balance` and `bank_account_id`). `finalise_reconciliation` asks `Ledger::check_approval` on its own write with the opener as preparer (source `finance/reconciliation`, action `reconciliation_finalisation`, subject `Reconciliation <n> of <bank account> to <end date>`): the opener, or whoever impersonated them or was impersonated by them, is `SamePerson` while the company separates duties, and is recorded as a same-person approval exception while it does not. It then reads the figures on that write, refuses a difference other than zero (`Difference(amount)`), and records the `finalised` event with the book balance, the difference and the four pins, and the items as they stood, numbered from 1. Statement lines the books do not have explain the difference too, so it can be zero while a customer payment or a bank charge is missing from the books (`Figures::lines_not_in_books`). Such a finalisation is not blocked, because outstanding items are legitimate, but it needs a `reason` (trimmed, at most 500 characters; `LinesNotInBooks(count)` without one), kept on the `finalised` event; a reason given when no line waits is kept as well. The facade decides this, not the database: the event's `reason` column already allowed one, and no migration was added. This is this port's rule; Bilimbi finalises without asking. `abandon_reconciliation` records `abandoned` with a needed reason. A finalised or abandoned reconciliation never changes (`ReconciliationFinalised`, `ReconciliationAbandoned`), and `get_reconciliation` shows an open one's figures read now, a finalised one's stored snapshot and an abandoned one's none.
 
 ## Posting statement lines
 
-`post_statement_line` books an unmatched line the books do not have: a
-`charge` (money out, debiting the account's charges account) or `interest`
-(money in, crediting its interest account), dated the line's date, with the
-line's description unless a non-blank one is given and the line's reference.
-The entry is posted through `Ledger::post_entry_in` on the write with the line
-as its owner (`finance/reconciliation`, `statement_line:<id>`), and the line is
-matched to it with the note `Posted from statement line as <kind>`, so both
-stand or neither; the ledger's refusal (a closed period, an inactive account,
-a missing `finance.ledger.entries.post`) records nothing. Refusals:
-`InvalidKind`, `NoChargesAccount`, `NoInterestAccount`, `NotACharge`,
-`NotInterest`, `StatementLineMatched`, `BankAccountInactive`, and
-`StatementLinePosted` for a line that already posted an entry: the ledger holds
-one original entry per owner, so such a line is matched to its entry, never
-posted twice.
+`post_statement_line` books an unmatched line the books do not have: a `charge` (money out, debiting the account's charges account) or `interest` (money in, crediting its interest account), dated the line's date, with the line's description unless a non-blank one is given and the line's reference. The entry is posted through `Ledger::post_entry_in` on the write with the line as its owner (`finance/reconciliation`, `statement_line:<id>`), and the line is matched to it with the note `Posted from statement line as <kind>`, so both stand or neither; the ledger's refusal (a closed period, an inactive account, a missing `finance.ledger.entries.post`) records nothing. Refusals: `InvalidKind`, `NoChargesAccount`, `NoInterestAccount`, `NotACharge`, `NotInterest`, `StatementLineMatched`, `BankAccountInactive`, and `StatementLinePosted` for a line that already posted an entry: the ledger holds one original entry per owner, so such a line is matched to its entry, never posted twice.
 
-`reverse_statement_line` corrects such a posting: with a needed reason
-(`InvalidReason` when blank or over 500 characters), the line must stand
-matched, alone, to the one entry it owns (`StatementLineNotMatched`,
-`StatementLineNotPosted`); the match is unmatched with the reason and the entry
-reversed through `Ledger::reverse_owned_entry` on the same write, dated the
-given date or today (UTC), described `Reversal of <description>`. A match a
-finalised reconciliation counted is kept (`MatchFinalised`), and the ledger's
-refusal rolls both back. Bilimbi's branch for entries posted before owners
-were recorded is not ported: a fresh Bilibi ledger has none.
+`reverse_statement_line` corrects such a posting: with a needed reason (`InvalidReason` when blank or over 500 characters), the line must stand matched, alone, to the one entry it owns (`StatementLineNotMatched`, `StatementLineNotPosted`); the match is unmatched with the reason and the entry reversed through `Ledger::reverse_owned_entry` on the same write, dated the given date or today (UTC), described `Reversal of <description>`. A match a finalised reconciliation counted is kept (`MatchFinalised`), and the ledger's refusal rolls both back. Bilimbi's branch for entries posted before owners were recorded is not ported: a fresh Bilibi ledger has none.
 
 ## Database
 
-The migration `finance-reconciliation-001-reconciliation` creates
-`finance_reconciliation_bank_accounts`, `_bank_account_changes`, `_statements`,
-`_statement_lines`, `_matches`, `_match_lines`, `_match_entries`,
-`_match_events`, `_reconciliations`, `_reconciliation_events` and
-`_reconciliation_items`. Rows of one company reference each other through
-composite `(id, company_id)` foreign keys; ledger account and entry ids are
-plain columns. `finance-reconciliation-002-opening-bridge` adds immutable
-opening bridges and items, opening-item match links, and the opening pins on
-finalised reconciliations. PostgreSQL enforces the rules the facade checks, so
-no other writer can break them:
+The migration `finance-reconciliation-001-reconciliation` creates `finance_reconciliation_bank_accounts`, `_bank_account_changes`, `_statements`, `_statement_lines`, `_matches`, `_match_lines`, `_match_entries`, `_match_events`, `_reconciliations`, `_reconciliation_events` and `_reconciliation_items`. Rows of one company reference each other through composite `(id, company_id)` foreign keys; ledger account and entry ids are plain columns. `finance-reconciliation-002-opening-bridge` adds immutable opening bridges and items, opening-item match links, and the opening pins on finalised reconciliations. PostgreSQL enforces the rules the facade checks, so no other writer can break them:
 
 - a bank account keeps its company and ledger account and is never deleted;
   one bank account per ledger account and per name;
@@ -325,10 +126,7 @@ no other writer can break them:
   difference; an `abandoned` one its reason; items are inserted only in the
   transaction that finalises.
 
-A statement's `import_mapping` is NOT NULL here: a fresh Bilibi schema has no
-statement imported before the mapping was kept (Bilimbi's column is nullable
-for those). A bank account's is nullable (`003-mapping-on-first-import`): an
-account added without one has its columns mapped on its first import.
+A statement's `import_mapping` is NOT NULL here: a fresh Bilibi schema has no statement imported before the mapping was kept (Bilimbi's column is nullable for those). A bank account's is nullable (`003-mapping-on-first-import`): an account added without one has its columns mapped on its first import.
 
 ## Bank account pages (NC3)
 
@@ -350,8 +148,7 @@ NC3_STORAGE_ROOT=/tmp/nc3-source-documents \
 cargo run -p bilibi-finance-walkthrough-fixture --bin bilibi-finance-reconciliation-ui
 ```
 
-It proves the facade's import/skipped rows, duplicate-file refusal, original download bytes, denied/restricted scopes, Money precision, and concurrent opening refusal before serving the app. The walkthrough's manager, staff and viewer accounts exercise full control, import-only and read-only states; use the fixture's `PASSWORD`. The operating account is left ready for browser imports and opening, and the reserve account has one open reconciliation. These are disposable fixture facts, never production seeds.
-`evidence_page_on` is the same authorized evidence contract on a caller-supplied PostgreSQL client or transaction. Use it for every page of one repeatable-read export (Reports auditor pack); the pooled `evidence_page` wrapper is a live read per page. Schema helpers remain private.
+It proves the facade's import/skipped rows, duplicate-file refusal, original download bytes, denied/restricted scopes, Money precision, and concurrent opening refusal before serving the app. The walkthrough's manager, staff and viewer accounts exercise full control, import-only and read-only states; use the fixture's `PASSWORD`. The operating account is left ready for browser imports and opening, and the reserve account has one open reconciliation. These are disposable fixture facts, never production seeds. `evidence_page_on` is the same authorized evidence contract on a caller-supplied PostgreSQL client or transaction. Use it for every page of one repeatable-read export (Reports auditor pack); the pooled `evidence_page` wrapper is a live read per page. Schema helpers remain private.
 
 ## Matching and reconciliation pages (NC4)
 

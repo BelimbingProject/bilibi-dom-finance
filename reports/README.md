@@ -1,16 +1,20 @@
 # Reports
 
-Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from
-Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports
-from the general ledger and retains source-period conversion schedules. The
-reports cover profit and loss, the balance sheet, cash position, headline
-figures against the previous period, and the entries behind any account's
-figure. It stores immutable issued snapshots; every report figure comes through
-`finance/ledger`'s facade, and it reads none of the ledger's tables.
+Read management reports and retain copies of figures.
 
-Reports (management reports) and account activity are available at `/finance/reports`
-and `/finance/reports/accounts/{account_id}` (NT2). Bookkeeping controls and Approval
-exceptions are also available (NT3), alongside auditor-pack generation and downloads (NT4).
+## Start here
+
+Open profit and loss or the balance sheet, follow a figure to its entries, and issue a snapshot when you need a fixed copy.
+
+## Keep in mind
+
+These are management reports, not statutory statements. An issued snapshot freezes the report, including its chart and layout.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
+Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports from the general ledger and retains source-period conversion schedules. The reports cover profit and loss, the balance sheet, cash position, headline figures against the previous period, and the entries behind any account's figure. It stores immutable issued snapshots; every report figure comes through `finance/ledger`'s facade, and it reads none of the ledger's tables.
+
+Reports (management reports) and account activity are available at `/finance/reports` and `/finance/reports/accounts/{account_id}` (NT2). Bookkeeping controls and Approval exceptions are also available (NT3), alongside auditor-pack generation and downloads (NT4).
 
 ## Pages
 
@@ -26,17 +30,11 @@ All tables use shared FlexTable and built-in ListColumns on ListState. There is 
 
 ## Management reports, not statutory statements
 
-Profit and loss, the balance sheet and the cash position are management reports
-for the company's own use, not statutory financial statements: there is no cash
-flow statement, no statement of changes in equity or other comprehensive
-income, no notes, no consolidation and no currency translation, and no layout a
-standard requires (MFRS, IFRS or another) is produced here. Every page and
-export that shows them must say so.
+Profit and loss, the balance sheet and the cash position are management reports for the company's own use, not statutory financial statements: there is no cash flow statement, no statement of changes in equity or other comprehensive income, no notes, no consolidation and no currency translation, and no layout a standard requires (MFRS, IFRS or another) is produced here. Every page and export that shows them must say so.
 
 ## Public API
 
-`Reports` is the registry service `finance/reports.reports`. Every call takes
-the sealed `Scope` it was handed and an explicit company id.
+`Reports` is the registry service `finance/reports.reports`. Every call takes the sealed `Scope` it was handed and an explicit company id.
 
 | Function | Does |
 | --- | --- |
@@ -52,71 +50,29 @@ the sealed `Scope` it was handed and an explicit company id.
 | `evidence_datasets`, `evidence_page` | Issued reports, immutable conversion sign-offs and retained source-period schedules and their corrections for the auditor's pack |
 | `previous_period` | The comparison period: as many whole months before, or as many days |
 
-Every amount is a list with one value per column, in the order the periods or
-dates were given; the first column is the reporting period and the rest its
-comparatives. Every management report takes `through_entry_number`. A conversion
-report captures its own ledger-entry boundary and each subledger's opening-batch and settlement boundaries.
+Every amount is a list with one value per column, in the order the periods or dates were given; the first column is the reporting period and the rest its comparatives. Every management report takes `through_entry_number`. A conversion report captures its own ledger-entry boundary and each subledger's opening-batch and settlement boundaries.
 
 ## Authorization and company scope
 
-Every function authorizes `finance.ledger.view` for the scope's actor and the
-target company when it runs, through Core Company's `authorize_work_target`, and the
-ledger calls it makes authorize again: a missing grant or a sibling company
-without a desk is `Unauthorized`, and a company the scope cannot see
-is `CompanyNotFound`. Issuing asks for `finance.reports.issue` as well, and
-runs in an audited mutation transaction holding the company's lock, so an
-archived company is `CompanyArchived`. `finance.reports.sign-off` records an
-accountant's attestation against an issued conversion report.
-`finance.reports.reports-export` generates and downloads the auditor pack, with
-ledger view required, also for an archived company (its books stay available
-for audit). All nine source views enable the full evidence pack; otherwise it produces a clearly labelled ledger-and-reports pack. All three
-Reports capabilities are granted to `tenant_owner`.
+Every function authorizes `finance.ledger.view` for the scope's actor and the target company when it runs, through Core Company's `authorize_work_target`, and the ledger calls it makes authorize again: a missing grant or a sibling company without a desk is `Unauthorized`, and a company the scope cannot see is `CompanyNotFound`. Issuing asks for `finance.reports.issue` as well, and runs in an audited mutation transaction holding the company's lock, so an archived company is `CompanyArchived`. `finance.reports.sign-off` records an accountant's attestation against an issued conversion report. `finance.reports.reports-export` generates and downloads the auditor pack, with ledger view required, also for an archived company (its books stay available for audit). All nine source views enable the full evidence pack; otherwise it produces a clearly labelled ledger-and-reports pack. All three Reports capabilities are granted to `tenant_owner`.
 
 ## Figures that reproduce
 
-A report names `through_entry_number`, the last ledger entry it counts, and
-every column is read at that same number. Posted entries never change and are
-numbered in posting order, so passing the number back freezes the postings
-counted, including later back-dated entries. It does **not** freeze the chart,
-names, sections or settings: removing an account from a cash section changes
-even a pinned live cash total. `account_activity` given the report's window,
-number and `exclude_closing` lists exactly the entries the figure counted, and
-its debits and credits equal the figure.
+A report names `through_entry_number`, the last ledger entry it counts, and every column is read at that same number. Posted entries never change and are numbered in posting order, so passing the number back freezes the postings counted, including later back-dated entries. It does **not** freeze the chart, names, sections or settings: removing an account from a cash section changes even a pinned live cash total. `account_activity` given the report's window, number and `exclude_closing` lists exactly the entries the figure counted, and its debits and credits equal the figure.
 
-Each posting account reports its own postings and a group is never a row, so
-nothing is counted twice.
+Each posting account reports its own postings and a group is never a row, so nothing is counted twice.
 
 ## Grouping and signs
 
-The five account types are the one fixed classification. A profit and loss
-lists income then expenses; a balance sheet lists assets, liabilities, then
-equity. Within a type, accounts are grouped by the company's sections in their
-configured order, and accounts no section covers follow under no heading
-(`name: None`). A statement lists every account with a posting in any of its
-columns.
+The five account types are the one fixed classification. A profit and loss lists income then expenses; a balance sheet lists assets, liabilities, then equity. Within a type, accounts are grouped by the company's sections in their configured order, and accounts no section covers follow under no heading (`name: None`). A statement lists every account with a posting in any of its columns.
 
-Amounts are on the type's natural side: assets and expenses as debits less
-credits, liabilities, equity and income as credits less debits. A profit and
-loss, the overview's income and expense, and their drill-downs leave out the
-ledger's year-end closing entries and their reversals (`exclude_closing`), so a
-closed year still shows its activity. The balance sheet counts them: a closed
-year's result sits in the retained-earnings account, and `earnings` is the
-income less expense not yet closed into it. That line is part of equity, so
-`total_assets` always equals `total_liabilities_and_equity`.
+Amounts are on the type's natural side: assets and expenses as debits less credits, liabilities, equity and income as credits less debits. A profit and loss, the overview's income and expense, and their drill-downs leave out the ledger's year-end closing entries and their reversals (`exclude_closing`), so a closed year still shows its activity. The balance sheet counts them: a closed year's result sits in the retained-earnings account, and `earnings` is the income less expense not yet closed into it. That line is part of equity, so `total_assets` always equals `total_liabilities_and_equity`.
 
-The cash position lists every account its sections cover, whatever its type and
-whether or not it has postings, as debits less credits, so an overdrawn bank
-account kept as a liability counts against the total. With no cash section
-configured, the accounts are the Bank reconciliation accounts (see First report
-and layout).
+The cash position lists every account its sections cover, whatever its type and whether or not it has postings, as debits less credits, so an overdrawn bank account kept as a liability counts against the total. With no cash section configured, the accounts are the Bank reconciliation accounts (see First report and layout).
 
 ## Configuration
 
-Section headings and account choices are a company's own data, never code. They
-are the `finance.reports.sections` setting (Base Settings, tenant or company
-scope, editor group Reports, edited by holders of
-`finance.ledger.accounts.manage` on the Report sections page): an ordered JSON array of sections, each with
-only these keys.
+Section headings and account choices are a company's own data, never code. They are the `finance.reports.sections` setting (Base Settings, tenant or company scope, editor group Reports, edited by holders of `finance.ledger.accounts.manage` on the Report sections page): an ordered JSON array of sections, each with only these keys.
 
 ```json
 [
@@ -126,58 +82,27 @@ only these keys.
 ]
 ```
 
-A listed account or account group brings everything under it in the chart, unless a row under it is
-listed itself: the nearest listed account decides, and within one report the
-first section that lists a code keeps it. Headings (at most 100 characters) and
-codes (at most 50) are trimmed. The setting's validator refuses any other shape
-on save; a stored value that is not valid (written before validation, or
-adopted) groups nothing rather than grouping wrongly. A report names, in
-`unmatched_codes`, any listed code the chart does not have.
+A listed account or account group brings everything under it in the chart, unless a row under it is listed itself: the nearest listed account decides, and within one report the first section that lists a code keeps it. Headings (at most 100 characters) and codes (at most 50) are trimmed. The setting's validator refuses any other shape on save; a stored value that is not valid (written before validation, or adopted) groups nothing rather than grouping wrongly. A report names, in `unmatched_codes`, any listed code the chart does not have.
 
 ## Comparative periods
 
-`previous_period` gives a period of whole calendar months the same number of
-whole months before it (a quarter compares with the previous quarter, a year
-with the previous year) and any other period the same number of days before
-it.
+`previous_period` gives a period of whole calendar months the same number of whole months before it (a quarter compares with the previous quarter, a year with the previous year) and any other period the same number of days before it.
 
 ## Live updates
 
-`subscribe` relays the ledger's posting notices, which PostgreSQL delivers only
-when the posting transaction commits. A notice carries no figures; the reader
-reads again through this facade, and on `PostingEvent::Refresh` (notices may
-have been missed) reads again as well.
+`subscribe` relays the ledger's posting notices, which PostgreSQL delivers only when the posting transaction commits. A notice carries no figures; the reader reads again through this facade, and on `PostingEvent::Refresh` (notices may have been missed) reads again as well.
 
 ## Issued reports
 
-`issue_report(scope, company, &Issue, through_entry_number)` stores the figures
-(the live report's own JSON: string keys, exact decimal strings, ISO dates),
-the entry cutoff, the chart they were arranged by, the configured layout
-(`{"configured_sections": ...}`), each covered account's section with the
-effective sections and unmatched codes (`membership`, `{}` for a trial
-balance), the implementation version, the issuer and any impersonator, and a
-time the database stamps. The issuing transaction holds the company's lock,
-which every ledger write takes, so the figures, chart and book it reads through
-the ledger's facade describe one state of the ledger; the layout is read once
-and every grouping comes from that one read. `get_issued_report` returns that
-stored copy. PostgreSQL refuses update, delete and truncate of
-`finance_reports_issued`. An entry pin alone reproduces postings, not a
-complete report: issue one for a durable copy.
+`issue_report(scope, company, &Issue, through_entry_number)` stores the figures (the live report's own JSON: string keys, exact decimal strings, ISO dates), the entry cutoff, the chart they were arranged by, the configured layout (`{"configured_sections": ...}`), each covered account's section with the effective sections and unmatched codes (`membership`, `{}` for a trial balance), the implementation version, the issuer and any impersonator, and a time the database stamps. The issuing transaction holds the company's lock, which every ledger write takes, so the figures, chart and book it reads through the ledger's facade describe one state of the ledger; the layout is read once and every grouping comes from that one read. `get_issued_report` returns that stored copy. PostgreSQL refuses update, delete and truncate of `finance_reports_issued`. An entry pin alone reproduces postings, not a complete report: issue one for a durable copy.
 
 ## Performance
 
-Each column is one aggregate query in the ledger: PostgreSQL sums the lines per
-account and returns one row per account. No report loads lines into memory;
-the drill-down pages entries 100 at a time (1 to 500). A report reads at most
-four columns, and the overview four windows.
+Each column is one aggregate query in the ledger: PostgreSQL sums the lines per account and returns one row per account. No report loads lines into memory; the drill-down pages entries 100 at a time (1 to 500). A report reads at most four columns, and the overview four windows.
 
 ## Proof
 
-`fixtures/walkthrough` (the container README's Walkthrough fixture) configures
-Company 001's sections, reads every report with comparatives, follows a figure
-to its entries, reproduces a report from its pin after a later post its
-subscription hears, issues and reads back snapshots, and shows the facade's
-and the database's refusals.
+`fixtures/walkthrough` (the container README's Walkthrough fixture) configures Company 001's sections, reads every report with comparatives, follows a figure to its entries, reproduces a report from its pin after a later post its subscription hears, issues and reads back snapshots, and shows the facade's and the database's refusals.
 
 From the Platform root, with `DATABASE_URL` naming a disposable PostgreSQL 18 database, `cargo run -p bilibi-finance-walkthrough-fixture --bin reports-ui` exercises the mounted page contracts and prepares the browser fixture. It proves subscribe-before-read, a stale-click pin, pinned and unpinned notices, range draft/error retention, table compactness, four views, comparison off, unopened and forbidden ledgers, and account cursors at 99/100/101 entries with stable whole-window totals. Sign in as `manager@example.test` with the walkthrough password `bilibi-dev`, then open `/finance/reports`; running the same command with `-- post` commits a real later posting to demonstrate live refresh and pinned figures. These are executable fixture proofs, not unit tests or production seeds.
 

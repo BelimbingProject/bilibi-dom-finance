@@ -1,5 +1,17 @@
 # SST returns
 
+Prepare Malaysian SST-02 returns from posted documents.
+
+## Start here
+
+Set up the registration and tax-code mappings, prepare a period, review its figures and finalise the return.
+
+## Keep in mind
+
+Finalising fixes the figures; the company still files and pays through MySST. Item 15 penalties are outside this module.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
 `finance/sst` mirrors Bilimbi's `Bilimbi.Finance.Sst` at `4abfaf829321f8540581d833752a086b21b45ba9`: Malaysia's Sales and Service Tax return, form SST-02, for a company registered for sales tax, service tax, or both. NS1 owns the whole schema, the registration and its numbered versions, which SST-02 box each receivables and payables tax code reports in, the form itself, the taxable periods of the registration's cycle, and a return's figures computed from posted documents and reconciled against the tax accounts' ledger postings. NS2 owns the returns: opening, adjusting, discarding, finalising into a stored snapshot, amending, reproducing and exporting them, and the evidence datasets. NS3 owns the pages: the Returns, Return and Setup pages, the CSV download and the print page, and the two menu items (see [Pages](#pages)). The module contributes no agent operations, CSS or JavaScript.
 
 Filing the return electronically to MySST, paying the tax, and the penalty of item 15 are out of scope, as in Bilimbi: a return is prepared, reviewed, finalised and exported here, and filed by the company.
