@@ -268,9 +268,15 @@ impl Authority for MyInvois {
         matches!(iso.trim().to_ascii_uppercase().as_str(), "MY" | "MYS").then_some(HOME_COUNTRY)
     }
 
+    fn dialable(&self, phone: &str) -> String {
+        phone
+            .chars()
+            .filter(|c| !c.is_whitespace() && !matches!(c, '-' | '(' | ')' | '.'))
+            .collect()
+    }
+
     fn tax_type_for(&self, rate: Option<Decimal>) -> Option<&'static str> {
-        rate.is_none_or(|rate| rate.is_zero())
-            .then_some(UNTAXED[0])
+        rate.is_none_or(|rate| rate.is_zero()).then_some(UNTAXED[0])
     }
 
     fn consolidation_last_day(&self, month: Date) -> Date {

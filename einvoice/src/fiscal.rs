@@ -6,8 +6,8 @@
 //! module that posted the record, and reads it only through that module's
 //! own reader, under the person's own scope.
 use crate::{
-    code_lists, documents, Authority, DraftAddress, DraftParty, Einvoice,
-    EinvoiceError, FieldError, PartySnapshot, Result, ISSUE, MODULE, SUBMIT, VIEW,
+    code_lists, documents, Authority, DraftAddress, DraftParty, Einvoice, EinvoiceError,
+    FieldError, PartySnapshot, Result, SourceLink, ISSUE, MODULE, SUBMIT, VIEW,
 };
 use bilibi_agent_api::OperationClient;
 use bilibi_finance_ledger::{
@@ -25,6 +25,8 @@ pub(crate) const START: &str = "/finance/einvoice/documents";
 pub(crate) fn status_label(status: &str) -> &'static str {
     match status {
         "issued" | "released" => "Not sent",
+        // Queued for the authority; the page's own word, never a stored status.
+        "sending" => "Sending",
         "submitted" => "Sent",
         "valid" => "Valid",
         "refused" => "Refused",
@@ -39,8 +41,8 @@ pub(crate) fn status_label(status: &str) -> &'static str {
 fn tone(status: &str) -> FiscalTone {
     match status {
         "valid" => FiscalTone::Good,
-        "refused" | "invalid" | "rejected" => FiscalTone::Problem,
-        "cancelled" => FiscalTone::Ended,
+        "refused" | "invalid" => FiscalTone::Problem,
+        "cancelled" | "rejected" => FiscalTone::Ended,
         _ => FiscalTone::Waiting,
     }
 }
@@ -165,7 +167,56 @@ fn blank(value: &Option<String>) -> bool {
     value.as_deref().is_none_or(|text| text.trim().is_empty())
 }
 
+/// A record an e-invoice was made for, as a person reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceRecord {
+    /// What it is and its number ("Invoice INV-00004").
+    pub name: String,
+    /// The record's own page.
+    pub href: String,
+}
+
+/// More source links than this are not named one by one (a consolidated
+/// document covers a month of them).
+pub(crate) const NAMED_SOURCES: usize = 5;
+
 impl Einvoice {
+    /// The records a document's source links name (`finance.einvoice.view`),
+    /// each as the module that posted it describes it, in the links' order;
+    /// `None` for one that module does not show this person or that is not
+    /// mounted. Nothing is named past the first few links.
+    pub async fn source_records(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        links: &[SourceLink],
+    ) -> Result<Vec<Option<SourceRecord>>> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        bilibi_company::authorize_work_target(&**client, scope, company_id, VIEW)
+            .await
+            .map_err(crate::refusal)?;
+        let mut records = Vec::new();
+        for link in links.iter().take(NAMED_SOURCES) {
+            let source = self
+                .ledger
+                .fiscal_source_on(&**client, scope, company_id, &link.module, &link.record)
+                .await
+                .map_err(ledger_error)?;
+            records.push(source.map(|source| SourceRecord {
+                name: format!(
+                    "{} {}",
+                    match source.kind {
+                        FiscalSourceKind::Invoice => "Invoice",
+                        FiscalSourceKind::CreditNote => "Credit note",
+                    },
+                    source.number
+                ),
+                href: source.href,
+            }));
+        }
+        Ok(records)
+    }
+
     /// The posted records an e-invoice can be started for
     /// (`finance.einvoice.view`), newest first: those with no e-invoice, or
     /// whose e-invoice no longer stands.
@@ -245,11 +296,15 @@ impl Einvoice {
             .map(|(record, id, number, status)| standing(record, id, number, status));
         // A credit note's e-invoice refers to the e-invoice of its invoice.
         let original = match source.corrects.as_ref().filter(|_| credit_note) {
-            Some(corrected) => {
-                newest(client, tenant, company_id, module, std::slice::from_ref(corrected))
-                    .await?
-                    .pop()
-            }
+            Some(corrected) => newest(
+                client,
+                tenant,
+                company_id,
+                module,
+                std::slice::from_ref(corrected),
+            )
+            .await?
+            .pop(),
             None => None,
         };
         let buyer = self
@@ -310,6 +365,24 @@ impl Einvoice {
             }
             code_number = format!("{}-{attempt}", source.number);
         }
+        // What is optional and unknown is left out, so every null that
+        // remains is a gap the caller must fill before issuing.
+        let mut buyer = json!(buyer);
+        for optional in [
+            "sales_tax_registration",
+            "email",
+            "industry_code",
+            "business_activity",
+        ] {
+            if buyer[optional].is_null() {
+                buyer.as_object_mut().map(|party| party.remove(optional));
+            }
+        }
+        if buyer["address"]["postcode"].is_null() {
+            buyer["address"]
+                .as_object_mut()
+                .map(|address| address.remove("postcode"));
+        }
         let mut draft = json!({
             "document_type": authority.source_document_type(credit_note),
             "code_number": code_number,
@@ -326,6 +399,7 @@ impl Einvoice {
             "source": {
                 "module": module, "record": record, "number": source.number,
                 "kind": if credit_note { "credit_note" } else { "invoice" },
+                "href": source.href,
                 "party_name": source.party.name, "issue_date": source.issue_date,
                 "total": source.total.to_string(), "currency_code": source.currency_code,
                 "corrects": source.corrects,
@@ -383,7 +457,8 @@ impl Einvoice {
             registration_number: or(&party.registration_number, last.registration_number),
             sales_tax_registration: last.sales_tax_registration,
             email: or(&party.email, last.email),
-            phone: or(&party.phone, last.phone),
+            // A phone as people write it ("+60 3-5555 0102") is sent bare.
+            phone: or(&party.phone, last.phone).map(|phone| authority.dialable(&phone)),
             industry_code: None,
             business_activity: None,
             address: Some(DraftAddress {
@@ -408,7 +483,8 @@ impl Einvoice {
     }
 
     /// The codes of the lists a person chooses from when starting an
-    /// e-invoice (`finance.einvoice.view`): list to code to description.
+    /// e-invoice (`finance.einvoice.view`): each list as `{code, name}` in
+    /// the order to offer them.
     pub(crate) async fn choice_codes_on(
         &self,
         client: &dyn OperationClient,
@@ -423,25 +499,32 @@ impl Einvoice {
         for list in ["classification", "state", "country", "tax_type"] {
             let codes =
                 code_lists::codes(client, scope.tenant(), company_id, authority.id(), list).await?;
-            lists.insert(list.to_owned(), json!(codes));
+            lists.insert(
+                list.to_owned(),
+                codes
+                    .iter()
+                    .map(|(code, name)| json!({"code": code, "name": name}))
+                    .collect(),
+            );
         }
         lists.insert(
             "registration_type".into(),
-            Value::Object(
-                authority
-                    .registration_types()
-                    .into_iter()
-                    .map(|(code, name)| (code.to_owned(), json!(name)))
-                    .collect(),
-            ),
+            authority
+                .registration_types()
+                .into_iter()
+                .map(|(code, name)| json!({"code": code, "name": name}))
+                .collect(),
         );
         Ok(Value::Object(lists))
     }
 }
 
-fn ledger_error(error: bilibi_finance_ledger::LedgerError) -> EinvoiceError {
+pub(crate) fn ledger_error(error: bilibi_finance_ledger::LedgerError) -> EinvoiceError {
+    use bilibi_finance_ledger::LedgerError;
     match error {
-        bilibi_finance_ledger::LedgerError::Failed(error) => EinvoiceError::Failed(error),
+        LedgerError::Failed(error) => EinvoiceError::Failed(error),
+        LedgerError::Unauthorized => EinvoiceError::Unauthorized,
+        LedgerError::CompanyNotFound => EinvoiceError::CompanyNotFound,
         _ => EinvoiceError::Failed(bilibi_database::Error::Internal),
     }
 }

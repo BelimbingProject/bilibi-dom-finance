@@ -4,6 +4,7 @@ mod detail;
 mod index;
 mod messages;
 mod new_document;
+mod posting_accounts;
 
 use crate::{contributions::provenance, Authority, Einvoice, EinvoiceError, MODULE};
 use askama::Template;
@@ -85,17 +86,17 @@ impl Pages {
     ) -> Result<serde_json::Value> {
         use bilibi_agent_api::Error as ContractError;
         input["company_id"] = serde_json::json!(company(scope)?);
-        let mut answer = self
-            .contracts
-            .read(scope, key, &input)
-            .await
-            .map_err(|error| match error {
-                ContractError::Backend(error) => error,
-                ContractError::Forbidden => Error::Forbidden,
-                ContractError::NotFound => Error::NotFound,
-                ContractError::InvalidInput(_) => Error::Invalid,
-                _ => Error::Internal,
-            })?;
+        let mut answer =
+            self.contracts
+                .read(scope, key, &input)
+                .await
+                .map_err(|error| match error {
+                    ContractError::Backend(error) => error,
+                    ContractError::Forbidden => Error::Forbidden,
+                    ContractError::NotFound => Error::NotFound,
+                    ContractError::InvalidInput(_) => Error::Invalid,
+                    _ => Error::Internal,
+                })?;
         Ok(answer["result"].take())
     }
 

@@ -4,8 +4,8 @@ use super::*;
 use crate::{DocumentPage, DocumentQuery};
 use bilibi_finance_ledger::FiscalStart;
 use bilibi_ui::{
-    params, BuiltinColumn, Choice, CreateButton, EmptyState, Filter, FilterToolbar, ListSpec, ListState,
-    PageCounts, Pagination, RecordLink, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, Choice, CreateButton, EmptyState, Filter, FilterToolbar, ListSpec,
+    ListState, PageCounts, Pagination, RecordLink, TableEmpty, ToolbarControl,
 };
 use std::{collections::HashMap, sync::LazyLock};
 
@@ -128,7 +128,10 @@ impl Index {
     async fn can_start(&self, scope: &Scope) -> Result<bool> {
         Ok(self.pages.allowed(scope, crate::ISSUE).await?
             && self.pages.allowed(scope, crate::SUBMIT).await?
-            && self.pages.allowed(scope, bilibi_finance_ledger::VIEW).await?)
+            && self
+                .pages
+                .allowed(scope, bilibi_finance_ledger::VIEW)
+                .await?)
     }
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         let query = DocumentQuery {
@@ -163,17 +166,15 @@ impl Index {
     async fn body(&self, scope: &Scope) -> Result<String> {
         let display = self.pages.display(scope).await?;
         let mut statuses = vec![Choice::new("All statuses", "")];
-        statuses.extend(
-            crate::documents::STATUS_EVENTS.iter().map(|s| {
-                Choice::new(
-                    match *s {
-                        "released" => "Released",
-                        s => crate::fiscal::status_label(s),
-                    },
-                    *s,
-                )
-            }),
-        );
+        statuses.extend(crate::documents::STATUS_EVENTS.iter().map(|s| {
+            Choice::new(
+                match *s {
+                    "released" => "Released",
+                    s => crate::fiscal::status_label(s),
+                },
+                *s,
+            )
+        }));
         let mut types = vec![Choice::new("All types", "")];
         types.extend(
             crate::Einvoice::authority()
@@ -257,7 +258,11 @@ impl Index {
                     )
                     .cell(
                         "payable_amount",
-                        Cell::text(format!("{} {}", d.payable_amount, d.currency_code)),
+                        Cell::text(format!(
+                            "{} {}",
+                            bilibi_finance_ledger::Money::display_decimal(d.payable_amount, None),
+                            d.currency_code
+                        )),
                     )
                     .slot("status", status_badge(&d.status)?)
                     .cell("environment", Cell::text(sentence(&d.environment))),
@@ -318,6 +323,7 @@ impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let mut opened = None;
+            let mut back = None;
             let reload = match request.input {
                 LiveInput::Refresh => true,
                 LiveInput::Params(values) => {
@@ -352,6 +358,11 @@ impl LiveState<Scope, Error> for Index {
                                     self.new = None;
                                     false
                                 }
+                                Outcome::Back(href) => {
+                                    self.new = None;
+                                    back = Some(href);
+                                    false
+                                }
                                 Outcome::Opened(href, flash) => {
                                     self.new = None;
                                     opened = Some((href, flash));
@@ -379,6 +390,13 @@ impl LiveState<Scope, Error> for Index {
             };
             if reload {
                 self.load(request.scope).await?;
+            }
+            if let Some(href) = back {
+                return Ok(LiveBody {
+                    html: self.body(request.scope).await?,
+                    redirect: Some(href),
+                    ..Default::default()
+                });
             }
             if let Some((href, flash)) = opened {
                 return Ok(LiveBody {

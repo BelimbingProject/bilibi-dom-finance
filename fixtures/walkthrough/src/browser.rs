@@ -222,6 +222,13 @@ async fn prove_invoice_einvoice(
     use bilibi_ui::page::{LiveInput, LiveRequest, PageRequest, PageService};
     use std::collections::HashMap;
     let contracts = services.get::<PageContracts>(SERVICE)?;
+    // A page write goes through its contract with the person's own session.
+    let login = services
+        .get::<bilibi_core::user::UserService>("core/user.accounts")?
+        .login("manager@other.example.test", crate::PASSWORD)
+        .await?;
+    assert!(!login.pending);
+    let token = login.token.as_str();
     let listed = contracts
         .read(
             scope,
@@ -266,20 +273,45 @@ async fn prove_invoice_einvoice(
     let opened = state
         .update(LiveRequest {
             scope,
-            credential: "",
+            credential: token,
             input: LiveInput::Refresh,
         })
         .await?;
     for text in ["einvoice-new-modal", number, "Submit e-invoice"] {
         assert!(opened.html.contains(text), "the dialog shows {text}");
     }
+    // Cancel goes back to the invoice that asked, and records nothing.
+    let mut cancelled = pages
+        .0
+        .mount(PageRequest {
+            operation: "index",
+            scope: Some(scope),
+            path: &HashMap::new(),
+            query: &query,
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .unwrap();
+    let cancel = json!({"type":"cancel_einvoice"});
+    let back = cancelled
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Event(&cancel),
+        })
+        .await?;
+    assert_eq!(
+        back.redirect.as_deref(),
+        Some(format!("/finance/receivables/invoices/{id}").as_str())
+    );
     // The invoice holds no authority codes: what is missing is said beside
     // its field and nothing is recorded.
     let bare = json!({"type":"create_einvoice"});
     let refused = state
         .update(LiveRequest {
             scope,
-            credential: "",
+            credential: token,
             input: LiveInput::Event(&bare),
         })
         .await?;
@@ -294,6 +326,8 @@ async fn prove_invoice_einvoice(
         "einvoice[tax_id]":"C29702635060",
         "einvoice[registration_type]":"BRN",
         "einvoice[phone]":"+60355550100",
+        "einvoice[address]":"12 Jalan Delta\nSeksyen 7",
+        "einvoice[city]":"Shah Alam",
         "einvoice[state_code]":"14",
         "einvoice[country_code]":"MYS",
         "einvoice[classification_0]":"003",
@@ -303,7 +337,7 @@ async fn prove_invoice_einvoice(
     let sent = state
         .update(LiveRequest {
             scope,
-            credential: "",
+            credential: token,
             input: LiveInput::Event(&filled),
         })
         .await?;
@@ -321,9 +355,34 @@ async fn prove_invoice_einvoice(
         )
         .await?["result"]
         .clone();
-    assert_eq!(read["fiscal"]["document"]["status"], json!("valid"), "{read}");
+    assert_eq!(
+        read["fiscal"]["document"]["status"],
+        json!("valid"),
+        "{read}"
+    );
     assert_eq!(read["fiscal"]["document"]["href"], json!(href));
-    assert!(read["fiscal"]["start"].is_null(), "a standing e-invoice is not started twice");
+    assert!(
+        read["fiscal"]["start"].is_null(),
+        "a standing e-invoice is not started twice"
+    );
+    // The e-invoice names the invoice it was made for and links its page.
+    let facade = services.get::<Einvoice>(bilibi_finance_einvoice::SERVICE)?;
+    let document = href
+        .rsplit('/')
+        .next()
+        .and_then(|id| id.parse::<i64>().ok())
+        .ok_or("e-invoice id")?;
+    let view = facade.get_document(scope, company, document).await?;
+    let made_for = facade
+        .source_records(scope, company, &view.source_links)
+        .await?;
+    assert_eq!(
+        made_for,
+        vec![Some(bilibi_finance_einvoice::SourceRecord {
+            name: format!("Invoice {number}"),
+            href: format!("/finance/receivables/invoices/{id}"),
+        })]
+    );
     // The address is a request, never proof: asking again opens only a notice.
     let mut again = pages
         .0
@@ -340,14 +399,14 @@ async fn prove_invoice_einvoice(
     let again = again
         .update(LiveRequest {
             scope,
-            credential: "",
+            credential: token,
             input: LiveInput::Refresh,
         })
         .await?;
     assert!(again.html.contains("already has e-invoice"));
     assert!(!again.html.contains("einvoice-new-submit"));
     println!(
-        "NU1: invoice {number} offers Submit e-invoice; the dialog refuses missing codes beside their fields, records and sends it; the invoice reads its e-invoice as valid at {href} and offers no second one"
+        "NU1: invoice {number} offers Submit e-invoice; Cancel goes back to the invoice; the dialog refuses missing codes beside their fields, records and sends it; the invoice reads its e-invoice as valid at {href}, which names the invoice, and offers no second one"
     );
     Ok(())
 }

@@ -47,6 +47,8 @@ pub struct FiscalSource {
     pub kind: FiscalSourceKind,
     /// The number the record was issued under.
     pub number: String,
+    /// The record's own page, a path on this site.
+    pub href: String,
     /// `YYYY-MM-DD`.
     pub issue_date: String,
     pub currency_code: String,
@@ -134,7 +136,7 @@ pub enum FiscalTone {
     Waiting,
     /// The authority or the buyer turned it back; a person must act.
     Problem,
-    /// It no longer stands (cancelled).
+    /// It is cancelled, or the buyer asked for it to be.
     Ended,
 }
 
@@ -174,9 +176,9 @@ impl FiscalStanding {
     pub fn badge(&self) -> Html {
         let kind = match self.tone {
             FiscalTone::Good => BadgeKind::Success,
-            FiscalTone::Waiting => BadgeKind::Warning,
+            FiscalTone::Waiting => BadgeKind::Plain,
             FiscalTone::Problem => BadgeKind::Danger,
-            FiscalTone::Ended => BadgeKind::Neutral,
+            FiscalTone::Ended => BadgeKind::Warning,
         };
         let badge = bilibi_ui::status_badge(kind, &self.label);
         // Only escaped text is written, so rendering cannot fail.

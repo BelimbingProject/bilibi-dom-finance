@@ -469,7 +469,9 @@ impl ReadHandler for Read {
                             .as_str()
                             .map(str::trim)
                             .filter(|text| !text.is_empty() && text.len() <= 100)
-                            .ok_or_else(|| failure(invalid("source", "names a module and a record")))
+                            .ok_or_else(|| {
+                                failure(invalid("source", "names a module and a record"))
+                            })
                     };
                     service
                         .source_draft_on(client, scope, company, text("module")?, text("record")?)

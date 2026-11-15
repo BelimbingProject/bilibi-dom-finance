@@ -604,12 +604,37 @@ pub async fn run() -> Outcome<()> {
         &update(&mut no_setup, &viewer, LiveInput::Refresh).await?,
         "Setup unavailable",
     );
+    // A posting account is chosen in place from the chart; a code that names
+    // no account taking postings is refused beside its field and nothing is
+    // kept; someone whose grant was withdrawn changes nothing.
+    let choose = |value: &str| json!({"type":"save_posting_account","field":"settlement_account","id":"","value":value});
+    let chosen = event(&mut setup, &manager, choose("1100")).await?;
+    has(&chosen, "einvoice-posting-settlement-account");
+    let settlement =
+        |setup: bilibi_finance_einvoice::Setup| setup.posting_accounts.settlement_account;
+    assert_eq!(
+        settlement(einvoice.setup(&manager, COMPANY).await?).as_deref(),
+        Some("1100")
+    );
+    has(
+        &event(&mut setup, &manager, choose("NO-SUCH")).await?,
+        "was not saved: Settlement account must be an active account of the chart that takes postings.",
+    );
     grants.set_direct(&admin, 1, SETTINGS, Some(false)).await?;
+    has(
+        &event(&mut setup, &manager, choose("4000")).await?,
+        "You do not have permission to do that.",
+    );
     has(
         &event(&mut setup, &manager, json!({"type":"test_connection"})).await?,
         "you do not have permission to manage e-invoice settings.",
     );
     grants.set_direct(&admin, 1, SETTINGS, None).await?;
+    assert_eq!(
+        settlement(einvoice.setup(&manager, COMPANY).await?).as_deref(),
+        Some("1100")
+    );
+    println!("NE6: a posting account is chosen in place; an unknown code and a withdrawn grant change nothing");
     println!("NE6: read-only controls withheld; setup refusal and stale manage grant passed");
     if std::env::args().any(|a| a == "--serve") {
         let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4396".into());

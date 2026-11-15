@@ -123,6 +123,7 @@ fn describe(d: Document) -> Option<FiscalSource> {
             FiscalSourceKind::Invoice
         },
         number: d.document_reference?,
+        href: format!("/finance/receivables/invoices/{}", d.id),
         issue_date: d.issue_date?,
         currency_code: d.currency_code,
         total: d.total.amount(),

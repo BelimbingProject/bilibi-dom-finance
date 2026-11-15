@@ -54,7 +54,6 @@ struct Line {
     detail: String,
     classification: String,
     tax_type: String,
-    taxed: bool,
 }
 
 /// What the dialog holds between events.
@@ -77,18 +76,38 @@ pub(super) struct NewDocument {
     notice: Option<String>,
     /// The read was refused: the dialog offers only Close.
     refused: bool,
+    /// The chosen record's own page, as its module answered it.
+    record_page: Option<String>,
+    /// The page of the record that asked for the dialog, which Cancel and
+    /// Close go back to; none when "+ E-invoice" opened it.
+    back: Option<String>,
 }
 
 /// What an event of the dialog came to.
 pub(super) enum Outcome {
     Stay,
     Close,
+    /// Closed from a record's own page: go back to it.
+    Back(String),
     /// The e-invoice was recorded: open it, with what happened to its sending.
     Opened(String, (StatusKind, String)),
 }
 
 fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().to_owned()
+}
+
+/// Drops what the draft leaves unsaid: the contract takes a value or no
+/// field, never a null.
+fn without_nulls(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|_, value| !value.is_null());
+            map.values_mut().for_each(without_nulls);
+        }
+        Value::Array(items) => items.iter_mut().for_each(without_nulls),
+        _ => {}
+    }
 }
 
 fn key(module: &str, record: &str) -> String {
@@ -110,11 +129,7 @@ impl NewDocument {
                     .flatten()
                     .map(|r| {
                         Choice::new(
-                            format!(
-                                "{} · {}",
-                                text(&r["number"]),
-                                text(&r["party_name"]),
-                            ),
+                            format!("{} · {}", text(&r["number"]), text(&r["party_name"]),),
                             key(&text(&r["module"]), &text(&r["record"])),
                         )
                         .detail(dates::display_text(&text(&r["issue_date"])))
@@ -141,6 +156,8 @@ impl NewDocument {
     ) -> Result<Self> {
         let mut dialog = Self::default();
         dialog.load(pages, scope, module, record).await?;
+        // The reader's own answer, never the address that asked.
+        dialog.back = dialog.record_page.take();
         Ok(dialog)
     }
 
@@ -179,6 +196,10 @@ impl NewDocument {
             Ok(answer) => answer,
             Err(error) => return self.refuse(error),
         };
+        self.record_page = answer["source"]["href"]
+            .as_str()
+            .filter(|href| href.starts_with('/') && !href.starts_with("//"))
+            .map(str::to_owned);
         if let Some(existing) = answer["document"]
             .as_object()
             .filter(|d| d["replaceable"] != json!(true))
@@ -220,7 +241,9 @@ impl NewDocument {
             .flatten()
             .map(|line| {
                 let rate = text(&line["tax_rate"]);
-                let taxed = rate.parse::<rust_decimal::Decimal>().is_ok_and(|r| !r.is_zero());
+                let taxed = rate
+                    .parse::<rust_decimal::Decimal>()
+                    .is_ok_and(|r| !r.is_zero());
                 let amount = |key: &str| {
                     text(&line[key])
                         .parse()
@@ -240,7 +263,6 @@ impl NewDocument {
                     ),
                     classification: text(&line["classification_code"]),
                     tax_type: text(&line["tax_type"]),
-                    taxed,
                 }
             })
             .collect();
@@ -262,7 +284,12 @@ impl NewDocument {
         v: &Value,
     ) -> Result<Outcome> {
         match v["type"].as_str() {
-            Some("cancel_einvoice") => return Ok(Outcome::Close),
+            Some("cancel_einvoice") => {
+                return Ok(match self.back.take() {
+                    Some(href) => Outcome::Back(href),
+                    None => Outcome::Close,
+                })
+            }
             Some("einvoice_change") => {
                 let before = self.chosen.clone();
                 self.read(v);
@@ -271,6 +298,7 @@ impl NewDocument {
                         let choices = std::mem::take(&mut self.choices);
                         *self = Self {
                             choices,
+                            back: self.back.take(),
                             ..Self::default()
                         };
                         self.load(pages, scope, module, record).await?;
@@ -321,8 +349,9 @@ impl NewDocument {
         let mut input = self.draft.clone();
         input["code_number"] = json!(self.number.trim());
         let now = jiff::Timestamp::now();
-        input["issued_at"] =
-            json!(jiff::Timestamp::from_second(now.as_second()).unwrap_or(now).to_string());
+        input["issued_at"] = json!(jiff::Timestamp::from_second(now.as_second())
+            .unwrap_or(now)
+            .to_string());
         for (key, path, _) in BUYER {
             let value = self.buyer.get(key).map_or("", |v| v.trim());
             let value = if key == "address" {
@@ -331,9 +360,9 @@ impl NewDocument {
                     .map(str::trim)
                     .filter(|line| !line.is_empty())
                     .collect::<Vec<_>>())
-            } else if value.is_empty() {
-                Value::Null
             } else {
+                // Blank is a string, so the refusal is the facade's own
+                // ("can't be blank") at the field, not the schema's.
                 json!(value)
             };
             match path {
@@ -346,6 +375,10 @@ impl NewDocument {
             input["lines"][n]["classification_code"] = json!(line.classification.trim());
             input["lines"][n]["tax_type"] = json!(line.tax_type.trim());
         }
+        if input["buyer"]["name"].is_null() {
+            input["buyer"]["name"] = json!("");
+        }
+        without_nulls(&mut input);
         input
     }
 
@@ -367,7 +400,10 @@ impl NewDocument {
         let recorded = match pages.contracts.submit(&call(ISSUE), input).await {
             Ok(answer) => answer["result"]["record"].clone(),
             Err(error) => {
-                self.refusal(error, "The e-invoice could not be recorded. Please try again.")?;
+                self.refusal(
+                    error,
+                    "The e-invoice could not be recorded. Please try again.",
+                )?;
                 return Ok(Outcome::Stay);
             }
         };
@@ -386,7 +422,7 @@ impl NewDocument {
             Ok(_) => (
                 StatusKind::Success,
                 format!(
-                    "E-invoice {number} was sent. Its status changes when the tax authority answers."
+                    "E-invoice {number} is being sent to the tax authority. Reload this page to see the answer."
                 ),
             ),
             Err(error) => {
@@ -423,8 +459,7 @@ impl NewDocument {
                 return Ok(());
             }
             ContractError::Backend(Error::Conflict) => {
-                self.notice =
-                    Some("The details changed. Check them and submit again.".into());
+                self.notice = Some("The details changed. Check them and submit again.".into());
                 return Ok(());
             }
             ContractError::Backend(
@@ -504,10 +539,13 @@ impl NewDocument {
 
     fn codes(&self, list: &str) -> Vec<Choice> {
         self.codes[list]
-            .as_object()
+            .as_array()
             .into_iter()
             .flatten()
-            .map(|(code, name)| Choice::new(name.as_str().unwrap_or(code), code).detail(code))
+            .filter_map(|entry| {
+                let code = entry["code"].as_str()?;
+                Some(Choice::new(entry["name"].as_str().unwrap_or(code), code).detail(code))
+            })
             .collect()
     }
 
@@ -548,11 +586,10 @@ impl NewDocument {
                     text(&self.source["number"]),
                     text(&self.source["party_name"]),
                     dates::display_text(&text(&self.source["issue_date"])),
-                    text(&self.source["total"])
-                        .parse()
-                        .map_or_else(|_| text(&self.source["total"]), |d| {
-                            Money::display_decimal(d, None)
-                        }),
+                    text(&self.source["total"]).parse().map_or_else(
+                        |_| text(&self.source["total"]),
+                        |d| { Money::display_decimal(d, None) }
+                    ),
                     text(&self.source["currency_code"]),
                 ),
             })?);
@@ -637,21 +674,20 @@ impl NewDocument {
                     }),
                 )?;
                 fields.push(&render(
-                    Field::in_form(FORM, &format!("tax_type_{n}"))
-                        .id(at(&format!("tax-type-{n}")))
-                        .label("Tax type")
-                        .aria_label(format!("Tax type of line {}", n + 1))
-                        .kind(InputKind::Select)
-                        .prompt("Choose a tax type")
-                        .options(self.codes("tax_type"))
-                        .value(&line.tax_type)
-                        .required()
-                        .hint(if line.taxed {
-                            "Which tax this line charges."
-                        } else {
-                            ""
-                        })
-                        .errors(self.errors(&format!("tax_type_{n}"), "Tax type")),
+                    Combobox::new(
+                        at(&format!("tax-type-{n}")),
+                        format!("{FORM}[tax_type_{n}]"),
+                    )
+                    .label("Tax type *")
+                    .aria_label(format!("Tax type of line {}", n + 1))
+                    .placeholder("Choose a tax type")
+                    .options(self.codes("tax_type"))
+                    .value(&line.tax_type)
+                    .errors(self.errors(&format!("tax_type_{n}"), "Tax type"))
+                    .attrs(Attrs {
+                        required: true,
+                        ..Attrs::default()
+                    }),
                 )?);
                 lines.push(&render(LineRow {
                     n,

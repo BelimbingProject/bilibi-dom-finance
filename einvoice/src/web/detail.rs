@@ -12,6 +12,9 @@ pub(super) struct Detail {
     pages: Pages,
     document_id: i64,
     document: Option<DocumentView>,
+    /// The records the document was made for, as their own module names
+    /// them, in the order of its source links.
+    source_records: Vec<Option<crate::SourceRecord>>,
     lines: ListColumns,
     sources: ListColumns,
     events: ListColumns,
@@ -132,10 +135,21 @@ struct EntryById<'a> {
     text: &'a str,
 }
 
+/// The record a document was made for, linked to its own page.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="{{ href }}" class="text-action hover:underline">{{ name }}</a>"#,
+    ext = "html"
+)]
+struct SourceRecordLink<'a> {
+    href: &'a str,
+    name: &'a str,
+}
+
 /// A line on the page with a link to where it is acted on.
 #[derive(Template)]
 #[template(
-    source = r#"{{ text }} <a href="{{ href }}" class="text-link hover:underline">{{ link }}</a>"#,
+    source = r#"{{ text }} <a href="{{ href }}" class="text-action underline">{{ link }}</a>"#,
     ext = "html"
 )]
 struct WithLink<'a> {
@@ -305,7 +319,13 @@ fn attention(flag: Attention, d: &DocumentView) -> Result<(&'static str, Html)> 
             if let Some(reason) = why("posting_failed") {
                 // Accounts not chosen yet are chosen on the setup page.
                 if reason.starts_with("Choose the ") {
-                    retry = Some(("/finance/einvoice/setup".into(), "Choose accounts"));
+                    retry = Some((
+                        format!(
+                            "/finance/einvoice/setup#{}",
+                            super::posting_accounts::ANCHOR
+                        ),
+                        "Choose accounts",
+                    ));
                 }
                 message = format!("Valid, but not in the books yet. {reason}");
             }
@@ -372,6 +392,7 @@ impl Detail {
             pages: pages.clone(),
             document_id,
             document: None,
+            source_records: Vec::new(),
             framed,
             lines: columns(
                 "einvoice-lines",
@@ -427,6 +448,15 @@ impl Detail {
             Ok(d) => Some(d),
             Err(EinvoiceError::Failed(error)) => return Err(error),
             Err(_) => None,
+        };
+        self.source_records = match &self.document {
+            Some(d) if !d.source_links.is_empty() => self
+                .pages
+                .einvoice
+                .source_records(scope, company(scope)?, &d.source_links)
+                .await
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
         if let Some(d) = &self.document {
             self.lines
@@ -607,7 +637,12 @@ impl Detail {
             view.header_subtitle = render(Subtitle {
                 d,
                 environment: sentence(&d.document.environment),
-                status: status_badge(&d.status)?,
+                // Queued for the authority: neither "Not sent" nor "Sent" yet.
+                status: status_badge(if d.submission_queued {
+                    "sending"
+                } else {
+                    &d.status
+                })?,
             })?;
             view.supplier = party_lines(&d.document.supplier);
             view.buyer = party_lines(&d.document.buyer);
@@ -663,7 +698,14 @@ impl Detail {
                     title: "Ledger entry",
                     id: "",
                     value: match (d.ledger_entry_id, d.reversal_entry_id) {
-                        (None, _) => Html::text("—"),
+                        // The record it was made for posted the entry.
+                        (None, _) => match d.source_links.as_slice() {
+                            [only] => render(EntryById {
+                                id: only.ledger_entry_id,
+                                text: "Open journal",
+                            })?,
+                            _ => Html::text("—"),
+                        },
                         (Some(id), reversal) => {
                             let mut html = render(EntryById {
                                 id,
@@ -682,18 +724,33 @@ impl Detail {
                 },
             ];
             if d.recognised_by_source {
+                // The record as its own module names it, linked to its page;
+                // its journal for a reader that module shows nothing.
+                let mut made_for = Html::EMPTY;
+                if d.source_links.len() > crate::NAMED_SOURCES {
+                    // A consolidated document covers a month of them.
+                    made_for = Html::text(&format!("{} posted records", d.source_links.len()));
+                } else {
+                    for (index, link) in d.source_links.iter().enumerate() {
+                        if index > 0 {
+                            made_for.push(&Html::text(" · "));
+                        }
+                        made_for.push(&match self.source_records.get(index) {
+                            Some(Some(record)) => render(SourceRecordLink {
+                                href: &record.href,
+                                name: &record.name,
+                            })?,
+                            _ => render(EntryById {
+                                id: link.ledger_entry_id,
+                                text: "Open journal",
+                            })?,
+                        });
+                    }
+                }
                 facts.push(Fact {
-                    title: "Recognised by",
+                    title: "Made for",
                     id: "einvoice-document-source-links",
-                    value: Html::text(
-                        &d.source_links
-                            .iter()
-                            .map(|s| {
-                                format!("{} {} (entry #{})", s.module, s.record, s.ledger_entry_id)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("; "),
-                    ),
+                    value: made_for,
                 });
             }
             view.authority = render(Facts {
@@ -763,7 +820,11 @@ impl Detail {
                 .map(|(title, amount)| Fact {
                     title,
                     id: "",
-                    value: Html::text(&format!("{amount} {}", d.document.currency_code)),
+                    value: Html::text(&format!(
+                        "{} {}",
+                        Money::display_decimal(*amount, None),
+                        d.document.currency_code
+                    )),
                 })
                 .collect(),
             })?;
@@ -807,7 +868,11 @@ impl Detail {
                     )
                     .cell(
                         "payable",
-                        Cell::text(format!("{} {}", s.payable_amount, s.currency_code)),
+                        Cell::text(format!(
+                            "{} {}",
+                            Money::display_decimal(s.payable_amount, None),
+                            s.currency_code
+                        )),
                     ),
                 );
             }

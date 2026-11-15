@@ -439,12 +439,7 @@ impl Einvoice {
         }
         let job = self
             .queue
-            .enqueue_for(
-                tx,
-                scope,
-                SUBMIT_WORKER,
-                job_args(company_id, document_id),
-            )
+            .enqueue_for(tx, scope, SUBMIT_WORKER, job_args(company_id, document_id))
             .await
             .map_err(refusal)?;
         let document = &recorded.document;

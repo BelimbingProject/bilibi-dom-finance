@@ -466,6 +466,10 @@ pub trait Authority {
     /// sure of it; a person chooses otherwise.
     fn country_code(&self, iso: &str) -> Option<&'static str>;
 
+    /// A phone number as the authority takes it, from the way people write
+    /// one (spaces, dashes, brackets).
+    fn dialable(&self, phone: &str) -> String;
+
     /// The tax type of a line when its rate alone decides it (a line with no
     /// tax); `None` when a person must say which tax it is.
     fn tax_type_for(&self, rate: Option<rust_decimal::Decimal>) -> Option<&'static str>;
