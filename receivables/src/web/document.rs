@@ -419,7 +419,21 @@ impl Document {
     }
 
     fn mail_dialog(&self, d: &Mailing) -> Result<Html> {
-        let mut body = Html::EMPTY;
+        let labels = [
+            ("recipient", "Email address"),
+            ("subject", "Subject"),
+            ("body", "Message"),
+        ]
+        .into_iter()
+        .map(|(key, label)| {
+            (
+                key.to_owned(),
+                format!("invoice-mail-{key}"),
+                label.to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+        let mut body = render(d.errors.summary("invoice-mail-errors", &labels))?;
         for (key, label) in [
             ("recipient", "Email address"),
             ("subject", "Subject"),

@@ -84,7 +84,7 @@ inventory::submit! {
             order_operations::bind(receivables.clone())?;
             opening_operations::bind(receivables.clone())?;
             Ok(receivables)
-        }}, Service { id: mail::SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(mail::SendInvoice { receivables: services.get(SERVICE)?, mailer: services.get(bilibi_mail::SERVICE)? })))) }, Service { id: orders::SWEEP_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
+        }}, Service { id: mail::ENDING_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::EndingService(Arc::new(mail::MailEnded { receivables: services.get(SERVICE)? })))) }, Service { id: mail::SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(mail::SendInvoice { receivables: services.get(SERVICE)?, mailer: services.get(bilibi_mail::SERVICE)? })))) }, Service { id: orders::SWEEP_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
             receivables: services.get(SERVICE)?, schedule: services.get("base/schedule.store")?, queue: services.get(bilibi_queue::SERVICE)?,
         })))) }, Service { id: orders::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrder { receivables: services.get(SERVICE)? })))) }, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),

@@ -6,13 +6,18 @@ use bilibi_agent_api::OperationClient;
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
-    Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
+    Ended, Ending, EndingBinding, EndingFuture, Execution, Handler, HandlerBinding, HandlerFuture,
+    Outcome, Worker, ENDINGS, HANDLERS, WORKERS,
 };
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 const WORKER: &str = "finance/receivables-send-invoice";
+pub(crate) const PRINCIPAL: &str = "finance-receivables-send-invoice";
+pub(crate) const MONITOR: &str = "finance-receivables-mail-monitor";
+pub(crate) const MONITOR_CAPABILITY: &str = "finance.receivables.mail.record-failure";
+pub(crate) const ENDING_SERVICE: &str = "finance/receivables.mail_ended";
 pub(crate) const SERVICE: &str = "finance/receivables.send_invoice";
 const MAIL: store::Table = store::Table {
     name: "finance_receivables_mail",
@@ -32,6 +37,51 @@ fn args(value: Value) -> bilibi_database::Result<Value> {
 }
 inventory::submit! { Contribution::new(WORKERS, WORKER, Provenance { module: MODULE, source: file!(), line: line!() }, &Worker { max_attempts: 5, validate: args }) }
 inventory::submit! { Contribution::new(HANDLERS, WORKER, Provenance { module: MODULE, source: file!(), line: line!() }, &HandlerBinding { service: SERVICE, capability: MANAGE_DOCUMENTS }) }
+inventory::submit! { Contribution::new(ENDINGS, WORKER, Provenance { module: MODULE, source: file!(), line: line!() }, &EndingBinding { service: ENDING_SERVICE, principal: MONITOR, capability: MONITOR_CAPABILITY }) }
+inventory::submit! { Contribution::new(bilibi_authz::STANDING_GRANTS, MONITOR, Provenance { module: MODULE, source: file!(), line: line!() }, &bilibi_authz::StandingGrant { principal: MONITOR, capabilities: &[MONITOR_CAPABILITY] }) }
+
+pub(crate) struct MailEnded {
+    pub receivables: Arc<Receivables>,
+}
+impl Ending for MailEnded {
+    fn ended<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        job: &'a Ended,
+    ) -> EndingFuture<'a> {
+        Box::pin(async move {
+            let Some(company) = job.args["company_id"].as_i64() else {
+                return Ok(());
+            };
+            let Some(id) = job.args["mail_id"].as_i64() else {
+                return Ok(());
+            };
+            self.receivables
+                .join(tx.sql(), scope, company, MONITOR_CAPABILITY)
+                .await
+                .map_err(|_| Error::Forbidden)?;
+            let Some(old) = store::find(tx.sql(), MAIL, scope.tenant(), company, Some(id)).await?
+            else {
+                return Ok(());
+            };
+            if old["status"] != "queued" {
+                return Ok(());
+            }
+            let tenant = scope.tenant();
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    let mut data = old.clone();
+                    data["status"] = json!("failed");
+                    let mut changes = Vec::new();
+                    store::save(sql, MAIL, tenant, company, Some(old), data, &mut changes).await?;
+                    Ok(((), changes))
+                })
+            })
+            .await
+        })
+    }
+}
 
 impl Receivables {
     pub(super) async fn review_mail(
@@ -47,6 +97,13 @@ impl Receivables {
             .ok_or(ReceivableError::InvalidOption)?;
         self.authorize_on(client, scope, company, crate::VIEW)
             .await?;
+        let system =
+            bilibi_authz::SystemScope::rehydrate(client, scope.tenant(), Some(PRINCIPAL)).await?;
+        for capability in [MANAGE_DOCUMENTS, crate::VIEW] {
+            bilibi_authz::authorize_system(client, &system, capability)
+                .await
+                .map_err(|_| invalid("base", "Ask an administrator to enable invoice email."))?;
+        }
         let document = documents::read(client, scope.tenant(), company, id).await?;
         if document.status != "issued" || document.kind != "invoice" || document.opening.is_some() {
             return Err(ReceivableError::NotIssued);
@@ -94,10 +151,12 @@ impl Receivables {
                 })
             })
             .await?;
+        let system =
+            bilibi_authz::SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
         self.queue
-            .enqueue_for(
+            .enqueue_system_within(
                 tx,
-                scope,
+                &system,
                 WORKER,
                 json!({"company_id":company,"mail_id":row["id"]}),
             )
@@ -124,6 +183,9 @@ impl Handler for SendInvoice {
 impl SendInvoice {
     async fn run(&self, execution: &Execution, args: Value) -> Result<()> {
         let scope = execution.scope().ok_or(ReceivableError::Unauthorized)?;
+        if scope.principal() != Some(PRINCIPAL) {
+            return Err(ReceivableError::Unauthorized);
+        }
         let company = args["company_id"]
             .as_i64()
             .ok_or(ReceivableError::InvalidOption)?;

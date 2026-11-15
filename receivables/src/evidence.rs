@@ -9,6 +9,22 @@ use serde_json::Value;
 const ISO: &str = "YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"";
 const DATASETS: &[(&str, &str, &[&str])] = &[
     (
+        "mail",
+        "finance_receivables_mail",
+        &[
+            "id",
+            "tenant_id",
+            "company_id",
+            "document_id",
+            "recipient",
+            "subject",
+            "body",
+            "status",
+            "inserted_at",
+            "updated_at",
+        ],
+    ),
+    (
         "sales_order",
         "finance_receivables_sales_orders",
         &[

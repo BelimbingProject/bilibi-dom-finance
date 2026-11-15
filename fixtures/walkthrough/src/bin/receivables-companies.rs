@@ -78,6 +78,19 @@ async fn main() -> Outcome<()> {
     let grants = app
         .services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
+    for capability in [
+        bilibi_finance_receivables::VIEW,
+        bilibi_finance_receivables::MANAGE_DOCUMENTS,
+    ] {
+        grants
+            .set_system(
+                &admin,
+                "finance-receivables-send-invoice",
+                capability,
+                Some(true),
+            )
+            .await?;
+    }
     let ledger = app.services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let account = |code: &str| {
         installed
