@@ -137,6 +137,7 @@ pub(super) struct Index {
     /// What the categories and runs pages last read, for their writes.
     category_list: Vec<Category>,
     run_list: Vec<Run>,
+    purchases: Option<Html>,
     history: ListColumns,
     check: ListColumns,
 }
@@ -188,6 +189,7 @@ impl Index {
             runs: runs::State::default(),
             category_list: Vec::new(),
             run_list: Vec::new(),
+            purchases: None,
             history: categories::history_columns()?,
             check: cols(
                 "assets-ledger-check",
@@ -235,42 +237,45 @@ impl Index {
             Kind::Categories => self.categories.new = Some(Draft::default()),
             Kind::Runs => {
                 let c = company(s).ok_or(Error::Invalid)?;
-                let runs: Vec<Run> = self
+                if let Ok(runs) = self
                     .pages
-                    .read(
+                    .read::<Vec<Run>>(
                         s,
                         "finance.fixed_assets.run.list",
                         serde_json::json!({"company_id": c}),
                         "records",
                     )
                     .await
-                    .map_err(|_| Error::Internal)?;
+                {
+                    self.run_list = runs;
+                }
                 let today = self.clock(s).await?.today;
-                let period = if let Some(last) = runs.iter().map(|r| r.period).max() {
+                let period = if let Some(last) = self.run_list.iter().map(|r| r.period).max() {
                     last.checked_add(1.month())
                         .unwrap_or(today.first_of_month())
                 } else {
-                    let report: RegisterReport = self
-                        .pages
-                        .read(
+                    self.pages
+                        .read::<RegisterReport>(
                             s,
                             "finance.fixed_assets.register.get",
                             serde_json::json!({"company_id": c, "as_of": today.to_string()}),
                             "report",
                         )
                         .await
-                        .map_err(|_| Error::Internal)?;
-                    report
-                        .rows
-                        .iter()
-                        .filter(|r| !r.voided && !r.disposed)
-                        .map(|r| {
-                            r.asset
-                                .opening_date
-                                .unwrap_or(r.asset.in_service_date)
-                                .first_of_month()
+                        .ok()
+                        .and_then(|report| {
+                            report
+                                .rows
+                                .iter()
+                                .filter(|r| !r.voided && !r.disposed)
+                                .map(|r| {
+                                    r.asset
+                                        .opening_date
+                                        .unwrap_or(r.asset.in_service_date)
+                                        .first_of_month()
+                                })
+                                .min()
                         })
-                        .min()
                         .unwrap_or(today.first_of_month())
                 };
                 let mut draft = Draft::default();
@@ -416,7 +421,7 @@ impl Index {
             Kind::Runs => header_button(id, "new", "Run depreciation", true),
         }
     }
-    async fn purchases(&self, s: &Scope, accounts: &categories::Accounts) -> Result<Html> {
+    async fn read_purchases(&self, s: &Scope, accounts: &categories::Accounts) -> Result<Html> {
         if self.kind != Kind::Register || !self.pages.allowed(s, ACQUIRE).await? {
             return Ok(Html::EMPTY);
         }
@@ -645,7 +650,14 @@ impl Index {
             } else {
                 Html::EMPTY
             },
-            purchases: self.purchases(s, &accounts).await?,
+            purchases: {
+                if self.purchases.is_none() {
+                    self.purchases = Some(self.read_purchases(s, &accounts).await?);
+                }
+                let mut purchases = Html::EMPTY;
+                purchases.push(self.purchases.as_ref().expect("purchases read"));
+                purchases
+            },
             flash: flash_map(&self.flash),
             filters,
             unavailable,
@@ -739,6 +751,7 @@ impl Index {
                 }
                 match a.submit(&self.pages, s, credential).await {
                     Ok(description) => {
+                        self.purchases = None;
                         self.flash =
                             Some((StatusKind::Success, format!("Registered {description}.")));
                     }
@@ -898,6 +911,7 @@ impl LiveState<Scope, Error> for Index {
                         opening.update(&r).await?;
                         if opening.completed {
                             self.opening = None;
+                            self.purchases = None;
                             self.flash = Some((StatusKind::Success, "The opening register was reconciled. Open an asset below to read its source evidence.".into()));
                             self.list.search.clear();
                             self.list.apply_filters(&HashMap::from([
