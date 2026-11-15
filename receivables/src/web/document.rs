@@ -178,7 +178,7 @@ impl Document {
     async fn open(&mut self, scope: &Scope, action: &str) -> Result<()> {
         match action {
             "send" => {
-                if self.can_manage {
+                if self.can_issue {
                     if let Some(d) = self.record.as_ref().filter(|d| {
                         d.status == "issued" && d.kind == "invoice" && d.opening.is_none()
                     }) {

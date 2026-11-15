@@ -178,7 +178,7 @@ impl Document {
             }
         }
         if issued && !historical && d.kind == "invoice" {
-            if self.can_manage && d.opening.is_none() {
+            if self.can_issue && d.opening.is_none() {
                 items.push(RecordAction::here(
                     "envelope",
                     "Send invoice",

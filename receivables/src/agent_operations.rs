@@ -81,7 +81,7 @@ impl Write {
     fn capability(self) -> &'static str {
         match self {
             Self::Configure => MANAGE_SETUP,
-            Self::SendInvoice => MANAGE_DOCUMENTS,
+            Self::SendInvoice => ISSUE,
             Self::Code(t, _) => {
                 if t.name == CUSTOMERS.name {
                     MANAGE_CUSTOMERS
@@ -843,7 +843,7 @@ inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.operatio
         Operation {key:"finance.receivables.draft.create",title:"Create a receivables draft",summary:"Save an unnumbered invoice or credit note with derived amounts. Also requires ledger view and configured setup.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_create,output,handler:Handler::SafeWrite(&Write::Draft(false)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.update",title:"Change a receivables draft",summary:"Change header or atomically replace lines; omit lines to keep snapshots. Also requires ledger view.",keywords:&[],capability:MANAGE_DOCUMENTS,input:draft_update,output,handler:Handler::SafeWrite(&Write::Draft(true)),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.draft.discard",title:"Discard a receivables draft",summary:"Keep the draft and its lines permanently as discarded, without numbering or posting.",keywords:&[],capability:MANAGE_DOCUMENTS,input:document,output,handler:Handler::SafeWrite(&Write::Discard),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.receivables.document.send",title:"Send an invoice",summary:"Queue an email with the issued invoice PDF.",keywords:&[],capability:MANAGE_DOCUMENTS,input:send_invoice,output,handler:Handler::SafeWrite(&Write::SendInvoice),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.receivables.document.send",title:"Send an invoice",summary:"Queue an email with the issued invoice PDF.",keywords:&[],capability:ISSUE,input:send_invoice,output,handler:Handler::SafeWrite(&Write::SendInvoice),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.document.issue",title:"Issue an invoice or credit note",summary:"Freeze the saved draft, number it and post its owned entry atomically. Also requires ledger view and entries.post.",keywords:&[],capability:ISSUE,input:document,output,handler:Handler::SafeWrite(&Write::Issue),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.record",title:"Record a receipt",summary:"Number and post a fully allocated payment using each invoice's original control. Also requires ledger view and entries.post.",keywords:&[],capability:POST_PAYMENTS,input:payment_record,output,handler:Handler::SafeWrite(&Write::Payment),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.receivables.payment.reverse",title:"Reverse a receipt",summary:"Correct a payment once with a dated owned mirror entry and reason. Also requires ledger entries.post, not ledger view.",keywords:&[],capability:POST_PAYMENTS,input:payment_reverse,output,handler:Handler::SafeWrite(&Write::Reverse),channels:Channels::Every,step_up:&[]},

@@ -178,10 +178,12 @@ struct StatementRow {
 }
 #[derive(Template)]
 #[template(
-    source = r#"<!doctype html><html><head><meta charset="utf-8"><style>body{font:14px sans-serif;color:#222}table{border-collapse:collapse;width:100%}th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}th:last-child,td:last-child{text-align:right}</style></head><body><h1>Customer statement</h1><p>{{ customer }} · {{ date }}</p><p>Amounts in {{ currency }}</p><table><thead><tr><th>Document</th><th>Issued</th><th>Due</th><th>Outstanding</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.reference }}</td><td>{{ row.date }}</td><td>{{ row.due }}</td><td>{{ row.amount }}</td></tr>{% endfor %}</tbody></table><p>Total owed: {{ total }} {{ currency }}</p></body></html>"#,
+    source = r#"<!doctype html><html><head><meta charset="utf-8"><style>body{font:14px sans-serif;color:#222}table{border-collapse:collapse;width:100%}th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}th:last-child,td:last-child{text-align:right}.block{white-space:pre-line}</style></head><body><header><h2>{{ company_name }}</h2>{% if !layout.registration_number.is_empty() %}<div class="block">Registration number: {{ layout.registration_number }}</div>{% endif %}{% if !layout.tax_number.is_empty() %}<div class="block">Tax registration number: {{ layout.tax_number }}</div>{% endif %}<div class="block">{{ layout.address }}</div><div class="block">{{ layout.contact }}</div></header><h1>Customer statement</h1><p>{{ customer }} · {{ date }}</p><p>Amounts in {{ currency }}</p><table><thead><tr><th>Document</th><th>Issued</th><th>Due</th><th>Outstanding</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.reference }}</td><td>{{ row.date }}</td><td>{{ row.due }}</td><td>{{ row.amount }}</td></tr>{% endfor %}</tbody></table><p>Total owed: {{ total }} {{ currency }}</p></body></html>"#,
     ext = "html"
 )]
 struct StatementView {
+    company_name: String,
+    layout: crate::InvoiceLayout,
     customer: String,
     date: String,
     currency: String,
@@ -232,7 +234,22 @@ impl Receivables {
                 });
             }
         }
+        let layout = self.get_setup(scope, company).await?.invoice_layout;
+        let company_id =
+            OrganisationId::new(company).map_err(|_| ReceivableError::CompanyNotFound)?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let company_name = if layout.company_name.is_empty() {
+            self.parties
+                .organisation_name(&**client, scope, company_id)
+                .await?
+                .map(|o| o.name)
+                .unwrap_or_default()
+        } else {
+            layout.company_name.clone()
+        };
         let template = StatementView {
+            company_name,
+            layout,
             customer: customer["name"].as_str().ok_or(Error::Invalid)?.into(),
             date: bilibi_finance_ledger::dates::display_text(
                 data["as_of"].as_str().ok_or(Error::Invalid)?,
@@ -246,9 +263,6 @@ impl Receivables {
                 .render()
                 .map_err(|_| ReceivableError::Pdf("template"))?,
         };
-        let company_id =
-            OrganisationId::new(company).map_err(|_| ReceivableError::CompanyNotFound)?;
-        let mut client = self.db.get().await.map_err(Error::from)?;
         let owned = self.artifacts.for_owner(scope, company_id, &owner);
         let artifact = Box::pin(owned.render_inline(
             &mut client,

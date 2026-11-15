@@ -216,9 +216,38 @@ impl Receivables {
         company: i64,
         capability: &str,
     ) -> Result<()> {
+        self.lock(client, scope, company, capability, true).await
+    }
+
+    async fn join_waiting(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company: i64,
+        capability: &str,
+    ) -> Result<()> {
+        self.lock(client, scope, company, capability, false).await
+    }
+
+    async fn lock(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company: i64,
+        capability: &str,
+        nowait: bool,
+    ) -> Result<()> {
         self.authorize_on(client, scope, company, capability)
             .await?;
-        let row = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT", &[&scope.tenant(), &company]).await?.ok_or(ReceivableError::CompanyNotFound)?;
+        let sql = if nowait {
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT"
+        } else {
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE"
+        };
+        let row = client
+            .query_opt(sql, &[&scope.tenant(), &company])
+            .await?
+            .ok_or(ReceivableError::CompanyNotFound)?;
         if row.get::<_, String>(0) == "archived" {
             return Err(ReceivableError::CompanyArchived);
         }

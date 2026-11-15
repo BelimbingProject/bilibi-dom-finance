@@ -103,7 +103,7 @@ impl Receivables {
             .as_i64()
             .filter(|id| *id > 0)
             .ok_or(ReceivableError::InvalidOption)?;
-        self.authorize_on(client, scope, company, crate::VIEW)
+        self.authorize_on(client, scope, company, crate::ISSUE)
             .await?;
         let document = documents::read(client, scope.tenant(), company, id).await?;
         if document.status != "issued" || document.kind != "invoice" || document.opening.is_some() {
@@ -137,8 +137,7 @@ impl Receivables {
         company: i64,
         input: &Value,
     ) -> Result<Value> {
-        self.join(tx.sql(), scope, company, MANAGE_DOCUMENTS)
-            .await?;
+        self.join(tx.sql(), scope, company, crate::ISSUE).await?;
         let review = self.review_mail(tx.sql(), scope, company, input).await?;
         let data = json!({"document_id":review["document_id"],"recipient":review["recipient"],"subject":review["subject"],"body":review["body"],"status":"queued"});
         self.queue_delivery_on(tx, scope, company, data).await
@@ -284,15 +283,17 @@ impl SendInvoice {
         .await?;
         tx.commit().await?;
         drop(client);
-        if self.mailer.deliver_rendered(rendered).await.is_err() {
-            return Ok(());
-        }
+        let status = match self.mailer.deliver_rendered(rendered).await {
+            Ok(_) => "sent",
+            Err(bilibi_mail::Error::Invalid | bilibi_mail::Error::Config(_)) => "failed",
+            Err(_) => return Ok(()),
+        };
         let mut client = self.receivables.db.get().await.map_err(Error::from)?;
         let mut tx = execution
             .begin(&mut client, "finance.receivables.invoice_sent")
             .await?;
         self.receivables
-            .join(tx.sql(), scope, company, MANAGE_DOCUMENTS)
+            .join_waiting(tx.sql(), scope, company, MANAGE_DOCUMENTS)
             .await?;
         let old = store::find(tx.sql(), MAIL, scope.tenant(), company, Some(id))
             .await?
@@ -301,7 +302,7 @@ impl SendInvoice {
         tx.mutate(move |sql| {
             Box::pin(async move {
                 let mut data = old.clone();
-                data["status"] = json!("sent");
+                data["status"] = json!(status);
                 let mut changes = Vec::new();
                 store::save(sql, MAIL, tenant, company, Some(old), data, &mut changes).await?;
                 Ok(((), changes))
