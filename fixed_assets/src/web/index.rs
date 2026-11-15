@@ -882,8 +882,9 @@ impl LiveState<Scope, Error> for Index {
         Box::pin(async move {
             self.period(r.scope).await?;
             match r.input {
-                LiveInput::Refresh => {}
+                LiveInput::Refresh => self.purchases = None,
                 LiveInput::Params(query) => {
+                    self.purchases = None;
                     self.query = query.clone();
                     self.list =
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?;
