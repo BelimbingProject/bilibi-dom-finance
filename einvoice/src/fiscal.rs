@@ -128,6 +128,62 @@ inventory::submit! {
 }
 
 impl FiscalDocuments for Issued {
+    fn validation_qr<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        settings: &'a bilibi_settings::Settings,
+        scope: &'a Scope,
+        company_id: i64,
+        module: &'a str,
+        record: &'a str,
+    ) -> FiscalFuture<'a, Option<String>> {
+        Box::pin(async move {
+            if !may(client, scope, company_id, VIEW).await? {
+                return Ok(None);
+            }
+            let records = vec![record.to_owned()];
+            let Some((_, id, _, status)) =
+                newest(client, scope.tenant(), company_id, module, &records)
+                    .await?
+                    .into_iter()
+                    .next()
+            else {
+                return Ok(None);
+            };
+            if status != "valid" {
+                return Ok(None);
+            }
+            let Some(doc) = documents::fetch(client, scope.tenant(), company_id, id)
+                .await
+                .map_err(|_| bilibi_database::Error::Internal)?
+            else {
+                return Ok(None);
+            };
+            let portal = settings
+                .get_global(
+                    client,
+                    &format!("finance.einvoice.{}.portal_url", doc.document.environment),
+                )
+                .await?;
+            let view = doc.view(
+                &Einvoice::authority(),
+                portal.as_str().unwrap_or_default(),
+                false,
+            );
+            let Some(svg) = view
+                .validation_url
+                .as_deref()
+                .and_then(|url| crate::qr_code_svg(url, 160))
+            else {
+                return Ok(None);
+            };
+            use base64::{engine::general_purpose::STANDARD, Engine as _};
+            Ok(Some(format!(
+                "data:image/svg+xml;base64,{}",
+                STANDARD.encode(svg)
+            )))
+        })
+    }
     fn standing<'a>(
         &'a self,
         client: &'a dyn OperationClient,

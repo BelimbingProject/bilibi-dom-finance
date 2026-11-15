@@ -311,6 +311,9 @@ pub struct PaymentQuery {
 pub struct InvoiceLayout {
     pub company_name: String,
     pub registration_number: String,
+    pub tax_number: String,
+    pub payment_terms: String,
+    pub bank_details: String,
     pub address: String,
     pub contact: String,
     pub footer: String,

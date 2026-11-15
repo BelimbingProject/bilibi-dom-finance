@@ -262,11 +262,11 @@ Readers can open the opening dialog to inspect retained source batches. The impo
 
 An issued invoice or credit note has **Print** on its document page and its list row. The PDF opens in the browser for printing or saving. Drafts and opening balances cannot be printed as invoices.
 
-Set the company name, registration number, address, contact details and footer under **Invoice layout** on Receivables settings. Blank fields are omitted; a blank company name uses the current company name. The invoice logo is a company-scoped Receivables setting, uploaded by an administrator through the linked shared image editor. Images stay in Base Media and are embedded in the PDF; remote images and user HTML are never fetched or rendered.
+Set the company name, registration and tax numbers, address, contact details, payment terms, bank details and footer under **Invoice layout** on Receivables settings. Blank fields are omitted; a blank company name uses the current company name. The invoice logo is a company-scoped Receivables setting, uploaded by an administrator through the linked shared image editor. Images stay in Base Media and are embedded in the PDF; remote images and user HTML are never fetched or rendered.
 
 The A4 template is `templates/receivables_invoice.html`. Base Artifacts renders and stores it with `render_inline`; the document remains the source of truth. Each download reauthorizes the current company and regenerates from the frozen customer, lines and totals with the current layout. Text layout changes are audited with the setup row, and logo changes through Base Settings; default-account history remains about accounts. Configure Base Artifacts storage and Chromium as described in the Platform Artifacts README before printing.
 
-E-invoice authority identifiers and QR codes remain in the e-invoice PDF. Combining them needs a documented read seam without adding a Receivables-to-Einvoice dependency.
+An invoice shows current receipt allocations, credits and adjustments, and its balance due. When its linked e-invoice is valid and the reader may view it, the issuing module supplies its validation QR through the ledger fiscal seam.
 
 For the disposable PDF proof, run the `party-code` walkthrough with `INVOICE_LAYOUT_PROOF_DIR` naming a private output directory. It prints default and configured invoices, a 100-line invoice and a credit note, and proves draft, missing-document, cross-tenant and invalid-layout refusals. Inspect the resulting PDFs with `pdfinfo` and `pdftotext`, and open the document page through the Platform launcher for browser proof.
 

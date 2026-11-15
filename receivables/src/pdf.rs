@@ -190,8 +190,33 @@ impl Receivables {
                 tax: t.tax_amount.display(units),
             })
             .collect();
+        let qr = self
+            .ledger
+            .fiscal_validation_qr_on(
+                &**client,
+                &self.settings,
+                scope,
+                company,
+                crate::MODULE,
+                &format!("document:{id}"),
+            )
+            .await?;
+        let balance = if document.outstanding.is_some() {
+            let row = client.query_one(
+                "SELECT COALESCE((SELECT sum(a.amount) FROM finance_receivables_allocations a WHERE a.tenant_id=d.tenant_id AND a.company_id=d.company_id AND a.document_id=d.id AND NOT EXISTS (SELECT 1 FROM finance_receivables_payment_reversals r WHERE r.tenant_id=d.tenant_id AND r.company_id=d.company_id AND r.payment_id=a.payment_id)),0)::text, finance_receivables_outstanding(d.id)::text FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3",
+                &[&scope.tenant(), &company, &id],
+            ).await.map_err(Error::from)?;
+            let money = |i: usize| {
+                Money::parse(row.get::<_, &str>(i), units)
+                    .map_err(|_| ReceivableError::Pdf("payment_amount"))
+            };
+            Some((money(0)?, money(1)?))
+        } else {
+            None
+        };
         let template = Invoice {
             title,
+            qr,
             credited_reference: &credited_reference,
             recipient: &recipient,
             reference: &reference,
@@ -208,6 +233,10 @@ impl Receivables {
             subtotal: document.subtotal.display(units),
             tax: document.tax_total.display(units),
             total: document.total.display(units),
+            paid: balance.map(|(paid, _)| paid.display(units)),
+            adjustments: balance
+                .map(|(paid, outstanding)| (document.total - paid - outstanding).display(units)),
+            outstanding: balance.map(|(_, outstanding)| outstanding.display(units)),
         };
         let owner = Printable {
             html: template
@@ -287,6 +316,7 @@ struct Row {
 #[derive(Template)]
 #[template(path = "receivables_invoice.html")]
 struct Invoice<'a> {
+    qr: Option<String>,
     credited_reference: &'a str,
     recipient: &'a str,
     title: &'a str,
@@ -300,4 +330,7 @@ struct Invoice<'a> {
     subtotal: String,
     tax: String,
     total: String,
+    paid: Option<String>,
+    adjustments: Option<String>,
+    outstanding: Option<String>,
 }
