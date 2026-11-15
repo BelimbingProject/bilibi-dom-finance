@@ -189,20 +189,29 @@ impl Downloads {
                     .await
                     .map_err(|_| Error::Forbidden)?;
                 let mut s = Sheet::new("Balance sheet", &r.header);
-                s.groups(&r.groups, &r.header);
-                if let (Some(current), Some(earlier)) =
-                    (&r.current_year_earnings, &r.earlier_years_earnings)
-                {
-                    s.line("Current year earnings", current, &r.header);
+                for group in &r.groups {
+                    s.sections(&group.sections, &r.header);
+                    if group.account_type == bilibi_finance_ledger::AccountType::Equity {
+                        if let (Some(current), Some(earlier)) =
+                            (&r.current_year_earnings, &r.earlier_years_earnings)
+                        {
+                            s.line("Current year earnings", current, &r.header);
+                            s.line(
+                                "Earlier years' earnings, not yet closed",
+                                earlier,
+                                &r.header,
+                            );
+                        } else {
+                            s.line(
+                                "Income less expenses not yet closed",
+                                &r.earnings,
+                                &r.header,
+                            );
+                        }
+                    }
                     s.line(
-                        "Earlier years' earnings, not yet closed",
-                        earlier,
-                        &r.header,
-                    );
-                } else {
-                    s.line(
-                        "Income less expenses not yet closed",
-                        &r.earnings,
+                        &format!("Total {}", group.account_type.as_str()),
+                        &group.totals,
                         &r.header,
                     );
                 }
