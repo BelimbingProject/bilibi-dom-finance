@@ -371,10 +371,19 @@ impl Setup {
                     let due = bilibi_finance_ledger::dates::display_text(
                         period["due_date"].as_str().unwrap_or_default(),
                     );
-                    let period_name = bilibi_finance_ledger::dates::months_text(
-                        start,
-                        period["period_end"].as_str().unwrap_or_default(),
-                    );
+                    let end = period["period_end"].as_str().unwrap_or_default();
+                    let period_name = if start
+                        .parse::<jiff::civil::Date>()
+                        .is_ok_and(|date| date.day() != 1)
+                    {
+                        format!(
+                            "{} to {}",
+                            bilibi_finance_ledger::dates::display_text(start),
+                            bilibi_finance_ledger::dates::display_text(end)
+                        )
+                    } else {
+                        bilibi_finance_ledger::dates::months_text(start, end)
+                    };
                     let href = period["return_id"].as_i64().map_or_else(
                         || format!("/finance/sst#period-{start}"),
                         |id| format!("/finance/sst/returns/{id}"),
