@@ -136,7 +136,7 @@ fn status_badge(status: &str) -> Result<Html> {
     render(Badge {
         kind: match status {
             "valid" => BadgeKind::Success,
-            "submitted" | "consolidated" | "issued" | "released" => BadgeKind::Plain,
+            "submitted" | "consolidated" | "issued" | "released" | "sending" => BadgeKind::Plain,
             "cancelled" | "rejected" => BadgeKind::Warning,
             _ => BadgeKind::Danger,
         },
