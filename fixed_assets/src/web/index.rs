@@ -12,6 +12,7 @@ use bilibi_ui::{
     Choice, CreateButton, Filter, FilterToolbar, FlashMap, ListSpec, ListState, Pagination,
     RecordLink, SectionHeading, ToolbarControl,
 };
+use jiff::ToSpan;
 use std::sync::LazyLock;
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -136,6 +137,7 @@ pub(super) struct Index {
     /// What the categories and runs pages last read, for their writes.
     category_list: Vec<Category>,
     run_list: Vec<Run>,
+    purchases: Option<Html>,
     history: ListColumns,
     check: ListColumns,
 }
@@ -146,6 +148,7 @@ struct View<'a> {
     actions: Html,
     title: &'static str,
     opening: Html,
+    purchases: Html,
     flash: FlashMap<'a>,
     filters: Html,
     unavailable: Html,
@@ -186,6 +189,7 @@ impl Index {
             runs: runs::State::default(),
             category_list: Vec::new(),
             run_list: Vec::new(),
+            purchases: None,
             history: categories::history_columns()?,
             check: cols(
                 "assets-ledger-check",
@@ -194,7 +198,7 @@ impl Index {
                     ("ledger", "Ledger"),
                     ("register", "Register"),
                     ("difference", "Difference"),
-                    ("other", "Other postings"),
+                    ("other", "Not from fixed assets"),
                 ],
             )?,
         })
@@ -231,7 +235,54 @@ impl Index {
                 Err(e) => self.flash = Some((StatusKind::Error, refusal(e))),
             },
             Kind::Categories => self.categories.new = Some(Draft::default()),
-            Kind::Runs => self.runs.new = Some(Draft::default()),
+            Kind::Runs => {
+                let today = self.clock(s).await?.today;
+                let mut period = None;
+                if let Some(c) = company(s) {
+                    if let Ok(runs) = self
+                        .pages
+                        .read::<Vec<Run>>(
+                            s,
+                            "finance.fixed_assets.run.list",
+                            serde_json::json!({"company_id": c}),
+                            "records",
+                        )
+                        .await
+                    {
+                        self.run_list = runs;
+                    }
+                    period = match self.run_list.iter().map(|r| r.period).max() {
+                        Some(last) => last.checked_add(1.month()).ok(),
+                        None => self
+                            .pages
+                            .read::<RegisterReport>(
+                                s,
+                                "finance.fixed_assets.register.get",
+                                serde_json::json!({"company_id": c, "as_of": today.to_string()}),
+                                "report",
+                            )
+                            .await
+                            .ok()
+                            .and_then(|report| {
+                                report
+                                    .rows
+                                    .iter()
+                                    .filter(|r| !r.voided && !r.disposed)
+                                    .map(|r| {
+                                        r.asset
+                                            .opening_date
+                                            .unwrap_or(r.asset.in_service_date)
+                                            .first_of_month()
+                                    })
+                                    .min()
+                            }),
+                    };
+                }
+                let period = period.unwrap_or(today.first_of_month());
+                let mut draft = Draft::default();
+                draft.values.insert("period".into(), period.to_string());
+                self.runs.new = Some(draft);
+            }
         }
         Ok(())
     }
@@ -262,9 +313,8 @@ impl Index {
         if let Some(filter) = &mut self.period {
             filter.set(parsed, &clock);
         } else {
-            self.period = Some(
-                PeriodFilter::new("assets-report-period", parsed, &clock).label("Report through"),
-            );
+            self.period =
+                Some(PeriodFilter::new("assets-report-period", parsed, &clock).label("As of"));
         }
         Ok(())
     }
@@ -372,6 +422,85 @@ impl Index {
             Kind::Runs => header_button(id, "new", "Run depreciation", true),
         }
     }
+    async fn read_purchases(&self, s: &Scope, accounts: &categories::Accounts) -> Result<Html> {
+        if self.kind != Kind::Register || !self.pages.allowed(s, ACQUIRE).await? {
+            return Ok(Html::EMPTY);
+        }
+        let Some(c) = company(s) else {
+            return Ok(Html::EMPTY);
+        };
+        let Ok(categories): std::result::Result<Vec<Category>, _> = self
+            .pages
+            .read(
+                s,
+                "finance.fixed_assets.category.list",
+                serde_json::json!({"company_id":c}),
+                "records",
+            )
+            .await
+        else {
+            return Ok(Html::EMPTY);
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Html::EMPTY;
+        for category in categories {
+            let account = category.revision.defaults.cost_account_id;
+            if !seen.insert(account) {
+                continue;
+            }
+            let Ok(sources): std::result::Result<Vec<crate::AcquisitionSource>, _> = self
+                .pages
+                .read(
+                    s,
+                    "finance.fixed_assets.acquisition.sources",
+                    serde_json::json!({"company_id":c,"category_revision_id":category.revision.id}),
+                    "records",
+                )
+                .await
+            else {
+                continue;
+            };
+            if sources.is_empty() {
+                continue;
+            }
+            let name = accounts
+                .iter()
+                .find(|a| a.0 == account)
+                .map(|a| a.1.as_str())
+                .unwrap_or("this account");
+            let mut body = Html::text(&format!(
+                "{} {} on {} {} not in the register. ",
+                if sources.len() == 500 {
+                    "500+".to_owned()
+                } else {
+                    sources.len().to_string()
+                },
+                if sources.len() == 1 {
+                    "purchase"
+                } else {
+                    "purchases"
+                },
+                name,
+                if sources.len() == 1 { "is" } else { "are" }
+            ));
+            body.push(&render(Button {
+                id: &format!("assets-register-purchase-{account}"),
+                button_type: "button",
+                event: "new",
+                name: "category_revision_id",
+                value: &category.revision.id.to_string(),
+                body: Html::text("Register asset"),
+                ..Button::default()
+            })?);
+            result.push(&render(bilibi_ui::Alert {
+                id: &format!("assets-unregistered-{account}"),
+                kind: StatusKind::Info,
+                body,
+                ..Default::default()
+            })?);
+        }
+        Ok(result)
+    }
     async fn body(&mut self, s: &Scope) -> Result<String> {
         let (units, accounts) = self.pages.account_context(s).await?;
         let (mut rows, report, unavailable) = match self.rows(s, units, &accounts).await {
@@ -405,7 +534,7 @@ impl Index {
                     Kind::Categories => {
                         "A category sets the accounts and useful life its assets start with."
                     }
-                    Kind::Runs => "A run posts a month's depreciation for every asset in service.",
+                    Kind::Runs => "Run depreciation once a month for all assets in use.",
                 },
             )
             .id("assets-empty");
@@ -524,6 +653,14 @@ impl Index {
             } else {
                 Html::EMPTY
             },
+            purchases: {
+                if self.purchases.is_none() {
+                    self.purchases = Some(self.read_purchases(s, &accounts).await?);
+                }
+                let mut purchases = Html::EMPTY;
+                purchases.push(self.purchases.as_ref().expect("purchases read"));
+                purchases
+            },
             flash: flash_map(&self.flash),
             filters,
             unavailable,
@@ -577,7 +714,19 @@ impl Index {
                 self.browser_zone = v["timezone"].as_str().map(str::to_owned);
                 self.period(s).await?;
             }
-            "new" => self.open_new(s).await?,
+            "new" => {
+                self.open_new(s).await?;
+                if let (Some(a), Some(id)) = (
+                    &mut self.acquire,
+                    v["category_revision_id"]
+                        .as_str()
+                        .and_then(|v| v.parse().ok()),
+                ) {
+                    if let Err(e) = a.select_category(&self.pages, s, id).await {
+                        a.refused(&e);
+                    }
+                }
+            }
             "close_asset" => self.acquire = None,
             "close_category" => self.categories.new = None,
             "close_run" => self.runs.new = None,
@@ -605,6 +754,7 @@ impl Index {
                 }
                 match a.submit(&self.pages, s, credential).await {
                     Ok(description) => {
+                        self.purchases = None;
                         self.flash =
                             Some((StatusKind::Success, format!("Registered {description}.")));
                     }
@@ -732,8 +882,9 @@ impl LiveState<Scope, Error> for Index {
         Box::pin(async move {
             self.period(r.scope).await?;
             match r.input {
-                LiveInput::Refresh => {}
+                LiveInput::Refresh => self.purchases = None,
                 LiveInput::Params(query) => {
+                    self.purchases = None;
                     self.query = query.clone();
                     self.list =
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?;
@@ -764,6 +915,7 @@ impl LiveState<Scope, Error> for Index {
                         opening.update(&r).await?;
                         if opening.completed {
                             self.opening = None;
+                            self.purchases = None;
                             self.flash = Some((StatusKind::Success, "The opening register was reconciled. Open an asset below to read its source evidence.".into()));
                             self.list.search.clear();
                             self.list.apply_filters(&HashMap::from([

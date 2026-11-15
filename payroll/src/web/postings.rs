@@ -9,7 +9,13 @@ impl State {
         if self.pages.payroll.people_available() {
             parts.extend(self.source_parts(scope).await?);
         } else {
-            parts.push(render(EmptyState::missing("Payroll is not in use", "Payroll runs and claims appear here once payroll is in use. The postings already made are listed below.").id("payroll-source-unavailable"))?);
+            parts.push(render(
+                EmptyState::missing(
+                    "No payroll connected",
+                    "Payroll runs and staff claims appear here when payroll is in use.",
+                )
+                .id("payroll-source-unavailable"),
+            )?);
         }
         let payroll = self.pages.payroll.clone();
         let company = company(scope)?;

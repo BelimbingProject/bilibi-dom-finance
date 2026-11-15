@@ -52,6 +52,21 @@ impl Acquire {
         Ok(this)
     }
 
+    pub(super) async fn select_category(
+        &mut self,
+        pages: &Pages,
+        s: &Scope,
+        id: i64,
+    ) -> crate::Result<()> {
+        if self.categories.iter().any(|c| c.revision.id == id) {
+            self.draft
+                .values
+                .insert("category_revision_id".into(), id.to_string());
+            self.load_sources(pages, s).await?;
+        }
+        Ok(())
+    }
+
     fn revision(&self) -> Option<i64> {
         self.draft.value("category_revision_id").parse().ok()
     }
