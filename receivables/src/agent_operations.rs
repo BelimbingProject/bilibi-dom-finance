@@ -16,7 +16,7 @@ pub(super) fn bind(owner: Arc<Receivables>) -> bilibi_module_registry::Result<()
         .set(owner)
         .map_err(|_| RegistryError::Service("duplicate receivables operation binding".into()))
 }
-fn owner() -> bilibi_agent_api::Result<&'static Receivables> {
+pub(super) fn owner() -> bilibi_agent_api::Result<&'static Receivables> {
     OWNER.get().map(Arc::as_ref).ok_or(Error::Internal.into())
 }
 

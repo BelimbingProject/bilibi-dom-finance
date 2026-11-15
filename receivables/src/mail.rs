@@ -13,16 +13,24 @@ use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const WORKER: &str = "finance/receivables-send-invoice";
+pub(super) const WORKER: &str = "finance/receivables-send-invoice";
 pub(crate) const PRINCIPAL: &str = "finance-receivables-send-invoice";
 pub(crate) const MONITOR: &str = "finance-receivables-mail-monitor";
 pub(crate) const MONITOR_CAPABILITY: &str = "finance.receivables.mail.record-failure";
 pub(crate) const ENDING_SERVICE: &str = "finance/receivables.mail_ended";
 pub(crate) const SERVICE: &str = "finance/receivables.send_invoice";
-const MAIL: store::Table = store::Table {
+pub(super) const MAIL: store::Table = store::Table {
     name: "finance_receivables_mail",
     kind: "finance.receivables.mail",
-    columns: &["document_id", "recipient", "subject", "body", "status"],
+    columns: &[
+        "document_id",
+        "customer_id",
+        "statement",
+        "recipient",
+        "subject",
+        "body",
+        "status",
+    ],
     timestamps: true,
 };
 fn args(value: Value) -> bilibi_database::Result<Value> {
@@ -99,7 +107,7 @@ impl Receivables {
             .await?;
         let document = documents::read(client, scope.tenant(), company, id).await?;
         if document.status != "issued" || document.kind != "invoice" || document.opening.is_some() {
-            return Err(ReceivableError::NotIssued);
+            return Err(invalid("document_id", "Only issued invoices can be sent."));
         }
         let recipient = input["recipient"].as_str().unwrap_or("").trim();
         bilibi_mail::Address::new(None, recipient)
@@ -132,15 +140,27 @@ impl Receivables {
         self.join(tx.sql(), scope, company, MANAGE_DOCUMENTS)
             .await?;
         let review = self.review_mail(tx.sql(), scope, company, input).await?;
+        let data = json!({"document_id":review["document_id"],"recipient":review["recipient"],"subject":review["subject"],"body":review["body"],"status":"queued"});
+        self.queue_delivery_on(tx, scope, company, data).await
+    }
+
+    pub(super) async fn queue_delivery_on(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company: i64,
+        data: Value,
+    ) -> Result<Value> {
         let tenant = scope.tenant();
         let system =
             bilibi_authz::SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
         for capability in [MANAGE_DOCUMENTS, crate::VIEW] {
             bilibi_authz::authorize_system(tx.sql(), &system, capability)
                 .await
-                .map_err(|_| invalid("base", "Ask an administrator to enable invoice email."))?;
+                .map_err(|_| {
+                    invalid("base", "Ask an administrator to enable receivables email.")
+                })?;
         }
-        let data = json!({"document_id":review["document_id"],"recipient":review["recipient"],"subject":review["subject"],"body":review["body"],"status":"queued"});
         let row = tx
             .mutate(move |sql| {
                 Box::pin(async move {
@@ -208,11 +228,15 @@ impl SendInvoice {
             return Ok(());
         }
         tx.commit().await?;
-        let document_id = row["document_id"].as_i64().ok_or(Error::Invalid)?;
-        let pdf = self
-            .receivables
-            .print_document(scope, company, document_id)
-            .await?;
+        let pdf = if let Some(document_id) = row["document_id"].as_i64() {
+            self.receivables
+                .print_document(scope, company, document_id)
+                .await?
+        } else {
+            self.receivables
+                .print_statement(scope, company, id, &row["statement"])
+                .await?
+        };
         let address =
             bilibi_mail::Address::new(None, row["recipient"].as_str().ok_or(Error::Invalid)?)
                 .map_err(|_| Error::Invalid)?;

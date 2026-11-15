@@ -16,6 +16,8 @@ const DATASETS: &[(&str, &str, &[&str])] = &[
             "tenant_id",
             "company_id",
             "document_id",
+            "customer_id",
+            "statement",
             "recipient",
             "subject",
             "body",

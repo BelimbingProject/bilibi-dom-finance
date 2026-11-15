@@ -22,6 +22,7 @@ mod records;
 mod reports;
 mod settlements;
 mod sources;
+mod statement_mail;
 mod store;
 mod validation;
 mod web;
@@ -67,7 +68,8 @@ inventory::submit! {
             ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql")),
             ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql")),
             ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql")),
-            ("finance-receivables-012-mail", include_str!("../migrations/012-mail.sql"))],
+            ("finance-receivables-012-mail", include_str!("../migrations/012-mail.sql")),
+            ("finance-receivables-013-statement-mail", include_str!("../migrations/013-statement-mail.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
