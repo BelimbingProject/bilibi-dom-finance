@@ -77,6 +77,8 @@ struct FinaliseView {
     title: String,
     description: String,
     refusal: Html,
+    /// A separation-of-duties refusal links where the requirement is set.
+    controls: bool,
     reason: Field,
 }
 
@@ -723,6 +725,10 @@ impl Detail {
                         })?,
                         None => Html::EMPTY,
                     },
+                    controls: self
+                        .finalise_refusal
+                        .as_deref()
+                        .is_some_and(|why| why.contains("separation of duties")),
                     reason: Field::in_form("finalise", "reason")
                         .id("finalise-reason")
                         .label("Reason")
