@@ -8,9 +8,9 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Button, ButtonVariant, Card, Cell, EmptyState, Field, FilterToolbar, FlexRow, Form,
-    Header, Html, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading, StatusKind,
-    ToolbarControl,
+    params, Button, ButtonVariant, Card, Cell, EmptyState, Field, FilterToolbar, FlexRow,
+    FlexTable, Form, Header, Html, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading,
+    StatusKind, ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -44,6 +44,7 @@ struct Customer {
     credit_total: Decimal,
     bucket_totals: Vec<Decimal>,
     total: Decimal,
+    statement_status: Option<String>,
 }
 #[derive(Deserialize)]
 struct Invoice {
@@ -109,6 +110,7 @@ impl Aging {
             ("b4", "Over 90 days late"),
             ("credits", "Unapplied credits"),
             ("total", "Net owed"),
+            ("statement", "Last statement"),
         ]);
         let (customer, bucket) = narrow(query);
         Ok(Self {
@@ -298,7 +300,17 @@ impl Aging {
             }
             rows.push(
                 row.slot("credits", self.bucket_cell(c.credit_total, None)?)
-                    .slot("total", f::tabular(&self.figures.decimal(c.total))?),
+                    .slot("total", f::tabular(&self.figures.decimal(c.total))?)
+                    .cell(
+                        "statement",
+                        Cell::text(match c.statement_status.as_deref() {
+                            Some("queued") => "Queued",
+                            Some("sent") => "Sent",
+                            Some("failed") => "Could not send",
+                            Some(_) => "Delivery unconfirmed",
+                            None => "—",
+                        }),
+                    ),
             );
         }
         if !r.customers.is_empty() {
@@ -332,13 +344,19 @@ impl Aging {
                     class: "p-5 pb-0",
                     ..SectionHeading::default()
                 })?;
-                b.push(&f::table(
-                    &self.customers,
-                    "customers_grid",
-                    "Receivables aging by customer",
-                    rows,
+                let mut table =
+                    FlexTable::new(&self.customers.id, self.customers.flex_columns(), rows);
+                table.event = "customers_grid";
+                table.caption = "Receivables aging by customer";
+                table.framed = false;
+                table.zoom = self.customers.zoom;
+                table.suggestions = self.customers.flex_suggestions();
+                table.add_query = &self.customers.add_query;
+                table.actions = self.can_send;
+                table.empty = Some(bilibi_ui::TableEmpty::Content(Html::text(
                     "Nobody owes anything on this date.",
-                )?);
+                )));
+                b.push(&render(table)?);
                 b
             },
             ..Card::default()

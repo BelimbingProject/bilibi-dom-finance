@@ -6,3 +6,5 @@ ALTER TABLE finance_receivables_mail ADD CONSTRAINT finance_receivables_mail_sou
     (document_id IS NULL AND customer_id IS NOT NULL AND statement IS NOT NULL AND jsonb_typeof(statement) = 'object')
 );
 ALTER TABLE finance_receivables_mail ADD FOREIGN KEY (customer_id, company_id) REFERENCES finance_receivables_customers(id, company_id);
+
+CREATE INDEX finance_receivables_mail_customer_latest ON finance_receivables_mail(tenant_id, company_id, customer_id, id DESC) WHERE customer_id IS NOT NULL;

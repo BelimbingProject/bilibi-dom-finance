@@ -525,7 +525,15 @@ impl ReadHandler for Read {
                             options.bucket_days = days.iter().filter_map(Value::as_i64).collect();
                         }
                         // A read holds no company lock, so the facade's own connection is safe here.
-                        json!(service.aged_receivables(scope, company, as_of, &options).await?)
+                        let report = service.aged_receivables(scope, company, as_of, &options).await?;
+                        let ids: Vec<i64> = report.customers.iter().map(|c| c.customer_id).collect();
+                        let rows = client.query("SELECT DISTINCT ON (customer_id) customer_id,status FROM finance_receivables_mail WHERE tenant_id=$1 AND company_id=$2 AND customer_id=ANY($3) ORDER BY customer_id,id DESC", &[&tenant,&company,&ids]).await?;
+                        let statuses: BTreeMap<i64, String> = rows.into_iter().map(|row| (row.get(0),row.get(1))).collect();
+                        let mut value = json!(report);
+                        if let Some(customers) = value["customers"].as_array_mut() {
+                            for customer in customers { if let Some(status) = customer["customer_id"].as_i64().and_then(|id| statuses.get(&id)) { customer["statement_status"] = json!(status); } }
+                        }
+                        value
                     }
                     Self::Customer => json!(service.get_customer(scope, company, id(input,"customer_id")?).await?),
                     Self::Document => {
