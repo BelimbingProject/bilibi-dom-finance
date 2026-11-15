@@ -635,6 +635,55 @@ async fn main() -> Outcome<()> {
         name:"Operating account".into(),ledger_account_id:account("1000")?,charges_account_id:Some(account("5000")?),interest_account_id:Some(account("4000")?),match_window_days:None,active:None,reason:None,
         import_mapping:json!({"date":"Date","description":"Details","reference":"Ref","amount":"Amount","balance":"Balance"}),
     }).await?;
+    let reconciliation = services.get::<Reconciliation>(bilibi_finance_reconciliation::SERVICE)?;
+    reconciliation.import_statement(&manager, COMPANY, bank.id, &NewFile {
+        file_name: "home-statement.csv".into(),
+        content: b"Date,Details,Ref,Amount,Balance\n2026-10-01,Deposit,DEP1,100.00,1100.00\n2026-10-02,Bank charge,FEE1,-5.00,1095.00\n".to_vec(),
+        content_type: Some("text/csv".into()),
+    }).await?;
+    let counts = reconciliation
+        .unmatched_statement_counts(&manager, COMPANY)
+        .await?;
+    assert_eq!(
+        counts
+            .iter()
+            .find(|c| c.bank_account_id == bank.id)
+            .map(|c| c.count),
+        Some(2)
+    );
+    assert_eq!(
+        reconciliation
+            .unmatched_items(&manager, COMPANY, bank.id, None)
+            .await?
+            .lines
+            .len(),
+        2
+    );
+    let sst = services.get::<bilibi_finance_sst::Sst>(bilibi_finance_sst::SERVICE)?;
+    sst.register(
+        &manager,
+        COMPANY,
+        &bilibi_finance_sst::RegistrationInput {
+            sales_tax_number: Some("X01-2601-00000001".into()),
+            period_start: Some(date(2026, 1, 1)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let contracts =
+        services.get::<bilibi_agent_api::page::PageContracts>(bilibi_agent_api::page::SERVICE)?;
+    let home = contracts
+        .read(
+            &manager,
+            "finance.reports.home.get",
+            &json!({"company_id":COMPANY,"as_of":"2026-11-15","timezone":"Asia/Kuala_Lumpur"}),
+        )
+        .await?;
+    assert_eq!(home["result"]["bank_accounts"][0]["count"], 2);
+    assert!(home["result"]["due_periods"]
+        .as_array()
+        .is_some_and(|periods| !periods.is_empty()));
+    println!("Finance home: two unmatched statement lines agree with the reconciliation facade");
     println!("Bank account: /finance/reconciliation/accounts/{}", bank.id);
     historical_payroll(
         &db,

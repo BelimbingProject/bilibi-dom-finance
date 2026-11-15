@@ -153,6 +153,8 @@ inventory::submit! {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
             }))))
         } }, Service { id: conversion_page::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(conversion_page::Pages {

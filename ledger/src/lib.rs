@@ -3000,6 +3000,14 @@ impl Ledger {
         journals::list(&**client, scope.tenant(), company_id, query).await
     }
 
+    /// Count journals awaiting a decision (`finance.ledger.view`).
+    pub async fn pending_journal_count(&self, scope: &Scope, company_id: i64) -> Result<i64> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
+        let row = client.query_one("SELECT count(*) FROM finance_ledger_journals j WHERE j.tenant_id=$1 AND j.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_ledger_journal_events e WHERE e.tenant_id=j.tenant_id AND e.company_id=j.company_id AND e.journal_id=j.id)", &[&scope.tenant(), &company_id]).await.map_err(Error::from)?;
+        Ok(row.get(0))
+    }
+
     /// The statuses a journal moves through.
     pub fn journal_statuses() -> &'static [JournalStatus] {
         &JournalStatus::ALL

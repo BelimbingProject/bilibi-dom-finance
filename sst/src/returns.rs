@@ -315,7 +315,7 @@ fn adjustment_row(r: &tokio_postgres::Row) -> bilibi_database::Result<Adjustment
 
 /// The company's returns matching `filter` (on `r`), each with its events,
 /// ordered by id.
-async fn read_returns(
+pub(crate) async fn read_returns(
     c: &(impl GenericClient + Sync),
     tenant: i64,
     company: i64,

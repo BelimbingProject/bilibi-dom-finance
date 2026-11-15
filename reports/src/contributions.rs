@@ -162,9 +162,13 @@ inventory::submit! { Contribution::new(ROUTES, "finance/reports.setup", provenan
     method: Method::Get, path: "/finance/setup", service: crate::setup_page::PAGES,
     operation: "setup", access: Access::Capability(crate::VIEW), framed: true,
 }) }
+inventory::submit! { Contribution::new(ROUTES, "finance/reports.setup-details", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+    method: Method::Get, path: "/finance/setup/details", service: crate::setup_page::PAGES,
+    operation: "details", access: Access::Capability(crate::VIEW), framed: true,
+}) }
 bilibi_menu::contribute!(
     "finance/reports",
-    bilibi_menu::MenuItem::page("finance.reports.setup", "Finance setup", "/finance/setup")
+    bilibi_menu::MenuItem::page("finance.reports.setup", "Finance home", "/finance/setup")
         .icon("gmdi-money-r")
         .under("finance.group.bookkeeping")
         .requires(bilibi_menu::Requirement::Capability(crate::VIEW))

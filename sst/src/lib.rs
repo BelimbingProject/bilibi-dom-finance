@@ -19,6 +19,8 @@
 //! `finance/ledger` facades with the same scope, so a call that computes
 //! figures or lists tax codes also needs their view capabilities.
 mod contributions;
+mod due;
+pub use due::DuePeriod;
 mod evidence;
 mod export;
 mod figures;
