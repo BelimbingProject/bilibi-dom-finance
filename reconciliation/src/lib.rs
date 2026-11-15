@@ -231,7 +231,7 @@ pub enum ReconciliationError {
     /// The finaliser opened the reconciliation, impersonated whoever did, or
     /// was impersonated by them, while the company separates duties.
     #[error(
-        "Someone else must finalise this because the company requires separation of duties. For a one-person company, change Separation of duties on Approval exceptions: /finance/reports/approval-exceptions"
+        "Someone else must finalise this because the company requires separation of duties. For a one-person company, change the approval setting on Bookkeeping controls."
     )]
     SamePerson,
     /// A reconciliation is finalised only once its difference is zero.

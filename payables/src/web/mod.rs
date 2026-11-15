@@ -116,7 +116,7 @@ menu!(
 );
 menu!(
     "finance.payables.aged",
-    "Aged payables",
+    "Aging",
     AGED,
     "iconoir-send-dollars",
     3,
@@ -124,7 +124,7 @@ menu!(
 );
 menu!(
     "finance.payables.setup",
-    "Payables setup",
+    "Payables settings",
     SETUP,
     "iconoir-send-dollars",
     4,
@@ -299,8 +299,8 @@ impl Page<Scope, Error> for Pages {
             "payments" => Some("Payments"),
             "payment_new" => Some("Request a payment"),
             "payment" => Some("Payment"),
-            "aged" => Some("Aged payables"),
-            "setup" => Some("Payables setup"),
+            "aged" => Some("Payables aging"),
+            "setup" => Some("Payables settings"),
             _ => None,
         }
     }

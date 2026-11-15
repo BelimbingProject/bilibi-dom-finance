@@ -17,9 +17,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Alert, Badge, BadgeKind, BuiltinColumn, Button, Card, Cell, EmptyState, FlashGroup,
-    FlexRow, FlexTable, Header, Html, ListColumns, PageVariant, SectionHeading, StatItem,
-    StatStrip, StatusKind, TableEmpty, NO_FLASH,
+    params, Alert, Badge, BadgeKind, BuiltinColumn, Button, Card, EmptyState, FlashGroup, FlexRow,
+    FlexTable, Header, Html, ListColumns, PageVariant, SectionHeading, StatItem, StatStrip,
+    StatusKind, TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -100,7 +100,7 @@ impl Setup {
             (SetupState::Incomplete, _) => Badge::status(BadgeKind::Warning, "Incomplete"),
             (SetupState::NoAccess, _) => Badge::status(BadgeKind::Neutral, "No access"),
             (SetupState::Unavailable, _) => Badge::status(BadgeKind::Neutral, "Could not be read"),
-            (SetupState::NotTracked, _) => Badge::status(BadgeKind::Neutral, "Not tracked"),
+            (SetupState::NotTracked, _) => return Ok(Html::EMPTY),
         })
     }
 
@@ -122,7 +122,7 @@ impl Setup {
                     vec![
                         BuiltinColumn::new("area", "Area"),
                         BuiltinColumn::new("status", "Status"),
-                        BuiltinColumn::new("detail", "What it holds"),
+                        BuiltinColumn::new("detail", "Details"),
                     ],
                 )
                 .map_err(|_| Error::Internal)?,
@@ -145,7 +145,21 @@ impl Setup {
                     })?,
                 )
                 .slot("status", Self::badge(area)?)
-                .cell("detail", Cell::text(&area.summary));
+                .slot(
+                    "detail",
+                    if area.id == "accountant-access" {
+                        let mut detail = Html::text(&area.summary);
+                        detail.push(&render(Button {
+                            id: "setup-invite-accountant",
+                            href: "/users/invite",
+                            body: Html::text("Invite accountant"),
+                            ..Button::default()
+                        })?);
+                        detail
+                    } else {
+                        Html::text(&area.summary)
+                    },
+                );
             row.dom_id = Some(format!("setup-{}", area.id));
             rows.push(row);
         }
@@ -347,7 +361,7 @@ impl Setup {
                     continue;
                 };
                 let href = format!(
-                    "/finance/einvoice/documents?status={status}&environment={environment}"
+                    "/finance/einvoice/documents?status={status}&environment={environment}&attention=needs_action"
                 );
                 work.push(&render(StatStrip {
                     id: &format!("home-einvoice-{status}"),
@@ -455,7 +469,13 @@ impl Setup {
                             result["required_total"].as_u64(),
                         ) {
                             (Some(done), Some(total)) => {
-                                format!("{done} of {total} steps needed to start work are set up.")
+                                if done == total {
+                                    "Setup is complete.".to_owned()
+                                } else {
+                                    format!(
+                                        "{done} of {total} steps needed to start work are set up."
+                                    )
+                                }
                             }
                             _ => {
                                 "Some steps cannot be read with your access, so no total is shown."
@@ -477,7 +497,11 @@ impl Setup {
                                 } else {
                                     "Start here"
                                 },
-                                "A company needs these before it can post.",
+                                if complete {
+                                    "Setup is complete."
+                                } else {
+                                    "Finish these three steps before you record anything."
+                                },
                                 &required,
                             )?);
                             body.push(&self.table(

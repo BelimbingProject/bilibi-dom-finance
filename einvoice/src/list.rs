@@ -7,12 +7,15 @@ use bilibi_database::Error;
 use bilibi_tenancy::Scope;
 
 /// Filters for the company's fiscal documents. Empty strings mean all.
+/// `needs_action` keeps only the refused and invalid documents someone still
+/// has to act on (see `FailedDocuments`).
 #[derive(Clone, Debug)]
 pub struct DocumentQuery {
     pub search: String,
     pub status: String,
     pub document_type: String,
     pub environment: String,
+    pub needs_action: bool,
     pub page: u64,
     pub page_size: u64,
 }
@@ -24,6 +27,7 @@ impl Default for DocumentQuery {
             status: String::new(),
             document_type: String::new(),
             environment: String::new(),
+            needs_action: false,
             page: 1,
             page_size: 25,
         }
@@ -86,7 +90,25 @@ impl Einvoice {
                    OR strpos(lower(CASE WHEN d.document_type = ANY($7) THEN d.supplier->>'name'
                       ELSE d.buyer->>'name' END), lower($3)) > 0)
                  AND ($4 = '' OR $4 = d.status)
-                 AND ($5 = '' OR d.document_type = $5) AND ($6 = '' OR d.environment = $6)),
+                 AND ($5 = '' OR d.document_type = $5) AND ($6 = '' OR d.environment = $6)
+                 AND (NOT $11 OR (d.status IN ('refused', 'invalid')
+                   AND NOT EXISTS (SELECT 1 FROM finance_einvoice_consolidated_sources c
+                     WHERE c.tenant_id = $1 AND c.company_id = $2 AND c.document_id = d.id)
+                   AND NOT EXISTS (SELECT 1 FROM finance_einvoice_source_links l
+                     JOIN finance_einvoice_source_links n ON n.tenant_id = l.tenant_id
+                       AND n.company_id = l.company_id AND n.source_module = l.source_module
+                       AND n.source_record = l.source_record AND n.document_id > l.document_id
+                     CROSS JOIN LATERAL (SELECT e.event, e.recorded_at
+                       FROM finance_einvoice_status_events e
+                       WHERE e.tenant_id = $1 AND e.company_id = $2
+                         AND e.document_id = n.document_id
+                         AND e.event = ANY($8) ORDER BY e.sequence DESC LIMIT 1) latest
+                     WHERE l.tenant_id = $1 AND l.company_id = $2 AND l.document_id = d.id
+                       AND (latest.event IN ('submitted', 'valid', 'rejected', 'consolidated',
+                                             'refused', 'invalid')
+                         OR EXISTS (SELECT 1 FROM finance_einvoice_submissions s
+                           WHERE s.document_id = n.document_id
+                             AND s.recorded_at > latest.recorded_at)))))),
              counted AS (SELECT count(*) AS total FROM matches),
              paged AS MATERIALIZED (SELECT id, status FROM matches ORDER BY id DESC LIMIT $9
                OFFSET (SELECT (LEAST($10, GREATEST(1, (total + $9 - 1) / $9)) - 1) * $9 FROM counted))
@@ -103,6 +125,7 @@ impl Einvoice {
                     &&documents::STATUS_EVENTS[..],
                     &size,
                     &page,
+                    &q.needs_action,
                 ],
             )
             .await
@@ -139,50 +162,35 @@ pub struct FailedDocuments {
 }
 
 impl Einvoice {
-    /// Count failed documents still to act on, through `finance.einvoice.view`.
+    /// Count failed documents still to act on, through `finance.einvoice.view`:
+    /// the totals of the documents list with `needs_action`, so the count and
+    /// the list it links to agree.
     pub async fn failed_documents(&self, scope: &Scope, company: i64) -> Result<FailedDocuments> {
-        let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company, VIEW).await?;
-        let environment = self.environment(&**client, scope, company).await?;
-        let row = client
-            .query_one(
-                "WITH failed AS (
-               SELECT d.id, COALESCE((SELECT e.event FROM finance_einvoice_status_events e
-                   WHERE e.tenant_id = $1 AND e.company_id = $2 AND e.document_id = d.id
-                     AND e.event = ANY($4) ORDER BY e.sequence DESC LIMIT 1), 'issued') AS status
-               FROM finance_einvoice_documents d
-               WHERE d.tenant_id = $1 AND d.company_id = $2 AND d.environment = $3
-                 AND NOT EXISTS (SELECT 1 FROM finance_einvoice_consolidated_sources c
-                   WHERE c.tenant_id = $1 AND c.company_id = $2 AND c.document_id = d.id)
-                 AND NOT EXISTS (SELECT 1 FROM finance_einvoice_source_links l
-                   JOIN finance_einvoice_source_links n ON n.tenant_id = l.tenant_id
-                     AND n.company_id = l.company_id AND n.source_module = l.source_module
-                     AND n.source_record = l.source_record AND n.document_id > l.document_id
-                   CROSS JOIN LATERAL (SELECT e.event, e.recorded_at
-                     FROM finance_einvoice_status_events e
-                     WHERE e.tenant_id = $1 AND e.company_id = $2 AND e.document_id = n.document_id
-                       AND e.event = ANY($4) ORDER BY e.sequence DESC LIMIT 1) latest
-                   WHERE l.tenant_id = $1 AND l.company_id = $2 AND l.document_id = d.id
-                     AND (latest.event IN ('submitted', 'valid', 'rejected', 'consolidated',
-                                           'refused', 'invalid')
-                       OR EXISTS (SELECT 1 FROM finance_einvoice_submissions s
-                         WHERE s.document_id = n.document_id
-                           AND s.recorded_at > latest.recorded_at))))
-             SELECT count(*) FILTER (WHERE status = 'refused'),
-               count(*) FILTER (WHERE status = 'invalid') FROM failed",
-                &[
-                    &scope.tenant(),
-                    &company,
-                    &environment,
-                    &&documents::STATUS_EVENTS[..],
-                ],
-            )
-            .await
-            .map_err(Error::from)?;
+        let environment = {
+            let client = self.db.get().await.map_err(Error::from)?;
+            authorize(&**client, scope, company, VIEW).await?;
+            self.environment(&**client, scope, company).await?
+        };
+        let mut counts = [0; 2];
+        for (count, status) in counts.iter_mut().zip(["refused", "invalid"]) {
+            *count = self
+                .list_documents(
+                    scope,
+                    company,
+                    &DocumentQuery {
+                        status: status.into(),
+                        environment: environment.clone(),
+                        needs_action: true,
+                        ..DocumentQuery::default()
+                    },
+                )
+                .await?
+                .total_entries;
+        }
         Ok(FailedDocuments {
             environment,
-            refused: row.get::<_, i64>(0) as u64,
-            invalid: row.get::<_, i64>(1) as u64,
+            refused: counts[0],
+            invalid: counts[1],
         })
     }
 }

@@ -1073,6 +1073,34 @@ async fn main() -> Outcome<()> {
     )?;
     let html = event(&mut clerk, &staff, json!({"type":"cancel_finalise"})).await?;
     lacks("after Cancel", &html, &["id=\"finalise-modal\""])?;
+    // The manager opened it: the dialog says someone else must finalise, and
+    // links where a one-person company changes that, keeping Cancel.
+    let (mut opener, _) = mount(&pages, &manager, "reconciliation", savings_open.id).await?;
+    event(&mut opener, &manager, json!({"type":"finalising"})).await?;
+    let html = event(
+        &mut opener,
+        &manager,
+        json!({"type":"finalise","finalise[reason]":"Receipts banked on 2 November"}),
+    )
+    .await?;
+    shows(
+        "the opener finalises with a reason",
+        &html,
+        &[
+            "id=\"finalise-refusal\"",
+            "Someone else must finalise this because the company requires separation of duties",
+            "id=\"finalise-control-settings\"",
+            "href=\"/finance/reports/controls\"",
+            "id=\"finalise-cancel\"",
+        ],
+    )?;
+    lacks(
+        "that refusal",
+        &html,
+        &["/finance/reports/approval-exceptions"],
+    )?;
+    let html = event(&mut opener, &manager, json!({"type":"cancel_finalise"})).await?;
+    lacks("the opener cancels", &html, &["id=\"finalise-modal\""])?;
     let html = event(&mut clerk, &staff, json!({"type":"finalise"})).await?;
     shows(
         "a finalise sent without the dialog",

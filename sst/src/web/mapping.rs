@@ -1,4 +1,4 @@
-//! A tax code's SST-02 item, chosen in place: on the code's row in SST setup,
+//! A tax code's SST-02 item, chosen in place: on the code's row in SST settings,
 //! and on a return that the missing choice keeps from finalising. Both pages
 //! draw the same searchable choice and save through the same facade call, so
 //! a person fixes the blocker where they meet it.

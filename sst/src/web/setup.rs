@@ -1,4 +1,4 @@
-//! Bilimbi Sst.Web.SetupLive: the company's SST setup. Its registration
+//! Bilimbi Sst.Web.SetupLive: the company's SST settings. Its registration
 //! (numbers, taxable period cycle, service tax basis) with every version
 //! recorded, and which return box each receivables and payables tax code
 //! reports in, with every mapping recorded. The registration is recorded in
@@ -328,7 +328,7 @@ impl Setup {
                     if self.can_manage {
                         "Record the registration numbers and the taxable period cycle to prepare returns."
                     } else {
-                        "Someone who manages SST setup records the registration numbers and the taxable period cycle."
+                        "Someone who manages SST settings records the registration numbers and the taxable period cycle."
                     },
                 )
                 .id("sst-registration-none");
@@ -595,7 +595,7 @@ impl Setup {
             rows,
             Some((
                 "No tax codes yet",
-                "Tax codes are added in Receivables settings and Payables setup.",
+                "Tax codes are added in Receivables settings and Payables settings.",
             )),
             false,
         )?;

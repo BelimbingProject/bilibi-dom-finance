@@ -191,7 +191,7 @@ impl Returns {
 
     pub(super) fn body(&self) -> Result<String> {
         let prepare = self.registration.is_some() && self.can_prepare;
-        let mut actions = nav_button("sst-returns-setup", SETUP, "SST setup")?;
+        let mut actions = nav_button("sst-returns-setup", SETUP, "SST settings")?;
         if prepare {
             actions.push(&Self::new_button("sst-return-new")?);
         }
@@ -207,7 +207,7 @@ impl Returns {
             .transpose()?;
         let unregistered = (self.refusal.is_none() && self.registration.is_none())
             .then(|| {
-                // The registration is recorded in SST setup's own dialog.
+                // The registration is recorded in SST settings's own dialog.
                 let mut empty = if self.can_manage {
                     EmptyState::missing(
                         "Not registered yet",
@@ -223,7 +223,7 @@ impl Returns {
                 } else {
                     EmptyState::missing(
                         "Not registered yet",
-                        "Returns are prepared once someone who manages SST setup records the company's registration.",
+                        "Returns are prepared once someone who manages SST settings records the company's registration.",
                     )
                 };
                 empty = empty.id("sst-returns-unregistered");

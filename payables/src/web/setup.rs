@@ -1,4 +1,4 @@
-//! Payables setup: the account bills are owed on, the matching tolerances and
+//! Payables settings: the account bills are owed on, the matching tolerances and
 //! the company's tax codes, each edited in place as Receivables settings are
 //! (`receivables/src/web/settings.rs`): an account or a tolerance saves when
 //! it is changed, a tax code's name, rate and account edit in its row and its
@@ -258,7 +258,7 @@ impl Setup {
             }
         }
         let mut body = render(Header {
-            title: Html::text("Payables setup"),
+            title: Html::text("Payables settings"),
             subtitle: &self.company,
             title_actions: Html::EMPTY,
             ..Header::default()

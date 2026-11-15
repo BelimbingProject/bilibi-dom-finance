@@ -382,7 +382,7 @@ impl Request {
                 settings: if self.can_change_approval {
                     render(bilibi_ui::Button {
                         id: "payables-approval-settings",
-                        href: "/finance/reports/approval-exceptions?area=other",
+                        href: "/finance/reports/controls",
                         body: Html::text("Approval settings"),
                         ..bilibi_ui::Button::default()
                     })?

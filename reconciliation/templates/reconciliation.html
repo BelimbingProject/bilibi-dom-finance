@@ -5,7 +5,7 @@
 {% import "dialog.html" as dialog %}
 {% import "workspace.html" as workspace %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% if flash.error.contains("/finance/reports/approval-exceptions") %}{% call ui::button(id="approval-control-settings", href="/finance/reports/approval-exceptions") %}Approval exceptions{% endcall %}{% endif %}
+{% if flash.error.contains("separation of duties") %}{% call ui::button(id="approval-control-settings", href="/finance/reports/controls") %}Bookkeeping controls{% endcall %}{% endif %}
 {% call ui::page(id="reconciliation", variant=bilibi_ui::PageVariant::Detail) %}
 {{ back|safe }}
 {{ refusal|safe }}
@@ -43,6 +43,7 @@
 {% if let Some(fin) = r.finalise %}
 {% call dialog::modal(id="finalise-modal", title=fin.title, cancel_event="cancel_finalise", description=fin.description) %}
 {{ fin.refusal|safe }}
+{% if fin.controls %}<div class="mt-2">{% call ui::button(id="finalise-control-settings", href="/finance/reports/controls") %}Bookkeeping controls{% endcall %}</div>{% endif %}
 <form id="finalise-form" data-event="finalise_change" data-change data-submit-event="finalise" class="mt-4">
 {% call form::input(field=fin.reason) %}{% endcall %}
 <div class="mt-4 flex flex-wrap justify-end gap-2">

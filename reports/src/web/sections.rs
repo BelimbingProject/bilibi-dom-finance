@@ -108,7 +108,7 @@ impl State {
         if self.sections.is_empty() {
             let mut empty = EmptyState::missing(
                 "No report sections yet",
-                "Until you add one, each report lists its accounts under their account type.",
+                "Group accounts under your own headings, like “Cost of sales” or “Overheads”.",
             )
             .id("report-sections-empty");
             empty.class = "py-6".into();
