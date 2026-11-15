@@ -571,12 +571,16 @@ impl Pages {
                     .and_then(|s| s.parse().ok())
                     .ok_or(Error::Internal)?;
                 if start <= today && today <= end {
-                    return Ok(previous.and_then(|(prior_start, prior_end)| {
-                        if prior_end.tomorrow().ok() != Some(start) {
-                            return None;
+                    let next_start = end.tomorrow().map_err(|_| Error::Internal)?;
+                    let years = match previous {
+                        Some((prior_start, prior_end))
+                            if prior_end.tomorrow().ok() == Some(start) =>
+                        {
+                            FinancialYears::new(prior_start, start, next_start)
                         }
-                        FinancialYears::new(prior_start, start, end.tomorrow().ok()?).ok()
-                    }));
+                        _ => FinancialYears::current(start, next_start),
+                    };
+                    return years.map(Some).map_err(|_| Error::Internal);
                 }
                 previous = Some((start, end));
             }

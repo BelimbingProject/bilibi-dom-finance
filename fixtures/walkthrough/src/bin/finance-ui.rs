@@ -179,6 +179,22 @@ async fn main() -> Outcome<()> {
             )
             .await?;
     }
+    // This fixture's first year is 2026. Check the real Reports page while
+    // that year contains today; the browser fixture is also used in later years.
+    if jiff::Zoned::now().date().year() == 2026 {
+        let years = ledger.list_fiscal_years(&manager, COMPANY).await?;
+        assert_eq!(
+            years.len(),
+            1,
+            "the preset proof needs a first-year company"
+        );
+        let pages = services.get::<PageService<Scope, Error>>("finance/reports.pages")?;
+        let html = setup_page(&pages, &manager, "reports").await?;
+        assert!(html.contains("This financial year"));
+        assert!(html.contains("Year to date"));
+        assert!(!html.contains("Last financial year"));
+        println!("Reports first year: current-year and year-to-date choices available, previous year absent");
+    }
     let installed = bilibi_finance_walkthrough_fixture::Installed {
         book,
         accounts: ledger.list_accounts(&manager, COMPANY).await?,
