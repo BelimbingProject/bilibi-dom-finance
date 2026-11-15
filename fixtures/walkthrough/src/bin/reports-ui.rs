@@ -370,7 +370,12 @@ async fn main() -> Outcome<()> {
     has(&refusal, "The ledger is not open");
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants
-        .set_direct(&admin, 1, bilibi_finance_reports::VIEW, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            bilibi_finance_reports::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     let revoked = update(&mut latest, &manager, LiveInput::Params(&q)).await?;
     has(&revoked, "You do not have permission to view the ledger.");

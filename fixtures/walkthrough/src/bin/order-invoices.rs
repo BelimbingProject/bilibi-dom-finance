@@ -127,7 +127,14 @@ async fn main() -> Result<()> {
         "commerce.sales.confirm",
     ] {
         grants
-            .set_direct(&admin, manager.user(), key, Some(true))
+            .set_direct(
+                &admin,
+                manager.user(),
+                key,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
             .await?;
     }
     grants
@@ -241,7 +248,7 @@ async fn main() -> Result<()> {
             &admin,
             manager.user(),
             bilibi_finance_receivables::MANAGE_CUSTOMERS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     ar.create_tax_code(

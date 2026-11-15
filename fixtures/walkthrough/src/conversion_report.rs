@@ -152,24 +152,44 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
         .ok_or("later opening bank item")?;
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     for cap in VIEWS {
-        grants.set_direct(&s, 2, cap, Some(true)).await?;
+        grants
+            .set_direct(
+                &s,
+                2,
+                cap,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     grants
         .set_direct(
             &s,
             2,
             bilibi_finance_reconciliation::IMPORT_STATEMENTS,
-            Some(true),
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
         )
         .await?;
     grants
-        .set_direct(&s, 2, bilibi_finance_attachments::CREATE, Some(true))
+        .set_direct(
+            &s,
+            2,
+            bilibi_finance_attachments::CREATE,
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     for unrelated in [
         bilibi_finance_attachments::VIEW,
         bilibi_finance_einvoice::VIEW,
     ] {
-        grants.set_direct(&s, 2, unrelated, Some(false)).await?;
+        grants
+            .set_direct(&s, 2, unrelated, Some(bilibi_authz::grants::Direct::Deny))
+            .await?;
     }
     let viewer = crate::in_company(db, services, 2, COMPANY).await?;
     let statement = reconciliation
@@ -212,7 +232,16 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
         bilibi_finance_reconciliation::VIEW,
         bilibi_finance_reconciliation::FINALISE_RECONCILIATIONS,
     ] {
-        grants.set_direct(&s, 1, capability, Some(true)).await?;
+        grants
+            .set_direct(
+                &s,
+                1,
+                capability,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     let manager = crate::in_company(db, services, 1, COMPANY).await?;
     reconciliation
@@ -330,7 +359,12 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
         .as_i64()
         .ok_or("second issued conversion report")?;
     grants
-        .set_direct(&s, 2, bilibi_finance_reports::ISSUE, Some(false))
+        .set_direct(
+            &s,
+            2,
+            bilibi_finance_reports::ISSUE,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert_eq!(
         registry
@@ -366,7 +400,12 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
     assert!(issued_ids.contains(&id));
     assert!(issued_ids.contains(&second_id));
     grants
-        .set_direct(&s, 2, bilibi_finance_payroll::VIEW, Some(false))
+        .set_direct(
+            &s,
+            2,
+            bilibi_finance_payroll::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert!(reports
         .get_issued_report(&viewer, COMPANY, id)
@@ -377,7 +416,14 @@ pub async fn before(db: &Db, services: &Services) -> Outcome<Kept> {
         .await
         .is_err());
     grants
-        .set_direct(&s, 2, bilibi_finance_payroll::VIEW, Some(true))
+        .set_direct(
+            &s,
+            2,
+            bilibi_finance_payroll::VIEW,
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     let c = db.get().await?;
     for sql in [
@@ -700,13 +746,24 @@ pub async fn after(db: &Db, services: &Services, kept: Kept) -> Outcome<()> {
     );
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     for cap in VIEWS {
-        grants.set_direct(&s, 3, cap, Some(true)).await?;
+        grants
+            .set_direct(
+                &s,
+                3,
+                cap,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     for unrelated in [
         bilibi_finance_attachments::VIEW,
         bilibi_finance_einvoice::VIEW,
     ] {
-        grants.set_direct(&s, 3, unrelated, Some(false)).await?;
+        grants
+            .set_direct(&s, 3, unrelated, Some(bilibi_authz::grants::Direct::Deny))
+            .await?;
     }
     let signer = Authority {
         authentication,

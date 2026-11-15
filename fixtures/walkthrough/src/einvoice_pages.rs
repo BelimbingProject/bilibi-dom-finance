@@ -489,7 +489,12 @@ pub async fn run() -> Outcome<()> {
     }
     for capability in [SUBMIT, POST_ENTRIES] {
         grants
-            .set_direct(&admin, 1, capability, Some(false))
+            .set_direct(
+                &admin,
+                1,
+                capability,
+                Some(bilibi_authz::grants::Direct::Deny),
+            )
             .await?;
         let refused = event(
             &mut reconciliation,
@@ -620,7 +625,14 @@ pub async fn run() -> Outcome<()> {
         &event(&mut setup, &manager, choose("NO-SUCH")).await?,
         "was not saved: Settlement account must be an active account of the chart that takes postings.",
     );
-    grants.set_direct(&admin, 1, SETTINGS, Some(false)).await?;
+    grants
+        .set_direct(
+            &admin,
+            1,
+            SETTINGS,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
+        .await?;
     has(
         &event(&mut setup, &manager, choose("4000")).await?,
         "Nothing was changed: you do not have permission to manage e-invoice settings.",

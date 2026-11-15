@@ -55,28 +55,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .chain(["admin.company.tenant-wide.manage"])
     {
-        grants.set_direct(&admin, 7, key, Some(true)).await?;
+        grants
+            .set_direct(
+                &admin,
+                7,
+                key,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     // H3: both real people can exercise Payables; this changes only the
     // explicitly disposable walkthrough database, never production seeds.
     for user in [1, 7] {
         for key in bilibi_finance_payables::CAPABILITIES {
-            grants.set_direct(&admin, user, key, Some(true)).await?;
+            grants
+                .set_direct(
+                    &admin,
+                    user,
+                    key,
+                    Some(bilibi_authz::grants::Direct::Allow(
+                        bilibi_authz::Reach::All,
+                    )),
+                )
+                .await?;
         }
     }
     // H2 grants are disposable fixture data. Include issuance and settlement,
     // which NR1's shared manager role deliberately does not carry.
     for user in [1, 7] {
         for key in bilibi_finance_receivables::CAPABILITIES {
-            grants.set_direct(&admin, user, key, Some(true)).await?;
+            grants
+                .set_direct(
+                    &admin,
+                    user,
+                    key,
+                    Some(bilibi_authz::grants::Direct::Allow(
+                        bilibi_authz::Reach::All,
+                    )),
+                )
+                .await?;
         }
     }
     for user in [1, 7] {
         for key in bilibi_finance_fixed_assets::CAPABILITIES {
-            grants.set_direct(&admin, user, key, Some(true)).await?;
+            grants
+                .set_direct(
+                    &admin,
+                    user,
+                    key,
+                    Some(bilibi_authz::grants::Direct::Allow(
+                        bilibi_authz::Reach::All,
+                    )),
+                )
+                .await?;
         }
         for key in bilibi_finance_reconciliation::CAPABILITIES {
-            grants.set_direct(&admin, user, key, Some(true)).await?;
+            grants
+                .set_direct(
+                    &admin,
+                    user,
+                    key,
+                    Some(bilibi_authz::grants::Direct::Allow(
+                        bilibi_authz::Reach::All,
+                    )),
+                )
+                .await?;
         }
     }
     let manager = sign_in(&db, &services, 1, 1).await?;
@@ -221,7 +266,16 @@ async fn payables_control(
             let enabled: bool = enabled.parse()?;
             services
                 .get::<Grants>("base/authz.grants")?
-                .set_direct(&admin, 1, key, Some(enabled))
+                .set_direct(
+                    &admin,
+                    1,
+                    key,
+                    Some(if enabled {
+                        bilibi_authz::grants::Direct::Allow(bilibi_authz::Reach::All)
+                    } else {
+                        bilibi_authz::grants::Direct::Deny
+                    }),
+                )
                 .await?;
         }
         ["duties", company, required] => {

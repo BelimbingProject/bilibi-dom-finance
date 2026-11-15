@@ -220,7 +220,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &reviewer,
             1,
             bilibi_finance_payables::SUBMIT_PAYMENTS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     refused(

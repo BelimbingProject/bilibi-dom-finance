@@ -54,7 +54,14 @@ async fn main() -> Outcome<()> {
     let admin = sign_in(&db, services, 1, 4).await?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants
-        .set_direct(&admin, 2, "finance.payables.view", Some(true))
+        .set_direct(
+            &admin,
+            2,
+            "finance.payables.view",
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     grants
         .set_system(
@@ -149,7 +156,12 @@ async fn main() -> Outcome<()> {
         Some("deny") | Some("restore") => {
             let key = args.get(1).ok_or(Error::Invalid)?;
             grants
-                .set_direct(&admin, 1, key, (args[0] == "deny").then_some(false))
+                .set_direct(
+                    &admin,
+                    1,
+                    key,
+                    (args[0] == "deny").then_some(bilibi_authz::grants::Direct::Deny),
+                )
                 .await?;
             println!("{} {key}", args[0]);
             return Ok(());

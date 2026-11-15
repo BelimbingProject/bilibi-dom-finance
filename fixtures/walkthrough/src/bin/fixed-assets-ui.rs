@@ -144,7 +144,16 @@ async fn main() -> Outcome<()> {
         bilibi_finance_fixed_assets::VIEW,
         bilibi_finance_ledger::VIEW,
     ] {
-        grants.set_direct(&admin, 7, cap, Some(true)).await?;
+        grants
+            .set_direct(
+                &admin,
+                7,
+                cap,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     let staff = sign_in(&db, services, 1, 7).await?;
     let users = services.get::<bilibi_user::UserService>("core/user.accounts")?;
@@ -615,7 +624,12 @@ async fn main() -> Outcome<()> {
     println!("NX3: pinned register filters, pages and periods render the canonical snapshot");
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants
-        .set_direct(&admin, 1, bilibi_finance_fixed_assets::ACQUIRE, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            bilibi_finance_fixed_assets::ACQUIRE,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     let denied = event(&mut register, &manager, json!({"type":"new"})).await?;
     has(&denied, "You do not have permission to do that.");

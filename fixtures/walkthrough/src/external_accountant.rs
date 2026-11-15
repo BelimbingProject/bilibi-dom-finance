@@ -235,7 +235,9 @@ pub async fn run(db: &Db, services: &Services, root: &str, full_pack: &str) -> O
     // Live scopes and old links must lose authority immediately. Another
     // accountant's independent role assignment is unaffected.
     for key in [bilibi_finance_ledger::VIEW, bilibi_finance_reports::EXPORT] {
-        grants.set_direct(&admin, 2, key, Some(false)).await?;
+        grants
+            .set_direct(&admin, 2, key, Some(bilibi_authz::grants::Direct::Deny))
+            .await?;
         assert!(reports
             .read_auditor_pack(&first, COMPANY, &metadata.id)
             .await

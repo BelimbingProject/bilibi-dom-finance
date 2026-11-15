@@ -338,7 +338,16 @@ async fn main() -> Outcome<()> {
         "finance.ledger.view",
         bilibi_finance_reconciliation::FINALISE_RECONCILIATIONS,
     ] {
-        grants.set_direct(&admin, 3, capability, Some(true)).await?;
+        grants
+            .set_direct(
+                &admin,
+                3,
+                capability,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     let staff = sign_in(&db, services, 1, 3).await?;
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
@@ -864,7 +873,16 @@ async fn main() -> Outcome<()> {
         "finance.receivables.payments.post",
         "finance.payables.payments.submit",
     ] {
-        grants.set_direct(&admin, 1, capability, Some(true)).await?;
+        grants
+            .set_direct(
+                &admin,
+                1,
+                capability,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     let (_, body) = mount(&pages, &manager, "reconciliation", savings_open.id).await?;
     let back = format!(

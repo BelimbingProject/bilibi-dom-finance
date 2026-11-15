@@ -104,7 +104,14 @@ async fn main() -> Outcome<()> {
         REVIEW_EXCEPTIONS,
     ] {
         grants
-            .set_direct(&authority, 7, capability, Some(true))
+            .set_direct(
+                &authority,
+                7,
+                capability,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
             .await?;
     }
     let affiliations =
@@ -414,7 +421,12 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     grants
-        .set_direct(&authority, 1, MANAGE_CONTROLLED_BOOKKEEPING, Some(false))
+        .set_direct(
+            &authority,
+            1,
+            MANAGE_CONTROLLED_BOOKKEEPING,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     let revoked = event(
         book.as_mut(),
@@ -433,7 +445,12 @@ async fn main() -> Outcome<()> {
         .set_direct(&authority, 1, MANAGE_CONTROLLED_BOOKKEEPING, None)
         .await?;
     grants
-        .set_direct(&authority, 1, REVIEW_EXCEPTIONS, Some(false))
+        .set_direct(
+            &authority,
+            1,
+            REVIEW_EXCEPTIONS,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     let forged = event(
         approvals.as_mut(),

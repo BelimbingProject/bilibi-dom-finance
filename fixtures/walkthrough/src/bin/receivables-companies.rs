@@ -390,7 +390,12 @@ async fn main() -> Outcome<()> {
     println!("PASS: subsequent address changes leave issued snapshots unchanged");
     let mask_draft = ar.create_draft(&manager, 1, &invoice("2026-08-31")).await?;
     grants
-        .set_direct(&admin, manager.user(), "admin.address.view", Some(false))
+        .set_direct(
+            &admin,
+            manager.user(),
+            "admin.address.view",
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     refused(
         ar.issue_document(&manager, 1, mask_draft.id).await,

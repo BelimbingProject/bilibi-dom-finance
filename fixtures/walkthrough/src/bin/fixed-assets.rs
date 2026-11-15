@@ -607,8 +607,13 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         |e| matches!(e, F::BillLineNotFound),
     )?;
     // Provider capabilities stay authoritative inside the caller transaction.
-    g.set_direct(&admin, 1, bilibi_finance_payables::VIEW, Some(false))
-        .await?;
+    g.set_direct(
+        &admin,
+        1,
+        bilibi_finance_payables::VIEW,
+        Some(bilibi_authz::grants::Direct::Deny),
+    )
+    .await?;
     refused(
         "revoked Payables view",
         f.acquire_from_bill(&manager, COMPANY, bill.id, 1, &a).await,
@@ -621,8 +626,13 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
     g.set_direct(&admin, 1, bilibi_finance_payables::VIEW, None)
         .await?;
-    g.set_direct(&admin, 1, bilibi_finance_ledger::VIEW, Some(false))
-        .await?;
+    g.set_direct(
+        &admin,
+        1,
+        bilibi_finance_ledger::VIEW,
+        Some(bilibi_authz::grants::Direct::Deny),
+    )
+    .await?;
     refused(
         "revoked Ledger view",
         f.acquire_from_entry(&manager, COMPANY, concurrent_source.id, 1, &a)
@@ -636,8 +646,13 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
     g.set_direct(&admin, 1, bilibi_finance_ledger::VIEW, None)
         .await?;
-    g.set_direct(&admin, 1, bilibi_finance_fixed_assets::ACQUIRE, Some(false))
-        .await?;
+    g.set_direct(
+        &admin,
+        1,
+        bilibi_finance_fixed_assets::ACQUIRE,
+        Some(bilibi_authz::grants::Direct::Deny),
+    )
+    .await?;
     refused(
         "revoked acquisition capability",
         f.acquire_from_bill(&manager, COMPANY, bill.id, 1, &a).await,

@@ -259,7 +259,7 @@ async fn main() -> Outcome<()> {
             &admin,
             1,
             bilibi_finance_payroll::POST_POSTINGS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let refused = page(

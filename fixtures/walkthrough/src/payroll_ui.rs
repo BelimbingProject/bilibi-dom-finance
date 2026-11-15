@@ -209,7 +209,12 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
     let mappings_before = payroll.list_mappings(&manager, 1).await?;
     let changes_before = payroll.list_mapping_changes(&manager, 1).await?;
     grants
-        .set_direct(&admin, 1, MANAGE_SETTINGS, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            MANAGE_SETTINGS,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert!(event(
         setup.as_mut(),
@@ -225,7 +230,12 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
     );
     grants.set_direct(&admin, 1, MANAGE_SETTINGS, None).await?;
     grants
-        .set_direct(&admin, 1, bilibi_finance_ledger::VIEW, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            bilibi_finance_ledger::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     let html = refresh(setup.as_mut(), &manager).await?;
     assert!(html.contains("Account unavailable"));
@@ -280,7 +290,12 @@ pub async fn run(db: &Db, services: &Services, historical: i64) -> Outcome<()> {
     )
     .await?;
     grants
-        .set_direct(&admin, 1, POST_POSTINGS, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            POST_POSTINGS,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     // The row's reversal is withheld with the grant: the submit is refused,
     // with the permission message or by the page no longer offering it.

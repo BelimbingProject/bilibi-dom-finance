@@ -294,7 +294,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &admin,
             manager.user(),
             bilibi_finance_sst::MANAGE_SETTINGS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let denied = sst.register(&manager, COMPANY, &first).await;
@@ -680,7 +680,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &admin,
             manager.user(),
             "finance.receivables.view",
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let codes_denied = sst.list_tax_codes(&manager, COMPANY).await;

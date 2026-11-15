@@ -55,7 +55,9 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
             "lines":[{"description":format!("{code} line"),"quantity":"1","unit_price":price,"tax_code_id":f.codes[code]}]})
     };
     let user = manager.user();
-    let withhold = |cap: &'static str| grants.set_direct(&admin, user, cap, Some(false));
+    let withhold = |cap: &'static str| {
+        grants.set_direct(&admin, user, cap, Some(bilibi_authz::grants::Direct::Deny))
+    };
     let restore = |cap: &'static str| grants.set_direct(&admin, user, cap, None);
 
     // Opening.

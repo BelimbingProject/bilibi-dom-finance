@@ -104,7 +104,7 @@ async fn approve(p: &Payables, grants: &Grants, admin: &Scope, s: &Scope, id: i6
             admin,
             user,
             bilibi_finance_payables::POST_DOCUMENTS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let approved = p.approve_document(s, COMPANY, id).await;
@@ -511,7 +511,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &admin,
             1,
             bilibi_finance_payables::POST_DOCUMENTS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     refused(
@@ -755,7 +755,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let stated = p.create_bill(&manager, COMPANY, &stated).await?;
     assert_eq!(stated.total_tax, money("7.99"));
     grants
-        .set_direct(&admin, 3, bilibi_finance_ledger::VIEW, Some(false))
+        .set_direct(
+            &admin,
+            3,
+            bilibi_finance_ledger::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert_eq!(p.get_document(&staff, COMPANY, bill.id).await?.id, bill.id);
     grants
