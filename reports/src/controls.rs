@@ -455,7 +455,7 @@ impl State {
                 Ok(state) => self.success(if state.required {
                     "Separation of duties is required again."
                 } else {
-                    "Separation of duties is off; same-person approvals are listed here."
+                    "Separation of duties is off; same-person approvals are listed under Approval exceptions."
                 }),
                 Err(error) => self.refused(error),
             },
@@ -1232,7 +1232,7 @@ impl State {
                 Dialog::Separation { required: false } => (
                     "duty-separation",
                     "Turn separation of duties off",
-                    "Whoever prepares a record may then approve it. Each such approval is listed here with this reason, for someone independent to review.",
+                    "Whoever prepares a record may then approve it. Each such approval is listed under Approval exceptions with this reason, for someone independent to review.",
                     "change_separation",
                     "Turn off",
                     "Saving…",
