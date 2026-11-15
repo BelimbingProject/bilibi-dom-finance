@@ -230,6 +230,8 @@ A company requires separation of duties unless it turns it off. The setting is t
 
 ## Manual journals
 
+`Ledger::pending_journal_count` counts journals awaiting a decision under the ledger view capability; Finance home links that count to the submitted journals list.
+
 Manual journals use Workflow's shared approval cases. Open **Approval rules**, choose the current company and **Manual journals**, review the proposed rules and publish them with a reason. This is an explicit setup action; boot, opening a book and submission do not install a policy. The initial proposal needs one independent holder of `finance.ledger.journals.approve`. Rules can add stages, named reviewers, cover, amount conditions and reminders. Amount conditions use the book's currency and the journal's total debits.
 
 `submit_journal(scope, company_id, &NewEntry)` validates and keeps immutable lines, then creates the Workflow round in that same transaction. The journal's ID identifies its immutable revision. Workflow keeps the preparer account and impersonator, resolves their Person identities, and checks both at decision time. An agent represents its account holder and never supplies another independent approval.

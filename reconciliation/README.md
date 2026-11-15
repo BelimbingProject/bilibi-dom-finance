@@ -75,6 +75,8 @@ The same file is refused a second time by its SHA-256 (`DuplicateFile { statemen
 
 ## Matching
 
+`Reconciliation::unmatched_statement_counts` counts statement lines without a standing match per bank account under the reconciliation view capability. It does not load ledger entries or suggest matches.
+
 A match groups statement lines of one bank account with entries posted to its ledger account whose two sides agree: the lines' amounts sum to the entries' debits less credits on that account (an entry whose postings there cancel is not an item). One line may match several entries and the other way round. `record_match` refuses, in this order, an empty side or an id below 1 (`InvalidSelection`), a line of another bank account or company (`StatementLineNotFound`), an unknown entry (`EntryNotFound`), an entry with no posting on the account (`EntryNotOnAccount`), a line or entry already in a standing match (`StatementLineMatched`, `EntryMatched`) and sides that differ (`Unbalanced { statement_side, ledger_side }`); a note is trimmed, blank as none, and at most 500 characters. A repeated id counts once. The match keeps each entry's number, date, description, reference and amount as matched, so a match and a finalised reconciliation read without the ledger.
 
 Outstanding opening items use the separate reviewed match and unmatch operations described under [Opening bank bridge](#opening-bank-bridge). `record_match` remains the ordinary statement-to-entry path.

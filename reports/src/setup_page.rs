@@ -82,6 +82,15 @@ struct Stack {
     body: Html,
 }
 
+#[derive(Template)]
+#[template(
+    source = r#"<div class="grid gap-3 sm:grid-cols-3">{{ body|safe }}</div>"#,
+    ext = "html"
+)]
+struct WorkGrid {
+    body: Html,
+}
+
 impl Setup {
     fn badge(area: &SetupArea) -> Result<Html> {
         render(match (area.state, area.optional) {
@@ -307,11 +316,14 @@ impl Setup {
                 }
             }
             if let Ok(page) = self.pages.contracts.read(scope, "finance.payables.document.page", &json!({"company_id":company,"status":"draft","page":1,"page_size":25,"as_of":today})).await {
-                if let Some(count) = page["result"]["total"].as_u64() {
+                if let Some(count) = page["result"]["total"].as_u64().filter(|count| *count > 0) {
                     work.push(&render(StatStrip { id: "home-bill-drafts", title: "Draft bills", href: "/finance/payables/bills?status=draft", items: vec![StatItem::number("bills and debit notes", &count.to_string())] })?);
                 }
             }
-            if let Some(count) = data["journal_approvals"].as_i64() {
+            if let Some(count) = data["journal_approvals"]
+                .as_i64()
+                .filter(|count| *count > 0)
+            {
                 work.push(&render(StatStrip {
                     id: "home-journals",
                     title: "Journals waiting for approval",
@@ -319,7 +331,10 @@ impl Setup {
                     items: vec![StatItem::number("journals", &count.to_string())],
                 })?);
             }
-            if let Some(count) = data["payment_approvals"].as_i64() {
+            if let Some(count) = data["payment_approvals"]
+                .as_i64()
+                .filter(|count| *count > 0)
+            {
                 work.push(&render(StatStrip {
                     id: "home-approvals",
                     title: "Payments waiting for approval",
@@ -329,6 +344,9 @@ impl Setup {
             }
             if let Some(failed) = data["failed_einvoices"].as_array() {
                 for item in failed {
+                    if item["count"].as_u64().unwrap_or_default() == 0 {
+                        continue;
+                    }
                     let status = item["status"].as_str().unwrap_or_default();
                     let title = if status == "refused" {
                         "E-invoices refused"
@@ -375,7 +393,7 @@ impl Setup {
                     title: "Work to do",
                     ..SectionHeading::default()
                 })?);
-                body.push(&render(Stack { body: work })?);
+                body.push(&render(WorkGrid { body: work })?);
             }
         }
         body.push(&render(Card {
