@@ -15,7 +15,7 @@ pub(crate) struct Downloads {
 
 #[derive(Template)]
 #[template(
-    source = r#"<!doctype html><html><head><meta charset="utf-8"><title>{{ title }}</title></head><body><h1>{{ title }}</h1><p>Management reports, not audited statements. {{ currency }}</p><table><thead><tr>{% for cell in headers %}<th>{{ cell }}</th>{% endfor %}</tr></thead><tbody>{% for row in pdf_rows %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></body></html>"#,
+    source = r#"<!doctype html><html><head><meta charset="utf-8"><title>{{ title }}</title></head><body><h1>{{ title }}</h1><p>Management reports, not audited statements. {{ currency }}</p><table width="100%" cellpadding="6"><thead><tr>{% for cell in headers %}<th align="{% if loop.first %}left{% else %}right{% endif %}">{{ cell }}</th>{% endfor %}</tr></thead><tbody>{% for row in pdf_rows %}<tr>{% for cell in row %}<td align="{% if loop.first %}left{% else %}right{% endif %}">{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></body></html>"#,
     ext = "html"
 )]
 struct Sheet {
@@ -90,7 +90,7 @@ impl Sheet {
         for group in groups {
             self.sections(&group.sections, h);
             self.line(
-                &format!("Total {}", group.account_type.as_str()),
+                &format!("Total {}", type_label(group.account_type)),
                 &group.totals,
                 h,
             );
@@ -120,6 +120,16 @@ impl Sheet {
             })
             .collect::<String>()
             .into_bytes()
+    }
+}
+fn type_label(kind: bilibi_finance_ledger::AccountType) -> &'static str {
+    use bilibi_finance_ledger::AccountType;
+    match kind {
+        AccountType::Asset => "assets",
+        AccountType::Liability => "liabilities",
+        AccountType::Equity => "equity",
+        AccountType::Income => "income",
+        AccountType::Expense => "expenses",
     }
 }
 struct Printable {
@@ -233,7 +243,7 @@ impl Downloads {
                         }
                     }
                     s.line(
-                        &format!("Total {}", group.account_type.as_str()),
+                        &format!("Total {}", type_label(group.account_type)),
                         &group.totals,
                         &r.header,
                     );
