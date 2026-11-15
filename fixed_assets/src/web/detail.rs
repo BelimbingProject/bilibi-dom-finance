@@ -243,7 +243,7 @@ impl Detail {
         let mut schedule = render(SectionHeading {
             title: "Projected depreciation",
             id: "asset-schedule-heading",
-            description: "Assumes the asset stays in use. Depreciation runs post it.",
+            description: "What will be posted if the asset stays in use.",
             ..Default::default()
         })?;
         schedule.push(&table(

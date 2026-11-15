@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Template)]
 #[template(
-    source = r#"<a id="assets-report-reproduce" href="{{ href }}" data-patch class="text-link hover:underline">Keep these figures</a>"#,
+    source = r#"<a id="assets-report-reproduce" href="{{ href }}" data-patch class="text-link hover:underline">Save a copy</a>"#,
     ext = "html"
 )]
 struct Reproduce {
@@ -129,20 +129,23 @@ impl Index {
         }
         let mut html = render(SectionHeading {
             title: &format!(
-                "Ledger check as of {}",
+                "Books and register compared, {}",
                 bilibi_finance_ledger::dates::display(r.as_of)
             ),
             id: "assets-reconciliation",
             class: "mt-4",
-            description:
-                "Each account's ledger balance beside what the register says it should be.",
+            description: "",
             actions: render(Reproduce {
                 href: params::address("/finance/fixed-assets/register", &query),
             })?,
             ..Default::default()
         })?;
         let mut rows = Vec::new();
-        for line in &r.reconciliation {
+        for line in r
+            .reconciliation
+            .iter()
+            .filter(|line| !line.difference.is_zero())
+        {
             rows.push(
                 FlexRow::new(line.account_id.to_string())
                     .slot(
@@ -168,7 +171,7 @@ impl Index {
             rows,
             "Ledger check",
             "check_grid",
-            "No category accounts yet.",
+            "No differences found.",
         )?);
         Ok(html)
     }

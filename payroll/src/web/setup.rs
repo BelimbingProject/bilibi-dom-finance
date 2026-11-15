@@ -319,7 +319,7 @@ impl State {
             "payroll-settings",
             "payroll-settings-heading",
             "Owed to staff",
-            "Liability accounts: a run's net pay is credited to the first, an approved claim to the second, until they are paid.",
+            "Pay and claims not yet paid out are held in these accounts.",
             None,
             current,
         )?];
@@ -388,7 +388,7 @@ impl State {
             "Account mappings",
             EmptyState::missing(
                 "No mappings yet",
-                "A run or claim posts once each of its components or categories is mapped.",
+                "A payroll run can be posted when every pay item in the run has an account.",
             )
             .id("payroll-mappings-empty")
             .action(if can_manage {
@@ -404,7 +404,7 @@ impl State {
             }),
             false,
         )?;
-        parts.push(section("payroll-mappings", "payroll-mappings-heading", "Account mappings", "A payroll component is a pay item code with the direction of its lines; a claim category is its code.", Some(mappings.len()), table)?);
+        parts.push(section("payroll-mappings", "payroll-mappings-heading", "Account mappings", "Give each pay item and claim type an account.", Some(mappings.len()), table)?);
         if can_manage && self.adding {
             parts.push(self.mapping_dialog(&expense, &liability)?);
         }

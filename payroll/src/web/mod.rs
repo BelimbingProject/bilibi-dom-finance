@@ -505,7 +505,7 @@ impl State {
         let (title, subtitle, link_id, link, label) = if self.setup {
             (
                 "Payroll posting accounts",
-                "Where net pay and approved claims are owed, and which accounts each payroll component and claim category posts to.",
+                "Choose the accounts payroll and claims are posted to.",
                 "payroll-setup-postings",
                 "/finance/payroll",
                 "Payroll and claims",
@@ -513,7 +513,7 @@ impl State {
         } else {
             (
                 "Payroll and claims",
-                "Finalised payroll runs and approved claims, and whether each is in the books.",
+                "",
                 "payroll-postings-setup",
                 "/finance/payroll/setup",
                 "Posting accounts",

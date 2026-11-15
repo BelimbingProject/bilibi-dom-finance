@@ -252,9 +252,27 @@ impl Detail {
                     },
                 })?
             }
-            (None, Some(line)) => {
+            (None, Some(_)) => {
                 let mut html = entry_link(Some(a.entry_id), Some(a.entry_number))?;
-                html.push(&Html::text(&format!(", line {line}")));
+                if let Some(c) = company(s) {
+                    if let Ok(entry) = self
+                        .pages
+                        .contracts
+                        .read(
+                            s,
+                            "finance.ledger.entry.get",
+                            &serde_json::json!({"company_id":c,"entry_id":a.entry_id}),
+                        )
+                        .await
+                    {
+                        if let Some(description) = entry["result"]["description"]
+                            .as_str()
+                            .filter(|v| !v.is_empty())
+                        {
+                            html.push(&Html::text(&format!(" · {description}")));
+                        }
+                    }
+                }
                 html
             }
             (None, None) => {
@@ -294,7 +312,7 @@ impl Detail {
                 Html::text(&format!("{}%", rate.normalize())),
             ));
         }
-        items.push(fact("Bought on", bought));
+        items.push(fact("Bought with", bought));
         items.push(fact(
             "Registered by",
             Html::text(&people.name(a.recorded_by_user_id, a.recorded_by_impersonator_id)),

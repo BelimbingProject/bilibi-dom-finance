@@ -42,7 +42,7 @@ impl State {
                 &Dialog {
                     id: "run-modal",
                     title: "Run depreciation",
-                    description: "Posts each asset's depreciation through the end of the month, including any earlier months not yet posted.",
+                    description: "Posts depreciation for every asset up to the end of this month. Missed months are included.",
                     change: "",
                     submit: "run_depreciation",
                     cancel: "close_run",

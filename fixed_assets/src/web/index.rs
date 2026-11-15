@@ -12,6 +12,7 @@ use bilibi_ui::{
     Choice, CreateButton, Filter, FilterToolbar, FlashMap, ListSpec, ListState, Pagination,
     RecordLink, SectionHeading, ToolbarControl,
 };
+use jiff::ToSpan;
 use std::sync::LazyLock;
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -146,6 +147,7 @@ struct View<'a> {
     actions: Html,
     title: &'static str,
     opening: Html,
+    purchases: Html,
     flash: FlashMap<'a>,
     filters: Html,
     unavailable: Html,
@@ -194,7 +196,7 @@ impl Index {
                     ("ledger", "Ledger"),
                     ("register", "Register"),
                     ("difference", "Difference"),
-                    ("other", "Other postings"),
+                    ("other", "Not from fixed assets"),
                 ],
             )?,
         })
@@ -231,7 +233,50 @@ impl Index {
                 Err(e) => self.flash = Some((StatusKind::Error, refusal(e))),
             },
             Kind::Categories => self.categories.new = Some(Draft::default()),
-            Kind::Runs => self.runs.new = Some(Draft::default()),
+            Kind::Runs => {
+                let c = company(s).ok_or(Error::Invalid)?;
+                let runs: Vec<Run> = self
+                    .pages
+                    .read(
+                        s,
+                        "finance.fixed_assets.run.list",
+                        serde_json::json!({"company_id": c}),
+                        "records",
+                    )
+                    .await
+                    .map_err(|_| Error::Internal)?;
+                let today = self.clock(s).await?.today;
+                let period = if let Some(last) = runs.iter().map(|r| r.period).max() {
+                    last.checked_add(1.month())
+                        .unwrap_or(today.first_of_month())
+                } else {
+                    let report: RegisterReport = self
+                        .pages
+                        .read(
+                            s,
+                            "finance.fixed_assets.register.get",
+                            serde_json::json!({"company_id": c, "as_of": today.to_string()}),
+                            "report",
+                        )
+                        .await
+                        .map_err(|_| Error::Internal)?;
+                    report
+                        .rows
+                        .iter()
+                        .filter(|r| !r.voided && !r.disposed)
+                        .map(|r| {
+                            r.asset
+                                .opening_date
+                                .unwrap_or(r.asset.in_service_date)
+                                .first_of_month()
+                        })
+                        .min()
+                        .unwrap_or(today.first_of_month())
+                };
+                let mut draft = Draft::default();
+                draft.values.insert("period".into(), period.to_string());
+                self.runs.new = Some(draft);
+            }
         }
         Ok(())
     }
@@ -262,9 +307,8 @@ impl Index {
         if let Some(filter) = &mut self.period {
             filter.set(parsed, &clock);
         } else {
-            self.period = Some(
-                PeriodFilter::new("assets-report-period", parsed, &clock).label("Report through"),
-            );
+            self.period =
+                Some(PeriodFilter::new("assets-report-period", parsed, &clock).label("As of"));
         }
         Ok(())
     }
@@ -372,6 +416,72 @@ impl Index {
             Kind::Runs => header_button(id, "new", "Run depreciation", true),
         }
     }
+    async fn purchases(&self, s: &Scope, accounts: &categories::Accounts) -> Result<Html> {
+        if self.kind != Kind::Register || !self.pages.allowed(s, ACQUIRE).await? {
+            return Ok(Html::EMPTY);
+        }
+        let c = company(s).ok_or(Error::Invalid)?;
+        let categories: Vec<Category> = self
+            .pages
+            .read(
+                s,
+                "finance.fixed_assets.category.list",
+                serde_json::json!({"company_id":c}),
+                "records",
+            )
+            .await
+            .map_err(|_| Error::Internal)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Html::EMPTY;
+        for category in categories {
+            let account = category.revision.defaults.cost_account_id;
+            if !seen.insert(account) {
+                continue;
+            }
+            let sources: Vec<crate::AcquisitionSource> = self
+                .pages
+                .read(
+                    s,
+                    "finance.fixed_assets.acquisition.sources",
+                    serde_json::json!({"company_id":c,"category_revision_id":category.revision.id}),
+                    "records",
+                )
+                .await
+                .map_err(|_| Error::Internal)?;
+            if sources.is_empty() {
+                continue;
+            }
+            let name = accounts
+                .iter()
+                .find(|a| a.0 == account)
+                .map(|a| a.1.as_str())
+                .unwrap_or("this account");
+            let mut body = Html::text(&format!(
+                "{} {} on {} {} not in the register. ",
+                sources.len(),
+                if sources.len() == 1 {
+                    "purchase"
+                } else {
+                    "purchases"
+                },
+                name,
+                if sources.len() == 1 { "is" } else { "are" }
+            ));
+            body.push(&header_button(
+                &format!("assets-register-purchase-{account}"),
+                "new",
+                "Register asset",
+                false,
+            )?);
+            result.push(&render(bilibi_ui::Alert {
+                id: &format!("assets-unregistered-{account}"),
+                kind: StatusKind::Info,
+                body,
+                ..Default::default()
+            })?);
+        }
+        Ok(result)
+    }
     async fn body(&mut self, s: &Scope) -> Result<String> {
         let (units, accounts) = self.pages.account_context(s).await?;
         let (mut rows, report, unavailable) = match self.rows(s, units, &accounts).await {
@@ -405,7 +515,7 @@ impl Index {
                     Kind::Categories => {
                         "A category sets the accounts and useful life its assets start with."
                     }
-                    Kind::Runs => "A run posts a month's depreciation for every asset in service.",
+                    Kind::Runs => "Run depreciation once a month for all assets in use.",
                 },
             )
             .id("assets-empty");
@@ -524,6 +634,7 @@ impl Index {
             } else {
                 Html::EMPTY
             },
+            purchases: self.purchases(s, &accounts).await?,
             flash: flash_map(&self.flash),
             filters,
             unavailable,
