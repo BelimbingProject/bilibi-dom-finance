@@ -3,7 +3,8 @@
 use bilibi_authz::grants::Grants;
 use bilibi_database::{pool, Error};
 use bilibi_finance_ledger::{
-    ApprovalExceptionQuery, Ledger, NewBook, MANAGE_CONTROLLED_BOOKKEEPING, REVIEW_EXCEPTIONS,
+    AccountType, ApprovalExceptionQuery, Ledger, MinorUnits, Money, NewAccount, NewBook, NewEntry,
+    NewLine, PostOptions, MANAGE_CONTROLLED_BOOKKEEPING, REVIEW_EXCEPTIONS,
 };
 use bilibi_finance_walkthrough_fixture::sign_in;
 use bilibi_module_registry::Services;
@@ -228,10 +229,57 @@ async fn main() -> Outcome<()> {
     );
     println!("NT3: controlled off requires reason, Unicode is preserved, override audited, controlled on restored");
 
-    contains(
-        &refresh(book.as_mut(), &manager).await?,
-        "/finance/ledger/journals?review=pending",
-    );
+    let cash = ledger
+        .create_account(
+            &manager,
+            1,
+            &NewAccount::new("1000", "Cash", AccountType::Asset),
+        )
+        .await?;
+    let capital = ledger
+        .create_account(
+            &manager,
+            1,
+            &NewAccount::new("3000", "Capital", AccountType::Equity),
+        )
+        .await?;
+    let amount = Money::parse("100.00", MinorUnits::new(2).unwrap())?;
+    ledger
+        .post_entry(
+            &manager,
+            1,
+            &NewEntry {
+                entry_date: late_date,
+                description: "Capital paid in, entered late".into(),
+                reference: None,
+                lines: vec![
+                    NewLine::debit(cash.id, amount),
+                    NewLine::credit(capital.id, amount),
+                ],
+            },
+            &PostOptions::default(),
+        )
+        .await?;
+    let controls = refresh(book.as_mut(), &manager).await?;
+    contains(&controls, "/finance/ledger/journals?entered_late=pending");
+    contains(&controls, "Entries awaiting review (1)");
+    let journal_pages = services.get::<PageService<Scope, Error>>("finance/ledger.pages")?;
+    let mut queue = journal_pages
+        .0
+        .mount(PageRequest {
+            operation: "journals",
+            scope: Some(&manager),
+            path: &HashMap::new(),
+            query: &HashMap::from([("entered_late".into(), "pending".into())]),
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .unwrap();
+    let queue = refresh(queue.as_mut(), &manager).await?;
+    contains(&queue, "Capital paid in, entered late");
+    contains(&queue, " days late · Not reviewed");
+    println!("NT3: Entries awaiting review counts the late entry and opens the Not reviewed queue");
 
     let mut approvals = mount(&services, &manager, "approval-exceptions").await?;
     let initial = refresh(approvals.as_mut(), &manager).await?;

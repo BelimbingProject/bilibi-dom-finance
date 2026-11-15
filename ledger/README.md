@@ -167,7 +167,7 @@ The ledger has pages so a person without an AI agent can do the same daily work.
 | Fiscal years | `/finance/ledger/fiscal-years` | Lists the years of the current company, or of any company the person may work in through the company filter, each year and period named by its company. Opens a year for a chosen company after a review that shows the dates and the number of periods. Names every period by its month ("January 2026") and a year by its months ("January to December 2026"). Each open year has one main button for its next step: "Close January" for the earliest open month, and "Close year" only once every month before its last is closed (the last month closes with the year). Reopens and locks months with icon buttons on the month's row, and years with buttons on the year. |
 | Trial balance | `/finance/ledger/trial-balance` | Reads the balances as of a date at a pinned entry number. Each balance is the link to the entries that make it up: the reports' account entries at the same date and entry number. The as-of day is one date, not a range, so it keeps its own date control rather than the period filter. |
 
-Late recordings are columns and filters on Journals. **Recording** distinguishes on-time, approaching-late, late and unposted records. **Late review** finds pending or reviewed late recordings. Open the journal row to read or record its independent review through `finance.ledger.entry.review_late`. The review permanently keeps the reason, reviewer and time. The poster and anyone who overlaps through impersonation are refused.
+Late recordings are reached through Journals' one **Entered late** filter (All entries, Entered late, Not reviewed, Reviewed); Bookkeeping controls links its count of entries awaiting review to the Not reviewed queue (`?entered_late=pending`). A row that needs review says so beside its status ("Entered 132 days late · Not reviewed"). The **Recording** and **Late review** columns wait in the column picker. Open the journal row to read or record its independent review through `finance.ledger.entry.review_late`. The review permanently keeps the reason, reviewer and time. The poster and anyone who overlaps through impersonation are refused.
 
 ### Current company and company books
 
@@ -738,7 +738,7 @@ Two more ready-made roles use the Platform's company- and date-bound assignments
 
 ### Reuse a company's chart
 
-Save a reusable chart from **Chart of accounts → Save reusable chart** in the current company. Give it a unique key, name and description, choose any group branches that should be optional, then review every row before publishing. For example, a practice can make its payroll group optional so an adopter without employees leaves that section out.
+Save a reusable chart from **Chart of accounts → Save as starter chart** in the current company. Give it a unique key, name and description, choose any group branches that should be optional, then review every row before publishing. For example, a practice can make its payroll group optional so an adopter without employees leaves that section out.
 
 Publishing requires `finance.ledger.templates.manage` and ledger view access to the source company. This permission is separate from managing accounts: it shares the snapshot with ledger readers throughout the same tenant. A practice spanning separate tenants saves a template in each tenant; there is no cross-tenant chart access. The tenant owner receives the permission when roles are explicitly reconciled. Existing custom roles must be granted it deliberately.
 

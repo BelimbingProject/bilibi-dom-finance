@@ -7,7 +7,7 @@ use bilibi_datetime::{
     Clock, DisplayContext, DisplayPolicy, Format, Period, PeriodFilter, Precision,
 };
 use bilibi_finance_ledger::{
-    ApprovalExceptionQuery, LedgerError, People, MANAGE_CONTROLLED_BOOKKEEPING,
+    ApprovalExceptionQuery, LateRecordingQuery, LedgerError, People, MANAGE_CONTROLLED_BOOKKEEPING,
     MANAGE_DUTY_SEPARATION, REVIEW_EXCEPTIONS,
 };
 use bilibi_locale::Locales;
@@ -24,6 +24,8 @@ use bilibi_ui::{
 use jiff::Timestamp;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
+
+const AWAITING_LIMIT: u32 = 500;
 
 #[derive(Clone)]
 pub(crate) struct Pages {
@@ -576,6 +578,17 @@ impl State {
             .list_controlled_bookkeeping_changes(scope, company)
             .await?;
         changes.reverse();
+        let awaiting = ledger
+            .list_late_recordings(
+                scope,
+                company,
+                &LateRecordingQuery {
+                    reviewed: Some(false),
+                    limit: Some(AWAITING_LIMIT),
+                    ..LateRecordingQuery::default()
+                },
+            )
+            .await?;
         let people = self
             .pages
             .people(
@@ -650,7 +663,13 @@ impl State {
                 links.push(&html(Button {
                     id: "controls-late-journals",
                     href: "/finance/ledger/journals?entered_late=pending",
-                    body: Html::text("Entries awaiting review"),
+                    body: Html::text(&match awaiting.len() {
+                        0 => "Entries awaiting review".to_owned(),
+                        n if n >= AWAITING_LIMIT as usize => {
+                            format!("Entries awaiting review ({AWAITING_LIMIT}+)")
+                        }
+                        n => format!("Entries awaiting review ({n})"),
+                    }),
                     ..Button::default()
                 })?);
                 links

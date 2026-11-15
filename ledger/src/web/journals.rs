@@ -936,6 +936,29 @@ impl Journals {
                     .cell("number", Cell::text(""))
                     .slot("description", link(Html::text(&record.description))?),
             };
+            let recording = match record.recording.as_str() {
+                "late" => format!(
+                    "Entered {} days late",
+                    record.recorded_days.unwrap_or_default()
+                ),
+                "approaching" => format!(
+                    "Approaching late · {} days",
+                    record.recorded_days.unwrap_or_default()
+                ),
+                "on_time" => "On time".into(),
+                _ => "—".into(),
+            };
+            let review = match record.review.as_str() {
+                "pending" => Some("Not reviewed"),
+                "reviewed" => Some("Reviewed"),
+                _ => None,
+            };
+            let mut status = render(status)?;
+            if let Some(review) = review {
+                status.push(&render(LateNote {
+                    text: format!("{recording} · {review}"),
+                })?);
+            }
             row = row
                 .cell(
                     "source",
@@ -945,32 +968,9 @@ impl Journals {
                         source_label(&record.source)
                     }),
                 )
-                .slot("status", render(status)?)
-                .cell(
-                    "recording",
-                    Cell::text(match record.recording.as_str() {
-                        "late" => {
-                            format!(
-                                "Entered {} days late",
-                                record.recorded_days.unwrap_or_default()
-                            )
-                        }
-                        "approaching" => format!(
-                            "Approaching late · {} days",
-                            record.recorded_days.unwrap_or_default()
-                        ),
-                        "on_time" => "On time".into(),
-                        _ => "—".into(),
-                    }),
-                )
-                .cell(
-                    "review",
-                    Cell::text(match record.review.as_str() {
-                        "pending" => "Not reviewed",
-                        "reviewed" => "Reviewed",
-                        _ => "—",
-                    }),
-                )
+                .slot("status", status)
+                .cell("recording", Cell::text(&recording))
+                .cell("review", Cell::text(review.unwrap_or("—")))
                 .slot(
                     "amount",
                     figure(&crate::Money::display_decimal(
@@ -1514,6 +1514,15 @@ struct FillLabel {
     ext = "html"
 )]
 struct Totals {
+    text: String,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<span class="ml-2 text-xs text-ink-muted">{{ text }}</span>"#,
+    ext = "html"
+)]
+struct LateNote {
     text: String,
 }
 
