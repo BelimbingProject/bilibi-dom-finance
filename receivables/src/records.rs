@@ -135,6 +135,10 @@ pub struct Document {
     /// when the issuer cannot view the source (issuance still succeeds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_refresh: Option<String>,
+    /// Its fiscal document (e-invoice) and how to start one, on the contract
+    /// reads only (`document.get`); absent when there is nothing to say.
+    #[serde(default, skip_serializing_if = "crate::Fiscal::is_empty")]
+    pub fiscal: crate::Fiscal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +160,9 @@ pub(crate) struct DocumentPageRow {
     pub document_reference: Option<String>,
     pub party_code: Option<String>,
     pub party_name: Option<String>,
+    /// Its fiscal document (e-invoice) and how to start one.
+    #[serde(default, skip_serializing_if = "crate::Fiscal::is_empty")]
+    pub fiscal: crate::Fiscal,
     /// An opening invoice a later opening register replaced: kept as source
     /// evidence, it owes nothing and was never paid.
     #[serde(default)]

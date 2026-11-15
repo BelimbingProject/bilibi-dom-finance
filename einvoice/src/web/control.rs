@@ -45,6 +45,7 @@ struct State {
     candidates: Option<Candidates>,
     reconciliation: Option<Reconciliation>,
     setup: Option<Setup>,
+    posting: super::posting_accounts::PostingAccounts,
     columns: Vec<ListColumns>,
     list: ListState,
     flash: Option<(StatusKind, String)>,
@@ -62,12 +63,12 @@ impl State {
                         ("issued", "Issued"),
                         ("buyer", "Buyer"),
                         ("status", "Status"),
-                        ("payable", "Payable"),
+                        ("payable", "Total"),
                     ],
                 ),
                 (
                     "einvoice-consolidation-refused-table",
-                    &[("number", "Number"), ("payable", "Payable"), ("why", "Why")],
+                    &[("number", "Number"), ("payable", "Total"), ("why", "Why")],
                 ),
             ],
             "reconciliation" => &[
@@ -76,7 +77,7 @@ impl State {
                     &[
                         ("number", "Number"),
                         ("type", "Type"),
-                        ("payable", "Payable"),
+                        ("payable", "Total"),
                         ("reason", "Last failure"),
                     ],
                 ),
@@ -130,6 +131,7 @@ impl State {
             candidates: None,
             reconciliation: None,
             setup: None,
+            posting: Default::default(),
             columns,
             list: ListState::parse(request.query, spec).map_err(|_| Error::Internal)?,
             flash: None,
@@ -156,7 +158,12 @@ impl State {
                     .await
                     .ok()
             }
-            "setup" => self.setup = self.pages.einvoice.setup(scope, company).await.ok(),
+            "setup" => {
+                self.setup = self.pages.einvoice.setup(scope, company).await.ok();
+                self.posting
+                    .load(&self.pages.einvoice, scope, company)
+                    .await;
+            }
             _ => unreachable!(),
         }
         Ok(())
@@ -265,6 +272,22 @@ impl State {
                 });
                 self.load(scope).await?;
             }
+            ("setup", super::posting_accounts::SAVE) => {
+                // Without the grant the page shows no setup to put a refusal
+                // beside, so the page itself says it.
+                if self.allowed(scope, SETTINGS).await? {
+                    self.posting
+                        .save(&self.pages.einvoice, scope, company, value)
+                        .await?;
+                } else {
+                    self.flash = Some((
+                        StatusKind::Error,
+                        "Nothing was changed: you do not have permission to manage e-invoice settings."
+                            .into(),
+                    ));
+                }
+                self.load(scope).await?;
+            }
             ("setup", "test_connection") => {
                 let environment = self.setup.as_ref().map_or("", |s| s.environment.as_str());
                 self.flash = Some(if !self.allowed(scope, SETTINGS).await? {
@@ -308,15 +331,16 @@ impl State {
         let (title, subtitle) = match self.operation {
             "consolidation" => (
                 "E-invoice consolidation",
-                "One consolidated document reports a month's sales that no buyer asked an individual e-invoice for.",
+                "Send one e-invoice for the sales in a month where the buyer did not ask for an e-invoice.",
             ),
             "reconciliation" => (
-                "E-invoice reconciliation",
-                "Validated documents without a ledger entry, and entries whose document is cancelled.",
+                "E-invoices not in the books",
+                // The two sections say what the page holds.
+                "",
             ),
             _ => (
                 "E-invoice setup",
-                "Credentials, certificate, and supplier profile for this company.",
+                "Credentials, certificate, supplier profile and posting accounts for this company.",
             ),
         };
         let page_id = format!("einvoice-{}", self.operation);
@@ -395,42 +419,64 @@ impl State {
             )?);
             return Ok(parts);
         };
-        let mut covered = instant("einvoice-consolidation-from", c.from, display)?;
-        covered.push(&Html::text(" to "));
-        covered.push(&instant("einvoice-consolidation-until", c.until, display)?);
-        let mut closes = instant("einvoice-consolidation-closes", c.closes_at, display)?;
-        closes.push(&Html::text(" "));
-        let window = if c.open {
+        // The month and the deadline as calendar days in the authority's
+        // own calendar, never as instants in another zone.
+        let covered = format!(
+            "1–{} {}",
+            c.month.days_in_month(),
+            bilibi_finance_ledger::dates::month(c.month)
+        );
+        let last_day = bilibi_finance_ledger::dates::display(
+            Einvoice::authority().consolidation_last_day(c.month),
+        );
+        let deadline = if c.open {
             (
                 "einvoice-consolidation-open",
-                "Open now",
-                BadgeKind::Success,
+                format!("Send it by {last_day}."),
+            )
+        } else if jiff::Timestamp::now() < c.until {
+            (
+                "einvoice-consolidation-closed",
+                format!("You can send it after the month ends, until {last_day}."),
             )
         } else {
             (
                 "einvoice-consolidation-closed",
-                "Not open now",
-                BadgeKind::Warning,
+                format!("The deadline passed on {last_day}."),
             )
         };
-        closes.push(&render(WindowBadge {
-            window_id: window.0,
-            label: window.1,
-            kind: window.2,
-        })?);
+        let deadline = render(Deadline {
+            deadline_id: deadline.0,
+            text: &deadline.1,
+        })?;
         let mut body = facts(
             "einvoice-consolidation-facts",
             vec![
-                ("Covers documents issued", covered),
-                ("May be issued until", closes),
+                ("Covers", Html::text(&covered)),
+                ("Deadline", deadline),
                 ("Environment", Html::text(&super::sentence(&c.environment))),
                 ("Documents", Html::text(&c.documents.len().to_string())),
                 (
                     "Tax exclusive",
-                    Html::text(&c.line_extension_amount.to_string()),
+                    Html::text(&bilibi_finance_ledger::Money::display_decimal(
+                        c.line_extension_amount,
+                        None,
+                    )),
                 ),
-                ("Tax", Html::text(&c.tax_amount.to_string())),
-                ("Payable", Html::text(&c.payable_amount.to_string())),
+                (
+                    "Tax",
+                    Html::text(&bilibi_finance_ledger::Money::display_decimal(
+                        c.tax_amount,
+                        None,
+                    )),
+                ),
+                (
+                    "Total",
+                    Html::text(&bilibi_finance_ledger::Money::display_decimal(
+                        c.payable_amount,
+                        None,
+                    )),
+                ),
             ],
         )?;
         if c.open && !c.documents.is_empty() && self.allowed(scope, ISSUE).await? {
@@ -447,7 +493,7 @@ impl State {
         }
         parts.push(section(
             "einvoice-consolidation-summary",
-            "Window and totals",
+            "Deadline and totals",
             "",
             false,
             body,
@@ -535,18 +581,18 @@ impl State {
                 0,
                 &reconciliation.unposted,
                 "unposted",
-                "Valid documents without a ledger entry",
-                "Every validated document has its ledger entry.",
-                "Retry posting",
+                "Valid, with no journal entry",
+                "Every valid e-invoice is in the books.",
+                "Post again",
                 "retry_posting",
             ),
             (
                 1,
                 &reconciliation.unreversed,
                 "unreversed",
-                "Entries whose document is cancelled",
-                "Every entry of a cancelled document has been reversed.",
-                "Retry reversal",
+                "Cancelled, with a journal entry not reversed",
+                "Every cancelled e-invoice has its journal entry reversed.",
+                "Reverse again",
                 "retry_reversal",
             ),
         ] {
@@ -590,12 +636,15 @@ impl State {
                     Ok(row)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            // A posting refused for its accounts is fixed in the e-invoice
-            // settings, which this section links to.
+            // A posting refused for its accounts is fixed on the setup page,
+            // where they are chosen; this section links there.
             let mut content = Html::EMPTY;
             if index == 0 && can_settle {
                 content.push(&render(SettingsNote {
-                    href: &settings_href(scope),
+                    href: &format!(
+                        "/finance/einvoice/setup#{}",
+                        super::posting_accounts::ANCHOR
+                    ),
                 })?);
             }
             content.push(&self.table(index, rows, title, empty, can_retry)?);
@@ -662,7 +711,7 @@ impl State {
         let mut parts = vec![section(
             "einvoice-connection",
             "Connection",
-            "Changed in this company's e-invoice settings.",
+            "",
             false,
             connection,
         )?];
@@ -781,6 +830,13 @@ impl State {
             "",
             false,
             supplier,
+        )?);
+        parts.push(section(
+            super::posting_accounts::ANCHOR,
+            "Posting accounts",
+            "A valid e-invoice with no invoice or bill behind it is posted to these accounts.",
+            false,
+            self.posting.facts(&s.posting_accounts)?,
         )?);
         Ok(parts)
     }
@@ -972,10 +1028,17 @@ fn document_row(d: &DocumentSummary, row_id: &str, framed: bool) -> Result<FlexR
                 class: "font-medium text-ink-strong hover:underline",
             })?,
         )
-        .slot("status", render(Badge::status(kind, &d.status))?)
+        .slot(
+            "status",
+            render(Badge::status(kind, crate::fiscal::status_label(&d.status)))?,
+        )
         .slot(
             "payable",
-            Html::text(&format!("{} {}", d.payable_amount, d.currency_code)),
+            Html::text(&format!(
+                "{} {}",
+                bilibi_finance_ledger::Money::display_decimal(d.payable_amount, None),
+                d.currency_code
+            )),
         ))
 }
 
@@ -1059,7 +1122,7 @@ struct EntryById {
 /// Where the posting accounts are chosen, above the documents they hold back.
 #[derive(Template)]
 #[template(
-    source = r#"<p id="einvoice-unposted-settings" class="px-5 pb-3 text-sm text-ink-muted">A posting refused for its accounts posts once they are chosen in the <a href="{{ href }}" class="text-link hover:underline">e-invoice settings</a>; then retry it here.</p>"#,
+    source = r#"<p id="einvoice-unposted-settings" class="px-5 pb-3 text-sm text-ink-muted"><a href="{{ href }}" class="text-action underline">Choose the accounts</a>, then post these again.</p>"#,
     ext = "html"
 )]
 struct SettingsNote<'a> {
@@ -1092,20 +1155,19 @@ struct Instant<'a> {
 struct SupplierComplete {}
 #[derive(Template)]
 #[template(
-    source = "{% import \"components.html\" as ui %}<span id=\"{{ window_id }}\" class=\"ml-2\">{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}</span>",
+    source = r#"<span id="{{ deadline_id }}">{{ text }}</span>"#,
     ext = "html"
 )]
-struct WindowBadge<'a> {
-    window_id: &'a str,
-    label: &'a str,
-    kind: BadgeKind,
+struct Deadline<'a> {
+    deadline_id: &'a str,
+    text: &'a str,
 }
 
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "consolidation" => Some("E-invoice consolidation"),
-            "reconciliation" => Some("E-invoice reconciliation"),
+            "reconciliation" => Some("E-invoices not in the books"),
             "setup" => Some("E-invoice setup"),
             _ => None,
         }

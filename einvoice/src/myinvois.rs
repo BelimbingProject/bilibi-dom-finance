@@ -179,6 +179,10 @@ impl Authority for MyInvois {
         ID
     }
 
+    fn name(&self) -> &'static str {
+        "MyInvois"
+    }
+
     fn issuable_document_types(&self) -> Vec<&'static str> {
         let mut types = vec![INVOICE];
         types.extend(NOTES);
@@ -239,6 +243,54 @@ impl Authority for MyInvois {
             "14" => "Self-billed refund note".into(),
             other => format!("Document type {other}"),
         }
+    }
+
+    fn source_document_type(&self, credit_note: bool) -> &'static str {
+        if credit_note {
+            NOTES[0]
+        } else {
+            INVOICE
+        }
+    }
+
+    fn registration_types(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("BRN", "Business registration number"),
+            ("NRIC", "MyKad or MyTentera number"),
+            ("PASSPORT", "Passport number"),
+            ("ARMY", "Army number"),
+        ]
+    }
+
+    // Only the home country: every other country is the person's choice from
+    // the authority's list.
+    fn country_code(&self, iso: &str) -> Option<&'static str> {
+        matches!(iso.trim().to_ascii_uppercase().as_str(), "MY" | "MYS").then_some(HOME_COUNTRY)
+    }
+
+    fn dialable(&self, phone: &str) -> String {
+        phone
+            .chars()
+            .filter(|c| !c.is_whitespace() && !matches!(c, '-' | '(' | ')' | '.'))
+            .collect()
+    }
+
+    fn tax_type_for(&self, rate: Option<Decimal>) -> Option<&'static str> {
+        rate.is_none_or(|rate| rate.is_zero()).then_some(UNTAXED[0])
+    }
+
+    fn untaxed(&self, tax_type: &str) -> bool {
+        UNTAXED.contains(&tax_type)
+    }
+
+    fn exempt(&self, tax_type: &str) -> bool {
+        tax_type == EXEMPT
+    }
+
+    fn consolidation_last_day(&self, month: Date) -> Date {
+        last_of_month_plus_one(month)
+            .checked_add(jiff::Span::new().days(CONSOLIDATION_DAYS - 1))
+            .unwrap_or(month)
     }
 
     fn cancellation_window_hours(&self) -> u32 {

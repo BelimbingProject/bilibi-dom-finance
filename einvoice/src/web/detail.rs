@@ -4,7 +4,7 @@ use crate::{Attention, DocumentView, PartySnapshot, StatusEvent, CANCEL, SUBMIT,
 use bilibi_finance_ledger::Money;
 use bilibi_ui::{
     params, BackLink, BuiltinColumn, Button, ButtonVariant, ConfirmDialog, EmptyState, Fact, Facts,
-    Field, FlashMap, IconButton, InputKind, Modal, RecordLink, StatusKind, NO_FLASH,
+    Field, FlashMap, Fold, IconButton, InputKind, Modal, RecordLink, StatusKind, NO_FLASH,
 };
 use std::collections::HashMap;
 
@@ -12,6 +12,9 @@ pub(super) struct Detail {
     pages: Pages,
     document_id: i64,
     document: Option<DocumentView>,
+    /// The records the document was made for, as their own module names
+    /// them, in the order of its source links.
+    source_records: Vec<Option<crate::SourceRecord>>,
     lines: ListColumns,
     sources: ListColumns,
     events: ListColumns,
@@ -132,10 +135,21 @@ struct EntryById<'a> {
     text: &'a str,
 }
 
+/// The record a document was made for, linked to its own page.
+#[derive(Template)]
+#[template(
+    source = r#"<a href="{{ href }}" class="text-action hover:underline">{{ name }}</a>"#,
+    ext = "html"
+)]
+struct SourceRecordLink<'a> {
+    href: &'a str,
+    name: &'a str,
+}
+
 /// A line on the page with a link to where it is acted on.
 #[derive(Template)]
 #[template(
-    source = r#"{{ text }} <a href="{{ href }}" class="text-link hover:underline">{{ link }}</a>"#,
+    source = r#"{{ text }} <a href="{{ href }}" class="text-action underline">{{ link }}</a>"#,
     ext = "html"
 )]
 struct WithLink<'a> {
@@ -218,20 +232,46 @@ fn party_lines(p: &PartySnapshot) -> Vec<String> {
     .filter(|v| !v.is_empty())
     .collect()
 }
-/// An event's facts; the ledger entry it names is a link to its journal.
+/// What an event means to a person; the authority's identifiers and answer
+/// codes wait under a Details fold, and the ledger entry it names is a link
+/// to its journal.
 fn event_detail(e: &StatusEvent) -> Result<Html> {
-    let text = [
-        e.authority_status.as_ref().map(|v| format!("status {v}")),
-        e.submission_uid.as_ref().map(|v| format!("submission {v}")),
+    // A transport code is for the fold, never the sentence.
+    let reason = e
+        .reason
+        .as_deref()
+        .filter(|reason| !reason.starts_with("HTTP "));
+    let text = match (e.event.as_str(), reason) {
+        (_, Some(reason)) => reason.to_owned(),
+        ("submitted", None) => format!("Sent to {}", Einvoice::authority().name()),
+        _ => String::new(),
+    };
+    let identifiers = [
+        e.authority_status
+            .as_ref()
+            .map(|v| format!("Status at the authority: {v}")),
+        e.submission_uid.as_ref().map(|v| format!("Submission {v}")),
         e.document_uuid.as_ref().map(|v| format!("UUID {v}")),
-        e.http_status.map(|v| format!("HTTP {v}")),
-        e.reason.clone(),
+        e.http_status.map(|v| format!("Answer code {v}")),
+        e.reason
+            .as_ref()
+            .filter(|reason| reason.starts_with("HTTP "))
+            .cloned(),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
     let mut html = Html::text(&text);
+    if !identifiers.is_empty() {
+        html.push(&render(Fold {
+            id: &format!("einvoice-event-{}-details", e.sequence),
+            title: "Details",
+            summary: "",
+            open: false,
+            body: Html::text(&identifiers),
+        })?);
+    }
     if let Some(id) = e.ledger_entry_id {
         if !text.is_empty() {
             html.push(&Html::text(" · "));
@@ -252,19 +292,51 @@ fn actor(e: &StatusEvent, people: &bilibi_finance_ledger::People) -> String {
 }
 /// A posting or reversal that needs attention is retried on the
 /// reconciliation page, at this document's row.
-fn attention(flag: Attention, id: i64) -> Result<(&'static str, Html)> {
-    let (key, message) = attention_text(flag);
-    let retry = match flag {
+fn attention(flag: Attention, d: &DocumentView) -> Result<(&'static str, Html)> {
+    let id = d.document.id;
+    let (key, mut message) = attention_text(flag);
+    // Why the last try failed, in the words the posting recorded.
+    let why = |event: &str| {
+        d.events
+            .iter()
+            .rev()
+            .find(|e| e.event == event)
+            .and_then(|e| e.reason.clone())
+    };
+    let mut retry = match flag {
         Attention::Unposted | Attention::PostingFailed => Some((
             format!("/finance/einvoice/reconciliation#einvoice-unposted-{id}"),
-            "Go to posting retry",
+            "Post it again",
         )),
         Attention::Unreversed | Attention::ReversalFailed => Some((
             format!("/finance/einvoice/reconciliation#einvoice-unreversed-{id}"),
-            "Go to reversal retry",
+            "Reverse it again",
         )),
         _ => None,
     };
+    match flag {
+        Attention::PostingFailed => {
+            if let Some(reason) = why("posting_failed") {
+                // Accounts not chosen yet are chosen on the setup page.
+                if reason.starts_with("Choose the ") {
+                    retry = Some((
+                        format!(
+                            "/finance/einvoice/setup#{}",
+                            super::posting_accounts::ANCHOR
+                        ),
+                        "Choose accounts",
+                    ));
+                }
+                message = format!("Valid, but not in the books yet. {reason}");
+            }
+        }
+        Attention::ReversalFailed => {
+            if let Some(reason) = why("reversal_failed") {
+                message = format!("Cancelled, but its journal entry is not reversed yet. {reason}");
+            }
+        }
+        _ => {}
+    }
     let html = match retry {
         Some((href, link)) => render(WithLink {
             text: &message,
@@ -293,21 +365,18 @@ fn attention_text(flag: Attention) -> (&'static str, String) {
                 authority.cancellation_window_hours()
             ),
         ),
-        Attention::Unposted => (
-            "unposted",
-            "Validated but not yet posted to the ledger.".into(),
-        ),
+        Attention::Unposted => ("unposted", "Valid, but not in the books yet.".into()),
         Attention::PostingFailed => (
             "posting_failed",
-            "The ledger posting failed; the last posting event says why.".into(),
+            "Valid, but not in the books yet.".into(),
         ),
         Attention::Unreversed => (
             "unreversed",
-            "Cancelled but its ledger entry has not been reversed.".into(),
+            "Cancelled, but its journal entry is not reversed yet.".into(),
         ),
         Attention::ReversalFailed => (
             "reversal_failed",
-            "The ledger reversal failed; see the last reversal event.".into(),
+            "Cancelled, but its journal entry is not reversed yet.".into(),
         ),
     }
 }
@@ -323,6 +392,7 @@ impl Detail {
             pages: pages.clone(),
             document_id,
             document: None,
+            source_records: Vec::new(),
             framed,
             lines: columns(
                 "einvoice-lines",
@@ -348,7 +418,7 @@ impl Detail {
                     ("issued", "Issued"),
                     ("buyer", "Buyer"),
                     ("lines", "On lines"),
-                    ("payable", "Payable"),
+                    ("payable", "Total"),
                 ],
             )?,
             events: columns(
@@ -378,6 +448,15 @@ impl Detail {
             Ok(d) => Some(d),
             Err(EinvoiceError::Failed(error)) => return Err(error),
             Err(_) => None,
+        };
+        self.source_records = match &self.document {
+            Some(d) if !d.source_links.is_empty() => self
+                .pages
+                .einvoice
+                .source_records(scope, company(scope)?, &d.source_links)
+                .await
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
         if let Some(d) = &self.document {
             self.lines
@@ -558,14 +637,19 @@ impl Detail {
             view.header_subtitle = render(Subtitle {
                 d,
                 environment: sentence(&d.document.environment),
-                status: status_badge(&d.status)?,
+                // Queued for the authority: neither "Not sent" nor "Sent" yet.
+                status: status_badge(if d.submission_queued {
+                    "sending"
+                } else {
+                    &d.status
+                })?,
             })?;
             view.supplier = party_lines(&d.document.supplier);
             view.buyer = party_lines(&d.document.buyer);
             view.attention = d
                 .attention
                 .iter()
-                .map(|flag| attention(*flag, d.document.id))
+                .map(|flag| attention(*flag, d))
                 .collect::<Result<_>>()?;
             view.actions = Actions {
                 submit: can_submit
@@ -614,7 +698,14 @@ impl Detail {
                     title: "Ledger entry",
                     id: "",
                     value: match (d.ledger_entry_id, d.reversal_entry_id) {
-                        (None, _) => Html::text("—"),
+                        // The record it was made for posted the entry.
+                        (None, _) => match d.source_links.as_slice() {
+                            [only] => render(EntryById {
+                                id: only.ledger_entry_id,
+                                text: "Open journal",
+                            })?,
+                            _ => Html::text("—"),
+                        },
                         (Some(id), reversal) => {
                             let mut html = render(EntryById {
                                 id,
@@ -633,18 +724,33 @@ impl Detail {
                 },
             ];
             if d.recognised_by_source {
+                // The record as its own module names it, linked to its page;
+                // its journal for a reader that module shows nothing.
+                let mut made_for = Html::EMPTY;
+                if d.source_links.len() > crate::NAMED_SOURCES {
+                    // A consolidated document covers a month of them.
+                    made_for = Html::text(&format!("{} posted records", d.source_links.len()));
+                } else {
+                    for (index, link) in d.source_links.iter().enumerate() {
+                        if index > 0 {
+                            made_for.push(&Html::text(" · "));
+                        }
+                        made_for.push(&match self.source_records.get(index) {
+                            Some(Some(record)) => render(SourceRecordLink {
+                                href: &record.href,
+                                name: &record.name,
+                            })?,
+                            _ => render(EntryById {
+                                id: link.ledger_entry_id,
+                                text: "Open journal",
+                            })?,
+                        });
+                    }
+                }
                 facts.push(Fact {
-                    title: "Recognised by",
+                    title: "Made for",
                     id: "einvoice-document-source-links",
-                    value: Html::text(
-                        &d.source_links
-                            .iter()
-                            .map(|s| {
-                                format!("{} {} (entry #{})", s.module, s.record, s.ledger_entry_id)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("; "),
-                    ),
+                    value: made_for,
                 });
             }
             view.authority = render(Facts {
@@ -708,13 +814,17 @@ impl Detail {
                     ("Tax exclusive", d.document.tax_exclusive_amount),
                     ("Tax", d.document.tax_amount),
                     ("Tax inclusive", d.document.tax_inclusive_amount),
-                    ("Payable", d.document.payable_amount),
+                    ("Total", d.document.payable_amount),
                 ]
                 .iter()
                 .map(|(title, amount)| Fact {
                     title,
                     id: "",
-                    value: Html::text(&format!("{amount} {}", d.document.currency_code)),
+                    value: Html::text(&format!(
+                        "{} {}",
+                        Money::display_decimal(*amount, None),
+                        d.document.currency_code
+                    )),
                 })
                 .collect(),
             })?;
@@ -758,7 +868,11 @@ impl Detail {
                     )
                     .cell(
                         "payable",
-                        Cell::text(format!("{} {}", s.payable_amount, s.currency_code)),
+                        Cell::text(format!(
+                            "{} {}",
+                            Money::display_decimal(s.payable_amount, None),
+                            s.currency_code
+                        )),
                     ),
                 );
             }

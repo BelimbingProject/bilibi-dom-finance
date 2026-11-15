@@ -97,6 +97,7 @@ pub async fn prepare_einvoice(
         );
     }
     prove_document_messages(services, manager, last_document.unwrap()).await?;
+    prove_invoice_einvoice(db, services, manager, company).await?;
     prove_report_messages(services, manager).await?;
     prove_payroll_messages(services, manager, company).await?;
     Ok(stop)
@@ -201,6 +202,210 @@ pub async fn prove_messages(
     }
     println!(
         "NU1: Fixed Assets list/detail dialog refusals survive refresh and stale success dismissal; Cancel closes them"
+    );
+    Ok(())
+}
+
+/// A person starts the e-invoice of an issued invoice from the invoice
+/// itself: the Invoices list's contract offers the address, that address
+/// opens New e-invoice with what the invoice says, a refusal stays beside its
+/// field, and the recorded e-invoice is sent and shows on the invoice.
+async fn prove_invoice_einvoice(
+    db: &Db,
+    services: &Services,
+    scope: &bilibi_tenancy::Scope,
+    company: i64,
+) -> Outcome<()> {
+    use bilibi_agent_api::page::{PageContracts, SERVICE};
+    use bilibi_database::Error;
+    use bilibi_tenancy::Scope;
+    use bilibi_ui::page::{LiveInput, LiveRequest, PageRequest, PageService};
+    use std::collections::HashMap;
+    let contracts = services.get::<PageContracts>(SERVICE)?;
+    // A page write goes through its contract with the person's own session.
+    let login = services
+        .get::<bilibi_core::user::UserService>("core/user.accounts")?
+        .login("manager@other.example.test", crate::PASSWORD)
+        .await?;
+    assert!(!login.pending);
+    let token = login.token.as_str();
+    let listed = contracts
+        .read(
+            scope,
+            "finance.receivables.document.page",
+            &json!({"company_id":company,"kind":"invoice","status":"issued","page_size":100}),
+        )
+        .await?["result"]
+        .clone();
+    // The fixture issues invoices before any e-invoice exists, so one must
+    // offer the start.
+    let invoice = listed["documents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|d| d["fiscal"]["start"].is_string())
+        .ok_or("no issued invoice offers New e-invoice")?;
+    assert_eq!(listed["fiscal_documents"], json!(true));
+    let id = invoice["id"].as_i64().ok_or("invoice id")?;
+    let number = invoice["document_reference"]
+        .as_str()
+        .ok_or("invoice number")?;
+    let start = invoice["fiscal"]["start"].as_str().ok_or("start")?;
+    assert!(start.starts_with("/finance/einvoice/documents?"), "{start}");
+    let query = HashMap::from([
+        ("source".to_owned(), "finance/receivables".to_owned()),
+        ("record".to_owned(), format!("document:{id}")),
+    ]);
+    let pages = services.get::<PageService<Scope, Error>>("finance/einvoice.pages")?;
+    let mut state = pages
+        .0
+        .mount(PageRequest {
+            operation: "index",
+            scope: Some(scope),
+            path: &HashMap::new(),
+            query: &query,
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .unwrap();
+    let opened = state
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Refresh,
+        })
+        .await?;
+    for text in ["einvoice-new-modal", number, "Submit e-invoice"] {
+        assert!(opened.html.contains(text), "the dialog shows {text}");
+    }
+    // Cancel goes back to the invoice that asked, and records nothing.
+    let mut cancelled = pages
+        .0
+        .mount(PageRequest {
+            operation: "index",
+            scope: Some(scope),
+            path: &HashMap::new(),
+            query: &query,
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .unwrap();
+    let cancel = json!({"type":"cancel_einvoice"});
+    let back = cancelled
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Event(&cancel),
+        })
+        .await?;
+    assert_eq!(
+        back.redirect.as_deref(),
+        Some(format!("/finance/receivables/invoices/{id}").as_str())
+    );
+    // The invoice holds no authority codes: what is missing is said beside
+    // its field and nothing is recorded.
+    let bare = json!({"type":"create_einvoice"});
+    let refused = state
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Event(&bare),
+        })
+        .await?;
+    assert!(refused.redirect.is_none());
+    assert!(
+        refused.html.contains("einvoice-new-modal") && refused.html.contains("be blank"),
+        "a refusal stays in the dialog: {}",
+        refused.html
+    );
+    let filled = json!({
+        "type":"create_einvoice",
+        "einvoice[tax_id]":"C29702635060",
+        "einvoice[registration_type]":"BRN",
+        "einvoice[phone]":"+60355550100",
+        "einvoice[address]":"12 Jalan Delta\nSeksyen 7",
+        "einvoice[city]":"Shah Alam",
+        "einvoice[state_code]":"14",
+        "einvoice[country_code]":"MYS",
+        "einvoice[classification_0]":"003",
+        "einvoice[tax_type_0]":"02",
+        "einvoice[classification_1]":"003",
+    });
+    let sent = state
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Event(&filled),
+        })
+        .await?;
+    let Some(href) = sent.redirect.as_deref() else {
+        return Err(format!("the e-invoice was not recorded: {}", sent.html).into());
+    };
+    assert!(href.starts_with("/finance/einvoice/documents/"), "{href}");
+    let client = db.get().await?;
+    clearance::jobs_settle(&client).await?;
+    let read = contracts
+        .read(
+            scope,
+            "finance.receivables.document.get",
+            &json!({"company_id":company,"document_id":id}),
+        )
+        .await?["result"]
+        .clone();
+    assert_eq!(
+        read["fiscal"]["document"]["status"],
+        json!("valid"),
+        "{read}"
+    );
+    assert_eq!(read["fiscal"]["document"]["href"], json!(href));
+    assert!(
+        read["fiscal"]["start"].is_null(),
+        "a standing e-invoice is not started twice"
+    );
+    // The e-invoice names the invoice it was made for and links its page.
+    let facade = services.get::<Einvoice>(bilibi_finance_einvoice::SERVICE)?;
+    let document = href
+        .rsplit('/')
+        .next()
+        .and_then(|id| id.parse::<i64>().ok())
+        .ok_or("e-invoice id")?;
+    let view = facade.get_document(scope, company, document).await?;
+    let made_for = facade
+        .source_records(scope, company, &view.source_links)
+        .await?;
+    assert_eq!(
+        made_for,
+        vec![Some(bilibi_finance_einvoice::SourceRecord {
+            name: format!("Invoice {number}"),
+            href: format!("/finance/receivables/invoices/{id}"),
+        })]
+    );
+    // The address is a request, never proof: asking again opens only a notice.
+    let mut again = pages
+        .0
+        .mount(PageRequest {
+            operation: "index",
+            scope: Some(scope),
+            path: &HashMap::new(),
+            query: &query,
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .unwrap();
+    let again = again
+        .update(LiveRequest {
+            scope,
+            credential: token,
+            input: LiveInput::Refresh,
+        })
+        .await?;
+    assert!(again.html.contains("already has e-invoice"));
+    assert!(!again.html.contains("einvoice-new-submit"));
+    println!(
+        "NU1: invoice {number} offers Submit e-invoice; Cancel goes back to the invoice; the dialog refuses missing codes beside their fields, records and sends it; the invoice reads its e-invoice as valid at {href}, which names the invoice, and offers no second one"
     );
     Ok(())
 }

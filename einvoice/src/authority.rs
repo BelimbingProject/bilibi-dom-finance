@@ -433,6 +433,9 @@ pub trait Authority {
     /// The authority's stable ID, stored on each document and code override.
     fn id(&self) -> &'static str;
 
+    /// The name people know the authority's system by.
+    fn name(&self) -> &'static str;
+
     /// The document types a company may issue.
     fn issuable_document_types(&self) -> Vec<&'static str>;
 
@@ -450,6 +453,37 @@ pub trait Authority {
 
     /// The human name of a document type, as the pages and the PDF show it.
     fn document_type_name(&self, document_type: &str) -> String;
+
+    /// The document type a posted sale is issued as, or the note that
+    /// corrects one when `credit_note`.
+    fn source_document_type(&self, credit_note: bool) -> &'static str;
+
+    /// The kinds of registration number a party carries, each with the name
+    /// a person reads.
+    fn registration_types(&self) -> Vec<(&'static str, &'static str)>;
+
+    /// The authority's country code for an ISO 3166 country code, when it is
+    /// sure of it; a person chooses otherwise.
+    fn country_code(&self, iso: &str) -> Option<&'static str>;
+
+    /// A phone number as the authority takes it, from the way people write
+    /// one (spaces, dashes, brackets).
+    fn dialable(&self, phone: &str) -> String;
+
+    /// The tax type of a line when its rate alone decides it (a line with no
+    /// tax); `None` when a person must say which tax it is.
+    fn tax_type_for(&self, rate: Option<rust_decimal::Decimal>) -> Option<&'static str>;
+
+    /// Whether a tax type takes no tax, so it suits only a line at a zero
+    /// rate.
+    fn untaxed(&self, tax_type: &str) -> bool;
+
+    /// Whether a line of this tax type must say why it is exempt.
+    fn exempt(&self, tax_type: &str) -> bool;
+
+    /// The last day, in the authority's calendar, on which the consolidated
+    /// document of the month holding `month` may be issued.
+    fn consolidation_last_day(&self, month: jiff::civil::Date) -> jiff::civil::Date;
 
     /// Hours after validation in which the supplier may still cancel a document.
     fn cancellation_window_hours(&self) -> u32;

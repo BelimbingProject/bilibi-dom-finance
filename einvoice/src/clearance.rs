@@ -64,7 +64,7 @@ const LOOKUP_MARGIN_SECONDS: i64 = 60;
 const REASON_LENGTH: usize = 300;
 
 /// Whether a document in this status may be submitted.
-fn submittable(status: &str) -> bool {
+pub(crate) fn submittable(status: &str) -> bool {
     SUBMITTABLE.contains(&status)
 }
 
@@ -405,6 +405,23 @@ impl Einvoice {
                 "finance.einvoice.submit_document",
             )
             .await?;
+        let job = self
+            .submit_document_on(&mut tx, scope, company_id, document_id)
+            .await?;
+        tx.commit().await?;
+        Ok(job)
+    }
+
+    /// `submit_document` on the caller's audited transaction, which already
+    /// proved the grant and holds the company's lock: the page and agent
+    /// contract (`finance.einvoice.document.submit`) queue through it.
+    pub(crate) async fn submit_document_on(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company_id: i64,
+        document_id: i64,
+    ) -> Result<i64> {
         let tenant = scope.tenant();
         let recorded = documents::fetch(tx.sql(), tenant, company_id, document_id)
             .await?
@@ -422,17 +439,12 @@ impl Einvoice {
         }
         let job = self
             .queue
-            .enqueue_for(
-                &mut tx,
-                scope,
-                SUBMIT_WORKER,
-                job_args(company_id, document_id),
-            )
+            .enqueue_for(tx, scope, SUBMIT_WORKER, job_args(company_id, document_id))
             .await
             .map_err(refusal)?;
         let document = &recorded.document;
         action(
-            &tx,
+            tx,
             "finance.einvoice.submission.queued",
             json!({
                 "document_id": document.id, "code_number": document.code_number,
@@ -440,7 +452,6 @@ impl Einvoice {
             }),
         )
         .await?;
-        tx.commit().await?;
         Ok(job.id())
     }
 

@@ -76,7 +76,7 @@ page!(
 page!(
     "reconciliation",
     "/finance/einvoice/reconciliation",
-    "E-invoice reconciliation",
+    "E-invoices not in the books",
     VIEW,
     "vaadin-invoice",
     3

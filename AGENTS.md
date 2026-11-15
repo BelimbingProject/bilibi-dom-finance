@@ -275,6 +275,7 @@ they govern this code and are not copied here.
   (client secret, certificate, private key) is never returned by the facade: a
   later slice that signs or submits reads it inside `finance/einvoice` only,
   masked everywhere else.
+- Show where a posted record's e-invoice stands, and start one, only through the ledger's seam (`ledger/src/fiscal.rs`): the posting module contributes `FISCAL_SOURCES` (`receivables/src/fiscal.rs`), the issuing module `FISCAL_DOCUMENTS` (`einvoice/src/fiscal.rs`), and the record's page links `FiscalStart::href`, which opens the one New e-invoice dialog (`einvoice/src/web/new_document.rs`). Never a Cargo or descriptor edge between the two, a second issue form, or a status read from `finance_einvoice_*` tables.
 - Put what one clearance authority defines (document types, posting rules,
   shapes, versions, windows, URLs) behind `Authority` in `myinvois.rs`, not in
   the facade, a setting or a page; a second authority is a second

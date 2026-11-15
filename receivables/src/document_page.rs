@@ -119,7 +119,17 @@ pub(crate) async fn page(
     for document in &mut documents {
         document.settle(as_of);
     }
-    Ok(json!({"documents":documents,"total":total,"page":page,"page_size":page_size,"as_of":day}))
+    let asked: Vec<(i64, &str, &str, bool)> = documents
+        .iter()
+        .map(|d| (d.id, d.kind.as_str(), d.status.as_str(), d.opening))
+        .collect();
+    let (fiscal, fiscal_documents) = service.fiscal_on(client, scope, company, &asked).await?;
+    for (document, fiscal) in documents.iter_mut().zip(fiscal) {
+        document.fiscal = fiscal;
+    }
+    Ok(
+        json!({"documents":documents,"total":total,"page":page,"page_size":page_size,"as_of":day,"fiscal_documents":fiscal_documents}),
+    )
 }
 
 /// `finance.receivables.document.summary`: draft invoices, issued invoices

@@ -1,9 +1,11 @@
 //! Bilimbi `Web.DocumentsLive`: URL-backed filters and paging, fixed newest-first order.
+use super::new_document::{NewDocument, Outcome, EVENT};
 use super::*;
 use crate::{DocumentPage, DocumentQuery};
+use bilibi_finance_ledger::FiscalStart;
 use bilibi_ui::{
-    params, BuiltinColumn, Choice, EmptyState, Filter, FilterToolbar, ListSpec, ListState,
-    PageCounts, Pagination, RecordLink, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, Choice, CreateButton, EmptyState, Filter, FilterToolbar, ListSpec,
+    ListState, PageCounts, Pagination, RecordLink, TableEmpty, ToolbarControl,
 };
 use std::{collections::HashMap, sync::LazyLock};
 
@@ -50,6 +52,11 @@ pub(super) struct Index {
     columns: ListColumns,
     documents: Option<DocumentPage>,
     framed: bool,
+    /// The document an address asked to start an e-invoice for
+    /// (`FiscalStart`), opened once.
+    requested: Option<(String, String)>,
+    /// The New e-invoice dialog, while it is open.
+    new: Option<NewDocument>,
 }
 #[derive(Template)]
 #[template(path = "documents.html")]
@@ -60,12 +67,13 @@ struct View {
     table: Html,
     pagination: Html,
     unavailable: bool,
+    dialog: Html,
 }
 
 /// The header's buttons to the two other document views.
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(id="einvoice-documents-consolidation", href="/finance/einvoice/consolidation") %}Consolidation{% endcall %}{% call ui::button(id="einvoice-documents-reconciliation", href="/finance/einvoice/reconciliation") %}Reconciliation{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(id="einvoice-documents-consolidation", href="/finance/einvoice/consolidation") %}Consolidation{% endcall %}{% call ui::button(id="einvoice-documents-reconciliation", href="/finance/einvoice/reconciliation") %}Not in the books{% endcall %}"#,
     ext = "html"
 )]
 struct HeaderLinks;
@@ -76,8 +84,8 @@ impl Index {
             ("code_number", "Number"),
             ("document_type", "Type"),
             ("issued_at", "Issued"),
-            ("buyer", "Counterparty"),
-            ("payable_amount", "Payable"),
+            ("buyer", "Buyer"),
+            ("payable_amount", "Total"),
             ("status", "Status"),
         ]
         .into_iter()
@@ -104,7 +112,26 @@ impl Index {
                 )]),
             documents: None,
             framed,
+            requested: FiscalStart::read(query),
+            new: None,
         })
+    }
+    /// Opens the New e-invoice dialog for the document the address names.
+    pub(super) async fn open_requested(&mut self, scope: &Scope) -> Result<()> {
+        if let Some((module, record)) = self.requested.take() {
+            self.new = Some(NewDocument::start(&self.pages, scope, &module, &record).await?);
+        }
+        Ok(())
+    }
+    /// Recording it against the invoice's journal entry and sending it take
+    /// all three grants.
+    async fn can_start(&self, scope: &Scope) -> Result<bool> {
+        Ok(self.pages.allowed(scope, crate::ISSUE).await?
+            && self.pages.allowed(scope, crate::SUBMIT).await?
+            && self
+                .pages
+                .allowed(scope, bilibi_finance_ledger::VIEW)
+                .await?)
     }
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         let query = DocumentQuery {
@@ -139,11 +166,15 @@ impl Index {
     async fn body(&self, scope: &Scope) -> Result<String> {
         let display = self.pages.display(scope).await?;
         let mut statuses = vec![Choice::new("All statuses", "")];
-        statuses.extend(
-            crate::documents::STATUS_EVENTS
-                .iter()
-                .map(|s| Choice::new(*s, *s)),
-        );
+        statuses.extend(crate::documents::STATUS_EVENTS.iter().map(|s| {
+            Choice::new(
+                match *s {
+                    "released" => "Released",
+                    s => crate::fiscal::status_label(s),
+                },
+                *s,
+            )
+        }));
         let mut types = vec![Choice::new("All types", "")];
         types.extend(
             crate::Einvoice::authority()
@@ -159,7 +190,7 @@ impl Index {
                     "search",
                     "Search documents",
                     &self.list.search,
-                    "Search by number or counterparty…",
+                    "Search by number or buyer…",
                 ),
                 ToolbarControl::select(
                     "einvoice-documents-status",
@@ -227,7 +258,11 @@ impl Index {
                     )
                     .cell(
                         "payable_amount",
-                        Cell::text(format!("{} {}", d.payable_amount, d.currency_code)),
+                        Cell::text(format!(
+                            "{} {}",
+                            bilibi_finance_ledger::Money::display_decimal(d.payable_amount, None),
+                            d.currency_code
+                        )),
                     )
                     .slot("status", status_badge(&d.status)?)
                     .cell("environment", Cell::text(sentence(&d.environment))),
@@ -259,9 +294,22 @@ impl Index {
         } else {
             Html::EMPTY
         };
+        let mut actions = render(HeaderLinks)?;
+        if self.documents.is_some() && self.can_start(scope).await? {
+            actions.push(&render(CreateButton {
+                noun: "E-invoice",
+                id: "einvoice-documents-new",
+                event: "new_einvoice",
+                ..CreateButton::default()
+            })?);
+        }
         View {
+            dialog: match &self.new {
+                Some(dialog) => dialog.dialog()?,
+                None => Html::EMPTY,
+            },
             title_actions: bilibi_ui::Html::EMPTY,
-            actions: render(HeaderLinks)?,
+            actions,
             toolbar: render(toolbar)?,
             table: render(grid)?,
             pagination,
@@ -274,15 +322,54 @@ impl Index {
 impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            let mut opened = None;
+            let mut back = None;
             let reload = match request.input {
                 LiveInput::Refresh => true,
                 LiveInput::Params(values) => {
                     self.list =
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
+                    if self.new.is_none() {
+                        self.requested = FiscalStart::read(values);
+                        self.open_requested(request.scope).await?;
+                    }
                     true
                 }
                 LiveInput::Event(value) => {
                     match value.get("type").and_then(serde_json::Value::as_str) {
+                        Some("new_einvoice") => {
+                            self.new = if self.can_start(request.scope).await? {
+                                Some(NewDocument::choose(&self.pages, request.scope).await?)
+                            } else {
+                                None
+                            };
+                            false
+                        }
+                        Some("einvoice_change" | "cancel_einvoice" | EVENT) => {
+                            let Some(dialog) = &mut self.new else {
+                                return Err(Error::Invalid);
+                            };
+                            match dialog
+                                .event(&self.pages, request.scope, request.credential, value)
+                                .await?
+                            {
+                                Outcome::Stay => false,
+                                Outcome::Close => {
+                                    self.new = None;
+                                    false
+                                }
+                                Outcome::Back(href) => {
+                                    self.new = None;
+                                    back = Some(href);
+                                    false
+                                }
+                                Outcome::Opened(href, flash) => {
+                                    self.new = None;
+                                    opened = Some((href, flash));
+                                    false
+                                }
+                            }
+                        }
                         Some("filter") => {
                             self.list
                                 .apply_filters(&params::form_values(value, "filters"));
@@ -303,6 +390,21 @@ impl LiveState<Scope, Error> for Index {
             };
             if reload {
                 self.load(request.scope).await?;
+            }
+            if let Some(href) = back {
+                return Ok(LiveBody {
+                    html: self.body(request.scope).await?,
+                    redirect: Some(href),
+                    ..Default::default()
+                });
+            }
+            if let Some((href, flash)) = opened {
+                return Ok(LiveBody {
+                    html: self.body(request.scope).await?,
+                    redirect: Some(href),
+                    flash: Some(flash),
+                    ..Default::default()
+                });
             }
             Ok(LiveBody {
                 html: self.body(request.scope).await?,

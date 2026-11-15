@@ -35,10 +35,12 @@ mod document;
 mod documents;
 mod draft;
 mod evidence;
+mod fiscal;
 mod list;
 pub mod myinvois;
 mod pdf;
 mod posting;
+mod posting_setup;
 mod web;
 mod workers;
 
@@ -66,6 +68,8 @@ pub use draft::{
     ValidParty,
 };
 pub use evidence::EvidencePage;
+pub use fiscal::SourceRecord;
+pub(crate) use fiscal::NAMED_SOURCES;
 pub use list::{DocumentPage, DocumentQuery};
 pub use myinvois::signer::SigningKey;
 pub use pdf::{qr_code_svg, PdfArtifact, PdfFile, ARTIFACT_OWNER};
@@ -124,6 +128,7 @@ inventory::submit! {
             Service { id: web::PAGES, factory: |services| Ok(Arc::new(
                 bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                     einvoice: services.get(SERVICE)?,
+                    contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
                     directory: services.get(bilibi_finance_ledger::PEOPLE)?,
