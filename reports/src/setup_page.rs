@@ -325,7 +325,7 @@ impl Setup {
                         id: &format!("home-bank-{id}"),
                         title: name,
                         href: &href,
-                        items: vec![StatItem::number(label, &count.to_string())],
+                        items: vec![StatItem::number(label, count.to_string())],
                     })?);
                 }
             }
@@ -337,7 +337,7 @@ impl Setup {
                     id: "home-journals",
                     title: "Journals waiting for approval",
                     href: "/finance/ledger/journals?status=submitted",
-                    items: vec![StatItem::number("journals", &count.to_string())],
+                    items: vec![StatItem::number("journals", count.to_string())],
                 })?);
             }
             if let Some(count) = data["payment_approvals"]
@@ -348,7 +348,7 @@ impl Setup {
                     id: "home-approvals",
                     title: "Payments waiting for approval",
                     href: "/finance/payables/payments?status=submitted",
-                    items: vec![StatItem::number("payment requests", &count.to_string())],
+                    items: vec![StatItem::number("payment requests", count.to_string())],
                 })?);
             }
             let failed = &data["failed_einvoices"];
@@ -367,7 +367,7 @@ impl Setup {
                     id: &format!("home-einvoice-{status}"),
                     title,
                     href: &href,
-                    items: vec![StatItem::number("e-invoices", &count.to_string())],
+                    items: vec![StatItem::number("e-invoices", count.to_string())],
                 })?);
             }
             if let Some(periods) = data["due_periods"].as_array() {
@@ -557,7 +557,6 @@ impl Setup {
             actions,
             subtitle: &subtitle,
             title_actions: bilibi_ui::Html::EMPTY,
-            ..Header::default()
         })?;
         page.push(&render(Stack { body })?);
         let mut html = render(FlashGroup {
