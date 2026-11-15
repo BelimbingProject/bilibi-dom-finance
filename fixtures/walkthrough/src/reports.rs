@@ -951,14 +951,8 @@ pub async fn earnings_split(db: &Db, services: &Services) -> Outcome<()> {
     let sheet = reports
         .balance_sheet(&admin, company, &[date(2026, 12, 31)], None)
         .await?;
-    assert_eq!(
-        sheet.current_year_earnings.as_ref().unwrap()[0],
-        money("50.00")
-    );
-    assert_eq!(
-        sheet.earlier_years_earnings.as_ref().unwrap()[0],
-        money("100.00")
-    );
+    assert_eq!(sheet.current_year_earnings[0], Some(money("50.00")));
+    assert_eq!(sheet.earlier_years_earnings[0], Some(money("100.00")));
     assert_eq!(sheet.earnings[0], money("150.00"));
     assert_eq!(
         sheet
@@ -970,6 +964,23 @@ pub async fn earnings_split(db: &Db, services: &Services) -> Outcome<()> {
         money("180.00")
     );
     assert_eq!(sheet.total_assets[0], sheet.total_liabilities_and_equity[0]);
+    let mixed = reports
+        .balance_sheet(
+            &admin,
+            company,
+            &[date(2026, 12, 31), date(2024, 12, 31)],
+            None,
+        )
+        .await?;
+    assert_eq!(
+        mixed.current_year_earnings,
+        vec![Some(money("50.00")), None]
+    );
+    assert_eq!(
+        mixed.earlier_years_earnings,
+        vec![Some(money("100.00")), None]
+    );
+    assert_eq!(mixed.earnings[1], money("0.00"));
     println!("PASS report earnings: 50 current + 100 earlier + 30 retained = 180 equity");
     Ok(())
 }

@@ -318,10 +318,10 @@ pub struct BalanceSheet {
     pub unmatched_codes: Vec<String>,
     pub groups: Vec<Group>,
     pub earnings: Vec<Money>,
-    /// Current financial-year earnings, where a year covers every column.
-    pub current_year_earnings: Option<Vec<Money>>,
-    /// Unclosed earnings from earlier financial years.
-    pub earlier_years_earnings: Option<Vec<Money>>,
+    /// Current financial-year earnings, absent where no year covers the date.
+    pub current_year_earnings: Vec<Option<Money>>,
+    /// Unclosed earnings from earlier financial years, absent without a year.
+    pub earlier_years_earnings: Vec<Option<Money>>,
     pub total_assets: Vec<Money>,
     pub total_liabilities_and_equity: Vec<Money>,
 }
@@ -989,7 +989,7 @@ impl Reports {
     ) -> Result<(BalanceSheet, Read, Arranged)> {
         let dates = dates_checked(dates)?;
         let years = self.ledger.list_fiscal_years(scope, company_id).await?;
-        let starts: Option<Vec<Date>> = dates
+        let starts: Vec<Option<Date>> = dates
             .iter()
             .map(|date| {
                 years
@@ -999,24 +999,15 @@ impl Reports {
             })
             .collect();
         let mut windows: Vec<_> = dates.iter().map(|d| balance(*d)).collect();
-        if let Some(starts) = &starts {
-            windows.extend(
-                starts
-                    .iter()
-                    .zip(dates.iter())
-                    .map(|(start, end)| TotalsQuery {
-                        from: Some(*start),
-                        to: Some(*end),
-                        ..TotalsQuery::default()
-                    }),
-            );
-        }
+        windows.extend(starts.iter().zip(dates.iter()).filter_map(|(start, end)| {
+            start.map(|start| TotalsQuery {
+                from: Some(start),
+                to: Some(*end),
+                ..TotalsQuery::default()
+            })
+        }));
         let mut read = self.read(scope, company_id, windows, through).await?;
-        let current_columns = if starts.is_some() {
-            Some(read.columns.split_off(dates.len()))
-        } else {
-            None
-        };
+        let current_columns = read.columns.split_off(dates.len());
         let arranged = read.arrange("balance_sheet");
         let sheet = statement::balance_sheet(
             &read.accounts,
@@ -1024,10 +1015,12 @@ impl Reports {
             &arranged.membership,
             &read.columns,
         );
-        let current_year_earnings = current_columns.map(|columns| {
-            columns
-                .iter()
-                .map(|totals| {
+        let mut columns = current_columns.iter();
+        let current_year_earnings: Vec<Option<Money>> = starts
+            .iter()
+            .map(|start| {
+                start.map(|_| {
+                    let totals = columns.next().expect("one totals window per fiscal year");
                     read.accounts
                         .iter()
                         .filter(|a| {
@@ -1037,16 +1030,14 @@ impl Reports {
                         .map(|(debits, credits)| *credits - *debits)
                         .sum()
                 })
-                .collect::<Vec<Money>>()
-        });
-        let earlier_years_earnings = current_year_earnings.as_ref().map(|current| {
-            sheet
-                .earnings
-                .iter()
-                .zip(current)
-                .map(|(total, current)| *total - *current)
-                .collect()
-        });
+            })
+            .collect();
+        let earlier_years_earnings = sheet
+            .earnings
+            .iter()
+            .zip(&current_year_earnings)
+            .map(|(total, current)| current.map(|current| *total - current))
+            .collect();
         let report = BalanceSheet {
             current_year_earnings,
             earlier_years_earnings,

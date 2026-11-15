@@ -95,26 +95,29 @@ impl Report {
                     group(&mut grouped, "balance-sheet", g, &r.header, framed)?;
                     if g.account_type == AccountType::Equity {
                         let last = grouped.pop().expect("group total");
-                        if let (Some(current), Some(earlier)) =
-                            (&r.current_year_earnings, &r.earlier_years_earnings)
-                        {
-                            grouped.push(extra(
-                                "balance-sheet-current-earnings",
-                                "Current year earnings",
-                                current,
-                                r.header.minor_units,
-                            )?);
-                            grouped.push(extra(
-                                "balance-sheet-earlier-earnings",
-                                "Earlier years’ earnings, not yet closed",
-                                earlier,
-                                r.header.minor_units,
-                            )?);
-                        } else {
-                            grouped.push(extra(
+                        grouped.push(extra_optional(
+                            "balance-sheet-current-earnings",
+                            "Current year earnings",
+                            &r.current_year_earnings,
+                            r.header.minor_units,
+                        )?);
+                        grouped.push(extra_optional(
+                            "balance-sheet-earlier-earnings",
+                            "Earlier years’ earnings, not yet closed",
+                            &r.earlier_years_earnings,
+                            r.header.minor_units,
+                        )?);
+                        if r.current_year_earnings.iter().any(Option::is_none) {
+                            let unassigned: Vec<_> = r
+                                .earnings
+                                .iter()
+                                .zip(&r.current_year_earnings)
+                                .map(|(total, current)| current.is_none().then_some(*total))
+                                .collect();
+                            grouped.push(extra_optional(
                                 "balance-sheet-earnings",
-                                "Income less expenses not yet closed",
-                                &r.earnings,
+                                "Unclosed earnings (financial year not defined)",
+                                &unassigned,
                                 r.header.minor_units,
                             )?);
                         }
@@ -499,10 +502,22 @@ fn total(id: &str, label: &str, values: &[Money], units: MinorUnits) -> Result<F
 
 /// A group's extra line (Bilimbi `group.extras`): an italic label and plain
 /// amounts, not a bold total.
-fn extra(id: &str, label: &str, values: &[Money], units: MinorUnits) -> Result<FlexRow> {
+fn extra_optional(
+    id: &str,
+    label: &str,
+    values: &[Option<Money>],
+    units: MinorUnits,
+) -> Result<FlexRow> {
     let mut row = row(id).slot("account", render(Italic { text: label })?);
     for (i, value) in values.iter().enumerate() {
-        row = row.slot(&format!("v{i}"), text("", &amount(*value, units), false)?);
+        row = row.slot(
+            &format!("v{i}"),
+            text(
+                "",
+                &value.map_or_else(|| "—".into(), |v| amount(v, units)),
+                false,
+            )?,
+        );
     }
     Ok(row)
 }
@@ -529,7 +544,16 @@ fn statement(
     };
     let mut body = Html::EMPTY;
     if let Some((title, reason)) = empty {
-        body.push(&render(EmptyState::missing(title, reason))?);
+        let mut state = EmptyState::missing(title, reason);
+        if id == "cash-position" {
+            state.action = render(Button {
+                id: "cash-position-sections",
+                href: "/finance/reports/sections",
+                body: Html::text("Go to report sections"),
+                ..Button::default()
+            })?;
+        }
+        body.push(&render(state)?);
     } else {
         let mut labels = vec![("account".into(), "Account".into())];
         labels.extend(

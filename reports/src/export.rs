@@ -54,6 +54,22 @@ impl Sheet {
         pdf_row.extend(values.iter().map(|v| v.display(h.minor_units)));
         self.pdf_rows.push(pdf_row);
     }
+    fn line_optional(&mut self, name: &str, values: &[Option<Money>], h: &Header) {
+        let mut row = vec![name.into()];
+        row.extend(
+            values
+                .iter()
+                .map(|v| v.map_or_else(String::new, |v| v.shown(h.minor_units))),
+        );
+        self.rows.push(row);
+        let mut row = vec![name.into()];
+        row.extend(
+            values
+                .iter()
+                .map(|v| v.map_or_else(|| "—".into(), |v| v.display(h.minor_units))),
+        );
+        self.pdf_rows.push(row);
+    }
     fn sections(&mut self, sections: &[Section], h: &Header) {
         for section in sections {
             if let Some(name) = &section.name {
@@ -192,19 +208,26 @@ impl Downloads {
                 for group in &r.groups {
                     s.sections(&group.sections, &r.header);
                     if group.account_type == bilibi_finance_ledger::AccountType::Equity {
-                        if let (Some(current), Some(earlier)) =
-                            (&r.current_year_earnings, &r.earlier_years_earnings)
-                        {
-                            s.line("Current year earnings", current, &r.header);
-                            s.line(
-                                "Earlier years' earnings, not yet closed",
-                                earlier,
-                                &r.header,
-                            );
-                        } else {
-                            s.line(
-                                "Income less expenses not yet closed",
-                                &r.earnings,
+                        s.line_optional(
+                            "Current year earnings",
+                            &r.current_year_earnings,
+                            &r.header,
+                        );
+                        s.line_optional(
+                            "Earlier years' earnings, not yet closed",
+                            &r.earlier_years_earnings,
+                            &r.header,
+                        );
+                        if r.current_year_earnings.iter().any(Option::is_none) {
+                            let unassigned: Vec<_> = r
+                                .earnings
+                                .iter()
+                                .zip(&r.current_year_earnings)
+                                .map(|(total, current)| current.is_none().then_some(*total))
+                                .collect();
+                            s.line_optional(
+                                "Unclosed earnings (financial year not defined)",
+                                &unassigned,
                                 &r.header,
                             );
                         }
