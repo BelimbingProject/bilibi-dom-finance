@@ -201,15 +201,16 @@ impl Receivables {
                 &format!("document:{id}"),
             )
             .await?;
-        let paid = if document.outstanding.is_some() {
+        let balance = if document.outstanding.is_some() {
             let row = client.query_one(
-                "SELECT COALESCE(sum(a.amount),0)::text FROM finance_receivables_allocations a WHERE a.tenant_id=$1 AND a.company_id=$2 AND a.document_id=$3 AND NOT EXISTS (SELECT 1 FROM finance_receivables_payment_reversals r WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.payment_id=a.payment_id)",
+                "SELECT COALESCE((SELECT sum(a.amount) FROM finance_receivables_allocations a WHERE a.tenant_id=d.tenant_id AND a.company_id=d.company_id AND a.document_id=d.id AND NOT EXISTS (SELECT 1 FROM finance_receivables_payment_reversals r WHERE r.tenant_id=d.tenant_id AND r.company_id=d.company_id AND r.payment_id=a.payment_id)),0)::text, finance_receivables_outstanding(d.id)::text FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3",
                 &[&scope.tenant(), &company, &id],
             ).await.map_err(Error::from)?;
-            Some(
-                Money::parse(row.get::<_, &str>(0), units)
-                    .map_err(|_| ReceivableError::Pdf("payment_amount"))?,
-            )
+            let money = |i: usize| {
+                Money::parse(row.get::<_, &str>(i), units)
+                    .map_err(|_| ReceivableError::Pdf("payment_amount"))
+            };
+            Some((money(0)?, money(1)?))
         } else {
             None
         };
@@ -232,13 +233,10 @@ impl Receivables {
             subtotal: document.subtotal.display(units),
             tax: document.tax_total.display(units),
             total: document.total.display(units),
-            paid: paid.map(|value| value.display(units)),
-            adjustments: paid
-                .zip(document.outstanding)
+            paid: balance.map(|(paid, _)| paid.display(units)),
+            adjustments: balance
                 .map(|(paid, outstanding)| (document.total - paid - outstanding).display(units)),
-            outstanding: document
-                .outstanding
-                .map(|outstanding| outstanding.display(units)),
+            outstanding: balance.map(|(_, outstanding)| outstanding.display(units)),
         };
         let owner = Printable {
             html: template
