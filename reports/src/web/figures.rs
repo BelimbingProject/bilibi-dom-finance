@@ -544,16 +544,7 @@ fn statement(
     };
     let mut body = Html::EMPTY;
     if let Some((title, reason)) = empty {
-        let mut state = EmptyState::missing(title, reason);
-        if id == "cash-position" {
-            state.action = render(Button {
-                id: "cash-position-sections",
-                href: "/finance/reports/sections",
-                body: Html::text("Go to report sections"),
-                ..Button::default()
-            })?;
-        }
-        body.push(&render(state)?);
+        body.push(&render(EmptyState::missing(title, reason))?);
     } else {
         let mut labels = vec![("account".into(), "Account".into())];
         labels.extend(

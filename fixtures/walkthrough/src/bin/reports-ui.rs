@@ -258,6 +258,46 @@ async fn main() -> Outcome<()> {
     let csv = String::from_utf8(csv.bytes)?;
     assert!(csv.contains("1101.00"));
     assert!(csv.contains("Net income"));
+    assert_eq!(
+        csv.lines().next(),
+        Some("\"Account\",\"Oct 2026\",\"Oct 2025\"")
+    );
+    for (view, from, to, expected) in [
+        (
+            "profit-and-loss",
+            "2026-11-01",
+            "2026-11-30",
+            "\"Account\",\"Nov 2026\",\"Nov 2025\"",
+        ),
+        (
+            "profit-and-loss",
+            "2026-10-02",
+            "2026-10-31",
+            "\"Account\",\"2 Oct 2026 to 31 Oct 2026\",\"2 Oct 2025 to 31 Oct 2025\"",
+        ),
+        (
+            "balance-sheet",
+            "2026-10-01",
+            "2026-10-31",
+            "\"Account\",\"As of 31 Oct 2026\",\"As of 31 Oct 2025\"",
+        ),
+    ] {
+        let mut heading_query = export_query.clone();
+        heading_query.insert("view".into(), view.into());
+        heading_query.insert("from".into(), from.into());
+        heading_query.insert("to".into(), to.into());
+        let sheet = downloads
+            .0
+            .serve(bilibi_ui::download::DownloadRequest {
+                operation: "export",
+                scope: &manager,
+                path: &path,
+                query: &heading_query,
+            })
+            .await?;
+        let sheet = String::from_utf8(sheet.bytes)?;
+        assert_eq!(sheet.lines().next(), Some(expected));
+    }
     has(&first, "<select id=\"report-period-period\"");
     assert!(first.html.contains("from=2025-10-01"));
     has(&first, "id=\"report-save\"");

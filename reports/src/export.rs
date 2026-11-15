@@ -3,6 +3,8 @@ use crate::{Column, Group, Header, Money, Period, Reports, Section};
 use askama::Template;
 use bilibi_artifacts::{HtmlFuture, HtmlOwner, Operation, Owner, Reference};
 use bilibi_database::Error;
+use bilibi_datetime::DisplayContext;
+use bilibi_locale::Locales;
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use bilibi_ui::download::{Download, DownloadFuture, DownloadRequest, FileBody};
@@ -11,6 +13,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub(crate) struct Downloads {
     pub reports: Arc<Reports>,
+    pub locales: Arc<Locales>,
 }
 
 #[derive(Template)]
@@ -26,9 +29,14 @@ struct Sheet {
     pdf_rows: Vec<Vec<String>>,
 }
 impl Sheet {
-    fn new(title: &str, h: &Header) -> Self {
+    fn new(title: &str, h: &Header, display: &DisplayContext) -> Self {
         let mut headers = vec!["Account".into()];
         headers.extend(h.columns.iter().map(|c| match c {
+            Column::Period { from, to }
+                if *from == from.first_of_month() && *to == from.last_of_month() =>
+            {
+                display.month_label(*from)
+            }
             Column::Period { from, to } => format!(
                 "{} to {}",
                 bilibi_finance_ledger::dates::display(*from),
@@ -174,6 +182,13 @@ impl HtmlOwner for Printable {
 impl Downloads {
     async fn sheet(&self, scope: &Scope, query: &HashMap<String, String>) -> Result<Sheet, Error> {
         let company = scope.current_company().ok_or(Error::NotFound)?.get();
+        let display = {
+            let client = self.reports.db.get().await?;
+            DisplayContext {
+                locale: self.locales.resolve(&**client, scope, None).await?.locale,
+                ..DisplayContext::anonymous()
+            }
+        };
         let parse_date = |name: &str| {
             query
                 .get(name)
@@ -203,7 +218,7 @@ impl Downloads {
                     .profit_and_loss(scope, company, &periods, through)
                     .await
                     .map_err(|_| Error::Forbidden)?;
-                let mut s = Sheet::new("Profit and loss", &r.header);
+                let mut s = Sheet::new("Profit and loss", &r.header, &display);
                 s.groups(&r.groups, &r.header);
                 s.line("Net income", &r.net_income, &r.header);
                 Ok(s)
@@ -214,7 +229,7 @@ impl Downloads {
                     .balance_sheet(scope, company, &dates, through)
                     .await
                     .map_err(|_| Error::Forbidden)?;
-                let mut s = Sheet::new("Balance sheet", &r.header);
+                let mut s = Sheet::new("Balance sheet", &r.header, &display);
                 for group in &r.groups {
                     s.sections(&group.sections, &r.header);
                     if group.account_type == bilibi_finance_ledger::AccountType::Equity {
@@ -261,7 +276,7 @@ impl Downloads {
                     .cash_position(scope, company, &dates, through)
                     .await
                     .map_err(|_| Error::Forbidden)?;
-                let mut s = Sheet::new("Cash position", &r.header);
+                let mut s = Sheet::new("Cash position", &r.header, &display);
                 s.sections(&r.sections, &r.header);
                 s.line("Total cash", &r.totals, &r.header);
                 Ok(s)
@@ -274,7 +289,7 @@ impl Downloads {
                     .overview_compared(scope, company, period, previous, through)
                     .await
                     .map_err(|_| Error::Forbidden)?;
-                let mut s = Sheet::new("Overview", &r.header);
+                let mut s = Sheet::new("Overview", &r.header, &display);
                 s.headers.push("Change".into());
                 for (name, values) in [
                     ("Income", &r.income),

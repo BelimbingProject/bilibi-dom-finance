@@ -164,7 +164,7 @@ inventory::submit! {
                 parties: services.get("base/tenancy.parties")?,
             }))))
         } }, Service { id: "finance/reports.export-downloads", factory: |services| {
-            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(export::Downloads { reports: services.get(SERVICE)? }))))
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(export::Downloads { reports: services.get(SERVICE)?, locales: services.get("base/locale.locales")? }))))
         } }, Service { id: "finance/reports.downloads", factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(auditor_pack::Downloads { reports: services.get(SERVICE)? }))))
         } }],
