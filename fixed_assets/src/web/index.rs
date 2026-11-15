@@ -421,7 +421,7 @@ impl Index {
             return Ok(Html::EMPTY);
         }
         let c = company(s).ok_or(Error::Invalid)?;
-        let categories: Vec<Category> = self
+        let Ok(categories): std::result::Result<Vec<Category>, _> = self
             .pages
             .read(
                 s,
@@ -430,7 +430,9 @@ impl Index {
                 "records",
             )
             .await
-            .map_err(|_| Error::Internal)?;
+        else {
+            return Ok(Html::EMPTY);
+        };
         let mut seen = std::collections::HashSet::new();
         let mut result = Html::EMPTY;
         for category in categories {
@@ -438,7 +440,7 @@ impl Index {
             if !seen.insert(account) {
                 continue;
             }
-            let sources: Vec<crate::AcquisitionSource> = self
+            let Ok(sources): std::result::Result<Vec<crate::AcquisitionSource>, _> = self
                 .pages
                 .read(
                     s,
@@ -447,7 +449,9 @@ impl Index {
                     "records",
                 )
                 .await
-                .map_err(|_| Error::Internal)?;
+            else {
+                continue;
+            };
             if sources.is_empty() {
                 continue;
             }
@@ -458,7 +462,11 @@ impl Index {
                 .unwrap_or("this account");
             let mut body = Html::text(&format!(
                 "{} {} on {} {} not in the register. ",
-                sources.len(),
+                if sources.len() == 500 {
+                    "500+".to_owned()
+                } else {
+                    sources.len().to_string()
+                },
                 if sources.len() == 1 {
                     "purchase"
                 } else {
@@ -467,12 +475,15 @@ impl Index {
                 name,
                 if sources.len() == 1 { "is" } else { "are" }
             ));
-            body.push(&header_button(
-                &format!("assets-register-purchase-{account}"),
-                "new",
-                "Register asset",
-                false,
-            )?);
+            body.push(&render(Button {
+                id: &format!("assets-register-purchase-{account}"),
+                button_type: "button",
+                event: "new",
+                name: "category_revision_id",
+                value: &category.revision.id.to_string(),
+                body: Html::text("Register asset"),
+                ..Button::default()
+            })?);
             result.push(&render(bilibi_ui::Alert {
                 id: &format!("assets-unregistered-{account}"),
                 kind: StatusKind::Info,
@@ -688,7 +699,19 @@ impl Index {
                 self.browser_zone = v["timezone"].as_str().map(str::to_owned);
                 self.period(s).await?;
             }
-            "new" => self.open_new(s).await?,
+            "new" => {
+                self.open_new(s).await?;
+                if let (Some(a), Some(id)) = (
+                    &mut self.acquire,
+                    v["category_revision_id"]
+                        .as_str()
+                        .and_then(|v| v.parse().ok()),
+                ) {
+                    if let Err(e) = a.select_category(&self.pages, s, id).await {
+                        a.refused(&e);
+                    }
+                }
+            }
             "close_asset" => self.acquire = None,
             "close_category" => self.categories.new = None,
             "close_run" => self.runs.new = None,
