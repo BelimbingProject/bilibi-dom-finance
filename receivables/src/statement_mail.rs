@@ -15,7 +15,7 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
-use tokio_postgres::{GenericClient, Transaction};
+use tokio_postgres::Transaction;
 
 struct SendStatement;
 fn input() -> Value {

@@ -28,6 +28,31 @@ fn handler<'a>(registry: &'a Registry, key: &str) -> &'a dyn WriteHandler {
     };
     handler
 }
+// The plan engine hands previews this transaction-backed operation client.
+struct PlanPreview<'a, 'b>(&'a tokio_postgres::Transaction<'b>);
+impl bilibi_tenancy::ProofClient for PlanPreview<'_, '_> {
+    fn query_opt<'a>(
+        &'a self,
+        sql: &'a str,
+        args: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Option<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query_opt(sql, args).await?) })
+    }
+}
+impl bilibi_tenancy::ReadClient for PlanPreview<'_, '_> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        args: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Vec<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query(sql, args).await?) })
+    }
+}
+impl bilibi_agent_api::OperationClient for PlanPreview<'_, '_> {
+    fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
+        Some(self.0)
+    }
+}
 fn day(s: &str) -> CalendarDate {
     s.to_owned().try_into().expect("fixture date")
 }
@@ -388,6 +413,37 @@ async fn main() -> Outcome<()> {
         .get(0);
     assert_eq!(count, 0, "rolled-back send must leave no email or job");
     println!("PASS: invoice send reviews the recipient and rolls back with its plan");
+    let key = "finance.receivables.statement.send";
+    let statement = handler(&registry, key);
+    let input = json!({"company_id":1,"customer_id":customer.id,"as_of":"2026-11-15","recipient":"finance@orchid.example.test","subject":"Your statement","body":"Please see the attached statement."});
+    let mut tx = mutations
+        .begin(&mut raw, manager.mutation_context("walkthrough.statement"))
+        .await?;
+    let preview = statement
+        .preview(&PlanPreview(tx.sql()), &manager, &input)
+        .await?
+        .envelope(key);
+    assert_eq!(
+        preview["result"]["statement"]["customer"]["documents"][0]["document_id"],
+        draft.id
+    );
+    let total = &preview["result"]["statement"]["customer"]["total"];
+    let total: rust_decimal::Decimal = total
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| total.to_string())
+        .parse()?;
+    assert_eq!(total, rust_decimal::Decimal::from(100));
+    statement.commit(&mut tx, &manager, &input).await?;
+    tx.rollback().await?;
+    let count: i64 = raw
+        .query_one("SELECT count(*) FROM finance_receivables_mail", &[])
+        .await?
+        .get(0);
+    assert_eq!(count, 0, "rolled-back statement must leave no email or job");
+    println!(
+        "PASS: statement review names the open invoice and its balance; rollback leaves no email"
+    );
     if std::env::var_os("BILIBI_PDF_CHROMIUM").is_some() {
         let pdf = ar.print_document(&manager, 1, draft.id).await?;
         assert!(pdf.bytes.starts_with(b"%PDF-"));

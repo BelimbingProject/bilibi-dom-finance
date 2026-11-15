@@ -193,10 +193,7 @@ impl Handler for SendInvoice {
             match self.run(execution, args).await {
                 Ok(()) => Outcome::Completed,
                 Err(ReceivableError::Unauthorized) => Outcome::Cancel("actor_refused"),
-                Err(error) => {
-                    eprintln!("Invoice email delivery failed: {error}");
-                    Outcome::Retry("invoice_mail_failed")
-                }
+                Err(_) => Outcome::Retry("invoice_mail_failed"),
             }
         })
     }
@@ -228,6 +225,7 @@ impl SendInvoice {
             return Ok(());
         }
         tx.commit().await?;
+        drop(client);
         let pdf = if let Some(document_id) = row["document_id"].as_i64() {
             self.receivables
                 .print_document(scope, company, document_id)
