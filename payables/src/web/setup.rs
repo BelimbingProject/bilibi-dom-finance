@@ -258,7 +258,7 @@ impl Setup {
             }
         }
         let mut body = render(Header {
-            title: Html::text("Payables setup"),
+            title: Html::text("Payables settings"),
             subtitle: &self.company,
             title_actions: Html::EMPTY,
             ..Header::default()

@@ -504,7 +504,7 @@ impl State {
         let mut parts = Vec::new();
         let (title, subtitle, link_id, link, label) = if self.setup {
             (
-                "Payroll posting accounts",
+                "Payroll settings",
                 "Choose the accounts payroll and claims are posted to.",
                 "payroll-setup-postings",
                 "/finance/payroll",
@@ -872,7 +872,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "postings" => Some("Payroll and claims"),
-            "setup" => Some("Payroll posting accounts"),
+            "setup" => Some("Payroll settings"),
             _ => None,
         }
     }

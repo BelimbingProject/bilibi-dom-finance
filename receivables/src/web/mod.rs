@@ -157,7 +157,7 @@ menu!(
 );
 menu!(
     "finance.receivables.settings",
-    "Settings",
+    "Receivables settings",
     SETTINGS,
     "iconoir-receive-dollars",
     50

@@ -130,15 +130,26 @@ impl State {
             }
         }
         let tables: &[(&str, &[(&str, &str)])] = if bookkeeping {
-            &[(
-                "controlled-bookkeeping-changes",
-                &[
-                    ("when", "When"),
-                    ("set", "Set to"),
-                    ("reason", "Reason"),
-                    ("by", "By"),
-                ],
-            )]
+            &[
+                (
+                    "controlled-bookkeeping-changes",
+                    &[
+                        ("when", "When"),
+                        ("set", "Set to"),
+                        ("reason", "Reason"),
+                        ("by", "By"),
+                    ],
+                ),
+                (
+                    "duty-separation-changes",
+                    &[
+                        ("when", "When"),
+                        ("set", "Set to"),
+                        ("reason", "Reason"),
+                        ("by", "By"),
+                    ],
+                ),
+            ]
         } else {
             &[
                 (
@@ -370,11 +381,11 @@ impl State {
         }
         let capability = match event {
             "turn_on" | "turn_off" if self.bookkeeping => MANAGE_CONTROLLED_BOOKKEEPING,
-            "change_separation" if !self.bookkeeping => MANAGE_DUTY_SEPARATION,
+            "change_separation" if self.bookkeeping => MANAGE_DUTY_SEPARATION,
             "review" if !self.bookkeeping => REVIEW_EXCEPTIONS,
             "open_dialog" => match dialog_kind {
                 Some("controlled-off") if self.bookkeeping => MANAGE_CONTROLLED_BOOKKEEPING,
-                Some("separation") if !self.bookkeeping => MANAGE_DUTY_SEPARATION,
+                Some("separation") if self.bookkeeping => MANAGE_DUTY_SEPARATION,
                 Some("review") if !self.bookkeeping => REVIEW_EXCEPTIONS,
                 _ => return Ok(()),
             },
@@ -471,9 +482,9 @@ impl State {
             "Approval exceptions"
         };
         let subtitle = if self.bookkeeping {
-            "Control posting dates and review changes to bookkeeping controls"
+            ""
         } else {
-            "Same-person approvals and overrides of controls, for someone independent to review."
+            "Times someone approved their own work or turned a control off. Someone else should review each one."
         };
         let subtitle = if self.company_name.is_empty() {
             subtitle.to_owned()
@@ -695,68 +706,23 @@ impl State {
                 .collect::<Result<_>>()?;
             content.push(&self.table(0, rows, "Changes to controlled bookkeeping", None)?);
         }
-        Ok(vec![section(
+        let mut parts = vec![section(
             "controlled-bookkeeping",
             "Controlled bookkeeping",
-            "When enabled, entries can be posted only to open fiscal periods. Open a fiscal year before posting to its periods. Late entries can still be posted to an open period.",
+            "When on, entries can only be dated in an open month.",
             content,
             false,
-        )?])
-    }
-    async fn exception_parts(
-        &mut self,
-        scope: &Scope,
-        display: &DisplayContext,
-    ) -> std::result::Result<Vec<Html>, LedgerError> {
-        if self.filter("area") == "journals" {
-            return self.journal_exception_parts(scope, display).await;
-        }
-        let ledger = self.pages.reports.ledger.clone();
-        let company = company(scope)?;
-        let clock = self.sync_period(display);
-        let period = self.period.as_ref().expect("period initialized");
-        let (from, before) = period
-            .period
-            .bounds(&clock.timezone)
-            .map_err(|_| LedgerError::InvalidOption)?;
+        )?];
         let separation = ledger.get_duty_separation(scope, company).await?;
         let mut changes = ledger.list_duty_separation_changes(scope, company).await?;
         changes.reverse();
-        let exceptions = ledger
-            .list_approval_exceptions(
-                scope,
-                company,
-                &ApprovalExceptionQuery {
-                    recorded_from: Some(from),
-                    recorded_before: Some(before),
-                    reviewed: self.reviewed(),
-                    limit: Some(100),
-                    after: self.after(),
-                },
-            )
-            .await?;
-        let mut mentioned: Vec<Option<i64>> = changes
+        let mentioned: Vec<Option<i64>> = changes
             .iter()
             .chain(separation.change.iter())
             .flat_map(|c| [Some(c.changed_by_user_id), c.changed_by_impersonator_id])
             .collect();
-        for e in &exceptions {
-            mentioned.extend([
-                e.prepared_by_user_id,
-                e.prepared_by_impersonator_id,
-                Some(e.approved_by_user_id),
-                e.approved_by_impersonator_id,
-            ]);
-            if let Some(review) = &e.review {
-                mentioned.extend([
-                    Some(review.reviewed_by_user_id),
-                    review.reviewed_by_impersonator_id,
-                ]);
-            }
-        }
         let people = self.pages.people(scope, mentioned).await?;
         let can_manage = self.allowed(scope, MANAGE_DUTY_SEPARATION).await?;
-        let can_review = self.allowed(scope, REVIEW_EXCEPTIONS).await?;
         let change = separation.change.as_ref();
         let mut content = html(Summary {
             status_id: "duty-separation-status",
@@ -765,7 +731,7 @@ impl State {
             badge: if can_manage {
                 html(Toggle {
                     on: separation.required,
-                    label: "Separate approver required",
+                    label: "A second person must approve bills, payments and write-offs",
                     id: "duty-separation-toggle",
                     event: "open_dialog",
                     name: "dialog",
@@ -814,8 +780,63 @@ impl State {
                     )
                 })
                 .collect::<Result<_>>()?;
-            content.push(&self.table(0, rows, "Changes to separation of duties", None)?);
+            content.push(&self.table(1, rows, "Changes to separation of duties", None)?);
         }
+        parts.push(section(
+            "duty-separation",
+            "A second person must approve bills, payments and write-offs",
+            "Manual journals have separate approval rules.",
+            content,
+            false,
+        )?);
+        Ok(parts)
+    }
+    async fn exception_parts(
+        &mut self,
+        scope: &Scope,
+        display: &DisplayContext,
+    ) -> std::result::Result<Vec<Html>, LedgerError> {
+        if self.filter("area") == "journals" {
+            return self.journal_exception_parts(scope, display).await;
+        }
+        let ledger = self.pages.reports.ledger.clone();
+        let company = company(scope)?;
+        let clock = self.sync_period(display);
+        let period = self.period.as_ref().expect("period initialized");
+        let (from, before) = period
+            .period
+            .bounds(&clock.timezone)
+            .map_err(|_| LedgerError::InvalidOption)?;
+        let exceptions = ledger
+            .list_approval_exceptions(
+                scope,
+                company,
+                &ApprovalExceptionQuery {
+                    recorded_from: Some(from),
+                    recorded_before: Some(before),
+                    reviewed: self.reviewed(),
+                    limit: Some(100),
+                    after: self.after(),
+                },
+            )
+            .await?;
+        let mut mentioned = Vec::new();
+        for e in &exceptions {
+            mentioned.extend([
+                e.prepared_by_user_id,
+                e.prepared_by_impersonator_id,
+                Some(e.approved_by_user_id),
+                e.approved_by_impersonator_id,
+            ]);
+            if let Some(review) = &e.review {
+                mentioned.extend([
+                    Some(review.reviewed_by_user_id),
+                    review.reviewed_by_impersonator_id,
+                ]);
+            }
+        }
+        let people = self.pages.people(scope, mentioned).await?;
+        let can_review = self.allowed(scope, REVIEW_EXCEPTIONS).await?;
         let mut parts = vec![self.tabs(
             "approval-areas",
             "Approval area",
@@ -825,7 +846,6 @@ impl State {
                 ("other", "Other Finance approvals"),
             ],
         )?];
-        parts.push(section("duty-separation", "Other Finance approvals", "This control applies to the other Finance approvals. Manual journals follow their rules on Approval rules.",content,false)?);
         let mut filters = html(self.period.as_ref().expect("period initialized"))?;
         filters.push(&self.tabs_in(
             "exceptions-review",
@@ -976,7 +996,13 @@ impl State {
                 links
             },
         })?;
-        parts.push(section("journal-approval-controls","Journal approvals","Journal rules decide who may approve. Approvals by the person who prepared a journal are kept here for independent review.",links,false)?);
+        parts.push(section(
+            "journal-approval-controls",
+            "Journal approvals",
+            "",
+            links,
+            false,
+        )?);
         let clock = self.sync_period(display);
         let (from, before) = self
             .period

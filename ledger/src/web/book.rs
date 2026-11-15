@@ -232,7 +232,7 @@ impl Book {
         let mut controls = render(SectionHeading {
             id: "ledger-book-controls-heading",
             title: "Controls",
-            description: "Controlled bookkeeping lets entries post only into open periods. Manual journals follow their own approval rules.",
+            description: "Entries can only be dated in an open month.",
             actions: if can_change {
                 render(bilibi_ui::ActionLink {
                     id: "ledger-book-controls-change",
@@ -255,9 +255,9 @@ impl Book {
                     value: yes_no(controlled, "On", "Off")?,
                 },
                 Fact {
-                    title: "Someone else approves Finance records",
+                    title: "A second person must approve",
                     id: "ledger-book-separation",
-                    value: yes_no(required, "Required", "Not required")?,
+                    value: yes_no(required, "Yes", "No")?,
                 },
             ],
         })?);
