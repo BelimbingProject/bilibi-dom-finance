@@ -333,7 +333,7 @@ impl Journals {
         Ok(Some(f::modal(
             "write-off-modal",
             verb(&d.action),
-            "Keep the collection evidence with this invoice. This records no tax refund or filing.",
+            "Say why this invoice will not be paid and where the proof is kept. A write-off does not claim tax back.",
             "cancel_write_off",
             ModalWidth::Narrow,
             flash,

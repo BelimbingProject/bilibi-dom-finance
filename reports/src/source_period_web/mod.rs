@@ -242,7 +242,7 @@ impl State {
                 self.records.clear();
                 let mut body = render(Header {
                     title: Html::text("Source-period schedules"),
-                    subtitle: "Retained evidence for the current company's conversion.",
+                    subtitle: "Reports from the old system, kept for the auditor.",
                     ..Header::default()
                 })?;
                 let tabs = KINDS
@@ -278,7 +278,7 @@ impl State {
         self.records = list["records"].as_array().cloned().unwrap_or_default();
         let mut body = render(Header {
             title: Html::text("Source-period schedules"),
-            subtitle: "Retained evidence for the current company's conversion.",
+            subtitle: "Reports from the old system, kept for the auditor.",
             actions: if self.id.is_none() {
                 new_button("source-period-new")?
             } else {

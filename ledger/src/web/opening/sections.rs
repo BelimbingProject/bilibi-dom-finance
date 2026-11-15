@@ -150,17 +150,19 @@ impl Opening {
                 .kind(InputKind::Date)
                 .value(&self.draft.date)
                 .required()
-                .hint("The first day these books take over. Its fiscal period must be open.")
+                .hint("The first day you record in Bilibi. That month must be open.")
                 .errors(errors("conversion_date"))
                 .wrapper_class("mb-0"),
         )?;
         fields.push(&render(
             Field::in_form(FORM, "source_reference")
                 .id("opening-source-reference")
-                .label("Source reference")
+                .label("Name of the report")
                 .value(&self.draft.reference)
                 .required()
-                .hint("Names this set of balances, such as the old system's report. A correction needs a new one.")
+                .hint(
+                    "Where these balances came from, like “SQL Account trial balance 31 Dec 2025”.",
+                )
                 .errors(errors("source_reference"))
                 .attr("data-debounce", "400")
                 .wrapper_class("mb-0"),

@@ -440,7 +440,7 @@ impl State {
         let previewing = self.id.is_none() && !self.document.is_null() && !listing;
         body.push(&render(Header {
             title: Html::text("Conversion reports"),
-            subtitle: &format!("Current company: {name}"),
+            subtitle: &name,
             actions: if company.is_none() {
                 Html::EMPTY
             } else if self.id.is_some() {
