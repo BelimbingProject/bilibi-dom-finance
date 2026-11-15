@@ -126,3 +126,54 @@ impl Einvoice {
         })
     }
 }
+
+/// Refused and invalid documents in the company's current environment that
+/// still need someone: not a consolidated document (it released its sources
+/// and is never sent again) and not followed by a newer document for the same
+/// source record.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FailedDocuments {
+    pub environment: String,
+    pub refused: u64,
+    pub invalid: u64,
+}
+
+impl Einvoice {
+    /// Count failed documents still to act on, through `finance.einvoice.view`.
+    pub async fn failed_documents(&self, scope: &Scope, company: i64) -> Result<FailedDocuments> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company, VIEW).await?;
+        let environment = self.environment(&**client, scope, company).await?;
+        let row = client
+            .query_one(
+                "WITH failed AS (
+               SELECT d.id, COALESCE((SELECT e.event FROM finance_einvoice_status_events e
+                   WHERE e.tenant_id = $1 AND e.company_id = $2 AND e.document_id = d.id
+                     AND e.event = ANY($4) ORDER BY e.sequence DESC LIMIT 1), 'issued') AS status
+               FROM finance_einvoice_documents d
+               WHERE d.tenant_id = $1 AND d.company_id = $2 AND d.environment = $3
+                 AND NOT EXISTS (SELECT 1 FROM finance_einvoice_consolidated_sources c
+                   WHERE c.tenant_id = $1 AND c.company_id = $2 AND c.document_id = d.id)
+                 AND NOT EXISTS (SELECT 1 FROM finance_einvoice_source_links l
+                   JOIN finance_einvoice_source_links n ON n.tenant_id = l.tenant_id
+                     AND n.company_id = l.company_id AND n.source_module = l.source_module
+                     AND n.source_record = l.source_record AND n.document_id > l.document_id
+                   WHERE l.tenant_id = $1 AND l.company_id = $2 AND l.document_id = d.id))
+             SELECT count(*) FILTER (WHERE status = 'refused'),
+               count(*) FILTER (WHERE status = 'invalid') FROM failed",
+                &[
+                    &scope.tenant(),
+                    &company,
+                    &environment,
+                    &&documents::STATUS_EVENTS[..],
+                ],
+            )
+            .await
+            .map_err(Error::from)?;
+        Ok(FailedDocuments {
+            environment,
+            refused: row.get::<_, i64>(0) as u64,
+            invalid: row.get::<_, i64>(1) as u64,
+        })
+    }
+}

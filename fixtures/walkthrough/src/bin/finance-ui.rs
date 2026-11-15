@@ -13,8 +13,11 @@ use bilibi_finance_payables::{
 use bilibi_finance_reconciliation::{NewBankAccount, Reconciliation};
 use bilibi_finance_walkthrough_fixture::{attachments::configure_storage, install, sign_in};
 use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_tenancy::Scope;
+use bilibi_ui::page::{PageRequest, PageService};
 use jiff::civil::date;
 use serde_json::json;
+use std::collections::HashMap;
 
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -72,6 +75,27 @@ const COMPANY: i64 = 100;
 
 type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
 
+async fn setup_page(
+    pages: &PageService<Scope, Error>,
+    scope: &Scope,
+    operation: &str,
+) -> Outcome<String> {
+    let none = HashMap::new();
+    Ok(pages
+        .0
+        .render(PageRequest {
+            operation,
+            scope: Some(scope),
+            path: &none,
+            query: &none,
+            body: &[],
+            framed: false,
+        })
+        .await?
+        .html
+        .to_string())
+}
+
 #[tokio::main]
 async fn main() -> Outcome<()> {
     bilibi_base::link();
@@ -109,6 +133,12 @@ async fn main() -> Outcome<()> {
     let manager = sign_in(&db, services, 2, 5).await?;
     let admin = sign_in(&db, services, 2, 8).await?;
     let operator = sign_in(&db, services, 1, 4).await?;
+    let setup_pages = services.get::<PageService<Scope, Error>>("finance/reports.setup-pages")?;
+    let start = setup_page(&setup_pages, &manager, "setup").await?;
+    assert!(start.contains("Start here") && !start.contains("home-assistant"));
+    let details = setup_page(&setup_pages, &manager, "details").await?;
+    assert!(details.contains("Start here") && !details.contains("id=\"setup-home\""));
+    println!("Finance setup: before the required steps, /finance/setup and its details show the checklist with no Finance home link");
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let book = match ledger.get_book(&manager, COMPANY).await {
         Err(bilibi_finance_ledger::LedgerError::BookNotOpen) => {
@@ -670,19 +700,50 @@ async fn main() -> Outcome<()> {
         },
     )
     .await?;
+    let tax_return = sst
+        .open_return(
+            &manager,
+            COMPANY,
+            bilibi_finance_sst::TaxType::SalesTax,
+            date(2026, 1, 1),
+        )
+        .await?;
+    let zone = "Asia/Kuala_Lumpur";
+    let today = jiff::Timestamp::now().in_tz(zone)?.date().to_string();
     let contracts =
         services.get::<bilibi_agent_api::page::PageContracts>(bilibi_agent_api::page::SERVICE)?;
     let home = contracts
         .read(
             &manager,
             "finance.reports.home.get",
-            &json!({"company_id":COMPANY,"as_of":"2026-11-15","timezone":"Asia/Kuala_Lumpur"}),
+            &json!({"company_id":COMPANY,"as_of":today,"timezone":zone}),
         )
         .await?;
     assert_eq!(home["result"]["bank_accounts"][0]["count"], 2);
-    assert!(home["result"]["due_periods"]
+    let periods = home["result"]["due_periods"]
         .as_array()
-        .is_some_and(|periods| !periods.is_empty()));
+        .ok_or(Error::Internal)?;
+    assert!(periods
+        .iter()
+        .any(|p| p["period_start"] == tax_return.period_start.to_string()));
+    assert!(periods.iter().all(|p| p["period_end"]
+        .as_str()
+        .is_some_and(|end| end < today.as_str())));
+    let failed = &home["result"]["failed_einvoices"];
+    assert_eq!(
+        (failed["refused"].as_u64(), failed["invalid"].as_u64()),
+        (Some(0), Some(0))
+    );
+    let home_page = setup_page(&setup_pages, &manager, "setup").await?;
+    assert!(home_page.contains("Ask your AI assistant") && home_page.contains("id=\"home-setup\""));
+    assert!(!home_page.contains("setup-required"));
+    let details = setup_page(&setup_pages, &manager, "details").await?;
+    assert!(details.contains("id=\"setup-home\"") && details.contains("Needed to start work"));
+    assert!(!details.contains("Start here"));
+    println!("Finance home: after the required steps, /finance/setup is the home and its details link back to it");
+    println!(
+        "Finance home: the open return for an ended period is due; no running period is listed"
+    );
     println!("Finance home: two unmatched statement lines agree with the reconciliation facade");
     println!("Bank account: /finance/reconciliation/accounts/{}", bank.id);
     historical_payroll(

@@ -112,7 +112,7 @@ An open return's figures also count its standing adjustments, each added to its 
 
 ## Returns
 
-`Sst::due_periods` reports the six recent taxable periods still needing a registered tax return and older open returns, using the supplied company day and calendar zone. Periods that fell due before registration was recorded here are not assumed unprepared.
+`Sst::due_periods` reports those of the six recent taxable periods that have ended and still need a registered tax return, and older open returns, using the supplied company day and calendar zone. A period still running is not due. Periods that fell due before registration was recorded here are not assumed unprepared.
 
 `open_return` opens the return of a tax for a taxable period of the registration version that governs its first day and holds a number for that tax (`NotRegistered`, `NotRegisteredForTax`, `NotATaxablePeriod` otherwise), due on the period's statutory date. Per tax, one return of a period is open at a time (`ReturnOpen`), no period overlaps another's that was not discarded (`PeriodOverlaps`), and a finalised period takes only an amendment (`ReturnFinalised`). Returns are numbered per company without gaps.
 

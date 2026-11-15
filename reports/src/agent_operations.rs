@@ -188,28 +188,12 @@ impl ReadHandler for HomeRead {
                 .await
                 .ok()
                 .map(|page| page.total);
-            let mut failed = Vec::new();
-            for status in ["refused", "invalid"] {
-                let result = owner
-                    .sources
-                    .einvoice
-                    .list_documents(
-                        scope,
-                        company,
-                        &bilibi_finance_einvoice::DocumentQuery {
-                            status: status.into(),
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                match result {
-                    Ok(page) => failed.push(json!({"status":status,"count":page.total_entries})),
-                    Err(_) => {
-                        failed.clear();
-                        break;
-                    }
-                }
-            }
+            let failed = owner
+                .sources
+                .einvoice
+                .failed_documents(scope, company)
+                .await
+                .ok();
             let today = input["as_of"]
                 .as_str()
                 .and_then(|s| s.parse::<jiff::civil::Date>().ok())
@@ -221,7 +205,7 @@ impl ReadHandler for HomeRead {
                 .due_periods(scope, company, today, timezone)
                 .await
                 .ok();
-            Ok(json!({"bank_accounts":banks,"payment_approvals":approvals,"journal_approvals":journals,"failed_einvoices":if failed.is_empty() { None } else { Some(failed) },"due_periods":returns}).into())
+            Ok(json!({"bank_accounts":banks,"payment_approvals":approvals,"journal_approvals":journals,"failed_einvoices":failed,"due_periods":returns}).into())
         })
     }
 }
@@ -304,7 +288,7 @@ fn output() -> Value {
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/reports.layout-operations",Provenance {module:MODULE,source:file!(),line:line!()}, &Definitions {
     operations: &[
         Operation {key:"finance.reports.sections.get",title:"Read report sections",summary:"Read the company's headings and account choices.",keywords:&[],capability:VIEW,input:get_schema,output,handler:Handler::Read(&Layout),channels:Channels::Every,step_up:&[]},
-        Operation {key:"finance.reports.home.get",title:"Read daily Finance work",summary:"Read unmatched bank lines, payment requests waiting, failed e-invoices and due SST periods, with each area's own access.",keywords:&["home","work"],capability:VIEW,input:home_schema,output,handler:Handler::Read(&HomeRead),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.reports.home.get",title:"Read daily Finance work",summary:"Read unmatched bank lines, payment requests waiting, refused and invalid e-invoices still to act on, and ended SST periods still due, with each area's own access.",keywords:&["home","work"],capability:VIEW,input:home_schema,output,handler:Handler::Read(&HomeRead),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.setup.get",title:"Read the Finance setup",summary:"Read which Finance areas the company has set up and which remain, each with the page that sets it up. A step has a status only where its module can tell.",keywords:&["setup","onboarding","checklist"],capability:VIEW,input:get_schema,output,handler:Handler::Read(&SetupRead),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.sections.set",title:"Arrange report sections",summary:"Replace the company's report headings and account choices in order.",keywords:&[],capability:MANAGE,input:set_schema,output,handler:Handler::SafeWrite(&Layout),channels:Channels::Every,step_up:&[]},
     ], guides:&[],

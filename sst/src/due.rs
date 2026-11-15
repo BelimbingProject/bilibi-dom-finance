@@ -1,5 +1,6 @@
 //! Due periods for Finance home, following SST returns: a finalised return is done;
-//! a period before the registration was kept here is not an unprepared return.
+//! a period still running is not due yet, and a period before the registration
+//! was kept here is not an unprepared return.
 use crate::{Result, ReturnStatus, Sst, TaxType};
 use bilibi_tenancy::Scope;
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
@@ -16,7 +17,7 @@ pub struct DuePeriod {
 }
 
 impl Sst {
-    /// Recent taxable periods still due and older open returns, in the company's calendar zone.
+    /// Recent ended taxable periods still due and older open returns, in the company's calendar zone.
     pub async fn due_periods(
         &self,
         scope: &Scope,
@@ -57,6 +58,7 @@ impl Sst {
             .collect();
         let mut due: Vec<DuePeriod> = periods
             .into_iter()
+            .filter(|p| p.period_end < today)
             .filter(|p| {
                 let kept = kept_from.is_none_or(|from| p.due_date >= from);
                 taxes.iter().any(|tax| {

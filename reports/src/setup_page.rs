@@ -315,11 +315,6 @@ impl Setup {
                     })?);
                 }
             }
-            if let Ok(page) = self.pages.contracts.read(scope, "finance.payables.document.page", &json!({"company_id":company,"status":"draft","page":1,"page_size":25,"as_of":today})).await {
-                if let Some(count) = page["result"]["total"].as_u64().filter(|count| *count > 0) {
-                    work.push(&render(StatStrip { id: "home-bill-drafts", title: "Draft bills", href: "/finance/payables/bills?status=draft", items: vec![StatItem::number("bills and debit notes", &count.to_string())] })?);
-                }
-            }
             if let Some(count) = data["journal_approvals"]
                 .as_i64()
                 .filter(|count| *count > 0)
@@ -342,28 +337,24 @@ impl Setup {
                     items: vec![StatItem::number("payment requests", &count.to_string())],
                 })?);
             }
-            if let Some(failed) = data["failed_einvoices"].as_array() {
-                for item in failed {
-                    if item["count"].as_u64().unwrap_or_default() == 0 {
-                        continue;
-                    }
-                    let status = item["status"].as_str().unwrap_or_default();
-                    let title = if status == "refused" {
-                        "E-invoices refused"
-                    } else {
-                        "E-invoices invalid"
-                    };
-                    let href = format!("/finance/einvoice/documents?status={status}");
-                    work.push(&render(StatStrip {
-                        id: &format!("home-einvoice-{status}"),
-                        title,
-                        href: &href,
-                        items: vec![StatItem::number(
-                            "e-invoices",
-                            &item["count"].as_u64().unwrap_or_default().to_string(),
-                        )],
-                    })?);
-                }
+            let failed = &data["failed_einvoices"];
+            let environment = failed["environment"].as_str().unwrap_or_default();
+            for (status, title) in [
+                ("refused", "E-invoices refused"),
+                ("invalid", "E-invoices invalid"),
+            ] {
+                let Some(count) = failed[status].as_u64().filter(|count| *count > 0) else {
+                    continue;
+                };
+                let href = format!(
+                    "/finance/einvoice/documents?status={status}&environment={environment}"
+                );
+                work.push(&render(StatStrip {
+                    id: &format!("home-einvoice-{status}"),
+                    title,
+                    href: &href,
+                    items: vec![StatItem::number("e-invoices", &count.to_string())],
+                })?);
             }
             if let Some(periods) = data["due_periods"].as_array() {
                 for period in periods {
@@ -418,6 +409,7 @@ impl Setup {
         let mut body = Html::EMPTY;
         let mut subtitle = String::new();
         let mut is_home = false;
+        let mut complete = false;
         match scope.current_company() {
             None => body.push(&render(
                 EmptyState::missing(
@@ -451,7 +443,7 @@ impl Setup {
                             serde_json::from_value(value["result"]["areas"].clone())
                                 .unwrap_or_default();
                         let result = &value["result"];
-                        let complete = result["required_total"].as_u64().is_some_and(|total| {
+                        complete = result["required_total"].as_u64().is_some_and(|total| {
                             total > 0 && result["required_set_up"].as_u64() == Some(total)
                         });
                         if complete && !self.details {
@@ -480,7 +472,11 @@ impl Setup {
                                 areas.into_iter().partition(|a| a.optional);
                             body.push(&self.table(
                                 "setup-required",
-                                "Start here",
+                                if complete {
+                                    "Needed to start work"
+                                } else {
+                                    "Start here"
+                                },
                                 "A company needs these before it can post.",
                                 &required,
                             )?);
@@ -522,7 +518,7 @@ impl Setup {
                 body: Html::text("Finance setup"),
                 ..Button::default()
             })?
-        } else if self.details {
+        } else if self.details && complete {
             render(Button {
                 id: "setup-home",
                 href: "/finance/setup",
