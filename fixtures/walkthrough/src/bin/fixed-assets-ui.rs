@@ -321,7 +321,7 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     assert_eq!(applied.query["to"], "2026-12-31");
-    has(&applied, "Ledger check as of 31 Dec 2026");
+    has(&applied, "Books and register compared, 31 Dec 2026");
     let mut ids = Vec::new();
     let mut entries = Vec::new();
     for label in [
@@ -345,11 +345,19 @@ async fn main() -> Outcome<()> {
                 &PostOptions::default(),
             )
             .await?;
-        // The person picks the purchase; nobody types an entry number.
+        // A new debit is offered on its account, and the notice opens its category.
+        let notice = refresh(&mut register, &manager).await?;
+        has(&notice, "1 purchase on Asset cost is not in the register.");
+        has(&notice, &format!("assets-register-purchase-{}", cost.id));
         let source = format!("entry:{}:1", entry.id);
         has(
-            &event(&mut register, &manager, json!({"type":"new"})).await?,
-            "asset-modal",
+            &event(
+                &mut register,
+                &manager,
+                json!({"type":"new", "category_revision_id":original.revision.id.to_string()}),
+            )
+            .await?,
+            &source,
         );
         let chosen = event(
             &mut register,
@@ -363,6 +371,7 @@ async fn main() -> Outcome<()> {
         let body=event(&mut register,&manager,json!({"type":"register_asset","asset[category_revision_id]":original.revision.id.to_string(),"asset[source]":source,"asset[description]":label,"asset[in_service_date]":"2026-01-31","asset[residual_value]":"0"})).await?;
         has(&body, "Registered ");
         no(&body, "asset-modal");
+        no(&body, "purchase on Asset cost is not in the register");
         let reopened = event(&mut register, &manager, json!({"type":"new"})).await?;
         no(&reopened, &source);
         event(&mut register, &manager, json!({"type":"close_asset"})).await?;
@@ -414,10 +423,9 @@ async fn main() -> Outcome<()> {
         &refresh(&mut runs, &manager).await?,
         "No depreciation runs yet",
     );
-    has(
-        &event(&mut runs, &manager, json!({"type":"new"})).await?,
-        "run-modal",
-    );
+    let initial_run = event(&mut runs, &manager, json!({"type":"new"})).await?;
+    has(&initial_run, "run-modal");
+    has(&initial_run, "value=\"2026-01\"");
     let off_month = event(
         &mut runs,
         &manager,
@@ -438,6 +446,9 @@ async fn main() -> Outcome<()> {
     has(&run_body, "/finance/ledger/journals/entry-");
     has(&run_body, "#2 Reversed acquisition");
     has(&run_body, "Skipped assets");
+    let next_run = event(&mut runs, &manager, json!({"type":"new"})).await?;
+    has(&next_run, "value=\"2026-02\"");
+    event(&mut runs, &manager, json!({"type":"close_run"})).await?;
     has(&refresh(&mut detail, &manager).await?, "40");
     has(
         &event(&mut detail, &manager, json!({"type":"open_dispose"})).await?,
