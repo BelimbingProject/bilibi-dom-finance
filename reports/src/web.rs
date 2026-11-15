@@ -546,11 +546,18 @@ impl Pages {
             if let Some(cursor) = &after {
                 input["after_start_date"] = cursor.clone().into();
             }
-            let page = self
+            let page = match self
                 .contracts
                 .read(scope, "finance.ledger.fiscal_year.list", &input)
                 .await
-                .map_err(|_| Error::Internal)?;
+            {
+                Ok(page) => page,
+                Err(
+                    bilibi_agent_api::Error::Forbidden
+                    | bilibi_agent_api::Error::Backend(Error::Forbidden),
+                ) => return Ok(None),
+                Err(_) => return Err(Error::Internal),
+            };
             let records = page["result"]["records"]
                 .as_array()
                 .ok_or(Error::Internal)?;

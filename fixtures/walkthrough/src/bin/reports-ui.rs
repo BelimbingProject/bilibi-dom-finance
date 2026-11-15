@@ -237,6 +237,27 @@ async fn main() -> Outcome<()> {
         .contains(&format!(
             "closing=excluded&from=2026-10-01&through={through}&to=2026-10-31"
         )));
+    // The exported sheet uses the same current and comparison figures at the
+    // clicked cutoff, including real numeric amounts rather than UI markup.
+    let downloads = services.get::<bilibi_ui::download::DownloadService<Scope, Error>>(
+        "finance/reports.export-downloads",
+    )?;
+    let mut export_query = q.clone();
+    export_query.insert("through".into(), through.to_string());
+    export_query.insert("format".into(), "csv".into());
+    let path = HashMap::new();
+    let csv = downloads
+        .0
+        .serve(bilibi_ui::download::DownloadRequest {
+            operation: "export",
+            scope: &manager,
+            path: &path,
+            query: &export_query,
+        })
+        .await?;
+    let csv = String::from_utf8(csv.bytes)?;
+    assert!(csv.contains("1101.00"));
+    assert!(csv.contains("Net income"));
     has(&first, "<select id=\"report-period-period\"");
     assert!(first.html.contains("from=2025-10-01"));
     has(&first, "id=\"report-save\"");

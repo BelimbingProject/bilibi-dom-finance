@@ -285,11 +285,23 @@ impl Download<Scope, Error> for Downloads {
                     let file = Box::pin(owned.read(&mut client, &artifact.id))
                         .await
                         .map_err(|_| Error::Internal)?;
-                    Ok(FileBody::inline(
-                        file.bytes,
-                        "application/pdf",
-                        "report.pdf",
-                    ))
+                    if request
+                        .query
+                        .get("format")
+                        .is_some_and(|format| format == "save")
+                    {
+                        Ok(FileBody::attachment(
+                            file.bytes,
+                            "application/pdf",
+                            "report.pdf",
+                        ))
+                    } else {
+                        Ok(FileBody::inline(
+                            file.bytes,
+                            "application/pdf",
+                            "report.pdf",
+                        ))
+                    }
                 }
                 _ => Err(Error::NotFound),
             }
