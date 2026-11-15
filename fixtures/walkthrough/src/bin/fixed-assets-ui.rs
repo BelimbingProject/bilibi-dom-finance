@@ -20,6 +20,7 @@ use std::collections::HashMap;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 bilibi_finance_walkthrough_fixture::walkthrough_ledger_roles!();
+bilibi_finance_walkthrough_fixture::walkthrough_payroll_roles!();
 inventory::submit! { Contribution::new(bilibi_authz::VOCABULARY,"walkthrough.fixture.finance.fixed-assets-ui",Provenance {module:"finance/fixed_assets",source:file!(),line:line!()},&bilibi_authz::VocabularyContribution {
     domains:&[],verbs:&[],capabilities:&[],system_principals:&[],roles:&[
         bilibi_authz::RoleDefinition {code:"manager",name:"manager",description:"Walkthrough fixture role",grant_all:false,capabilities:&CAPABILITIES},
