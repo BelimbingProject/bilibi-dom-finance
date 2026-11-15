@@ -78,7 +78,7 @@ type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
 async fn setup_page(
     pages: &PageService<Scope, Error>,
     scope: &Scope,
-    operation: &str,
+    operation: &'static str,
 ) -> Outcome<String> {
     let none = HashMap::new();
     Ok(pages
