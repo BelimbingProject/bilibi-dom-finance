@@ -1076,7 +1076,11 @@ async fn main() -> Outcome<()> {
             "id=\"finalise-cancel\"",
         ],
     )?;
-    lacks("that refusal", &html, &["/finance/reports/approval-exceptions"])?;
+    lacks(
+        "that refusal",
+        &html,
+        &["/finance/reports/approval-exceptions"],
+    )?;
     let html = event(&mut opener, &manager, json!({"type":"cancel_finalise"})).await?;
     lacks("the opener cancels", &html, &["id=\"finalise-modal\""])?;
     let html = event(&mut clerk, &staff, json!({"type":"finalise"})).await?;
