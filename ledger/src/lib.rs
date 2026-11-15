@@ -1472,6 +1472,19 @@ impl Ledger {
         Ok(fiscal::standing(client, scope, company_id, module, records).await?)
     }
 
+    /// Validation QR for the valid fiscal document of a posted record.
+    pub async fn fiscal_validation_qr_on(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        settings: &bilibi_settings::Settings,
+        scope: &Scope,
+        company_id: i64,
+        module: &str,
+        record: &str,
+    ) -> Result<Option<String>> {
+        Ok(fiscal::validation_qr(client, settings, scope, company_id, module, record).await?)
+    }
+
     /// Adds an account (`finance.ledger.accounts.manage`). `retained_earnings`
     /// designates an equity account as the one the year-end close moves
     /// profit into; designating another account later moves the designation.

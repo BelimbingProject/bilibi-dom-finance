@@ -77,6 +77,9 @@ impl Receivables {
         for (field, text, limit) in [
             ("company_name", &layout.company_name, 200),
             ("registration_number", &layout.registration_number, 100),
+            ("tax_number", &layout.tax_number, 100),
+            ("payment_terms", &layout.payment_terms, 2000),
+            ("bank_details", &layout.bank_details, 2000),
             ("address", &layout.address, 2000),
             ("contact", &layout.contact, 500),
             ("footer", &layout.footer, 4000),

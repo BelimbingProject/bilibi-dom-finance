@@ -334,7 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             bad,
             Err(bilibi_finance_receivables::ReceivableError::Invalid(_))
         ));
-        ar.configure(&scope, 1, &json!({"invoice_layout":{"company_name":"Example Trading & Services", "registration_number":"Example registration 001", "address":"First floor\nExample Street", "contact":"accounts@example.test", "footer":"Payment terms: 30 days.\nPlease quote the invoice number. <This is plain text.>"}})).await?;
+        ar.configure(&scope, 1, &json!({"invoice_layout":{"company_name":"Example Trading & Services", "registration_number":"Example registration 001", "tax_number":"Example tax 002", "payment_terms":"Due in 30 days", "bank_details":"Example Bank 123456", "address":"First floor\nExample Street", "contact":"accounts@example.test", "footer":"Payment terms: 30 days.\nPlease quote the invoice number. <This is plain text.>"}})).await?;
         let configured = ar.print_document(&scope, 1, issued.id).await?;
         std::fs::write(format!("{root}/configured.pdf"), configured.bytes)?;
         let tax = ar.create_tax_code(&scope,1,&json!({"code":"PRINT-TAX","name":"Example tax","rate":"6","account_id":account("2100")})).await?;
