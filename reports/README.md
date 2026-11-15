@@ -12,7 +12,7 @@ These are management reports, not statutory statements. An issued snapshot freez
 
 The sections below record the module’s detailed contracts, permissions and limits.
 
-Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports from the general ledger and retains source-period conversion schedules. The reports cover profit and loss, the balance sheet, cash position, headline figures against the previous period, and the entries behind any account's figure. It stores immutable issued snapshots; every report figure comes through `finance/ledger`'s facade, and it reads none of the ledger's tables.
+Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports from the general ledger and retains source-period conversion schedules. The reports cover profit and loss, the balance sheet, cash position, headline figures against a comparison period, and the entries behind any account's figure. It stores immutable issued snapshots; every report figure comes through `finance/ledger`'s facade, and it reads none of the ledger's tables.
 
 Reports (management reports) and account activity are available at `/finance/reports` and `/finance/reports/accounts/{account_id}` (NT2). Bookkeeping controls and Approval exceptions are also available (NT3), alongside auditor-pack generation and downloads (NT4).
 
@@ -83,6 +83,10 @@ Section headings and account choices are a company's own data, never code. They 
 ```
 
 A listed account or account group brings everything under it in the chart, unless a row under it is listed itself: the nearest listed account decides, and within one report the first section that lists a code keeps it. Headings (at most 100 characters) and codes (at most 50) are trimmed. The setting's validator refuses any other shape on save; a stored value that is not valid (written before validation, or adopted) groups nothing rather than grouping wrongly. A report names, in `unmatched_codes`, any listed code the chart does not have.
+
+## Balance sheet earnings
+
+Current-year earnings and earlier unclosed earnings add to the existing equity total. Each column uses the financial year containing its own as-of date; when no year contains that date, the unsplit amount appears as unclosed earnings with the missing year named, rather than attributing it to a guessed year.
 
 ## Comparative periods
 
