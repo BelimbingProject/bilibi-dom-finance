@@ -653,8 +653,8 @@ impl Bill {
         {
             b.push(&render(Button {
                 id: "payables-approval-settings",
-                href: "/finance/reports/approval-exceptions",
-                body: Html::text("Approval exceptions"),
+                href: "/finance/reports/controls",
+                body: Html::text("Bookkeeping controls"),
                 ..Button::default()
             })?);
         }
