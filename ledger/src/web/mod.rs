@@ -856,15 +856,11 @@ pub(crate) fn shell(
     flash: &Flash,
     mut body: Html,
 ) -> Result<String> {
-    if flash
-        .map()
-        .error
-        .contains("/finance/reports/approval-exceptions")
-    {
+    if flash.map().error.contains("separation of duties") {
         body.push(&render(bilibi_ui::Button {
             id: "ledger-approval-settings",
-            href: "/finance/reports/approval-exceptions",
-            body: Html::text("Approval exceptions"),
+            href: "/finance/reports/controls",
+            body: Html::text("Bookkeeping controls"),
             ..bilibi_ui::Button::default()
         })?);
     }

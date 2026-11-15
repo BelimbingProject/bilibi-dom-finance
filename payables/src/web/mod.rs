@@ -299,7 +299,7 @@ impl Page<Scope, Error> for Pages {
             "payments" => Some("Payments"),
             "payment_new" => Some("Request a payment"),
             "payment" => Some("Payment"),
-            "aged" => Some("Aging"),
+            "aged" => Some("Payables aging"),
             "setup" => Some("Payables settings"),
             _ => None,
         }

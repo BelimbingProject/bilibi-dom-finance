@@ -232,7 +232,11 @@ impl Book {
         let mut controls = render(SectionHeading {
             id: "ledger-book-controls-heading",
             title: "Controls",
-            description: "Entries can only be dated in an open month.",
+            description: if controlled {
+                "Entries can only be dated in an open month."
+            } else {
+                ""
+            },
             actions: if can_change {
                 render(bilibi_ui::ActionLink {
                     id: "ledger-book-controls-change",
