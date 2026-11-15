@@ -248,6 +248,12 @@ impl SendInvoice {
             content_type: "application/pdf".into(),
             bytes: pdf.bytes,
         });
+        self.mailer.ready().await.map_err(|_| Error::Internal)?;
+        let rendered = self
+            .mailer
+            .render(&message)
+            .await
+            .map_err(|_| Error::Invalid)?;
         // Claim the external effect before SMTP: a crash after delivery must not
         // cause Queue to send the same message again. A stranded attempt is
         // shown as uncertain so a person can check before sending again.
@@ -277,7 +283,8 @@ impl SendInvoice {
         })
         .await?;
         tx.commit().await?;
-        if self.mailer.deliver(&message).await.is_err() {
+        drop(client);
+        if self.mailer.deliver_rendered(rendered).await.is_err() {
             return Ok(());
         }
         let mut client = self.receivables.db.get().await.map_err(Error::from)?;
