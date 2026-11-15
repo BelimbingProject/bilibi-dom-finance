@@ -70,7 +70,7 @@ pub use draft::{
 pub use evidence::EvidencePage;
 pub use fiscal::SourceRecord;
 pub(crate) use fiscal::NAMED_SOURCES;
-pub use list::{DocumentPage, DocumentQuery};
+pub use list::{DocumentPage, DocumentQuery, FailedDocuments};
 pub use myinvois::signer::SigningKey;
 pub use pdf::{qr_code_svg, PdfArtifact, PdfFile, ARTIFACT_OWNER};
 

@@ -17,8 +17,9 @@ use crate::clearance::{
 };
 use bilibi_database::{Db, Error};
 use bilibi_finance_einvoice::{
-    qr_code_svg, CodeOverrideChange, ConsolidationRequest, DocumentView, Draft, DraftLine,
-    DraftParty, DraftSource, Einvoice, EinvoiceError, Reconciliation, SERVICE,
+    qr_code_svg, CodeOverrideChange, ConsolidationRequest, DocumentQuery, DocumentView, Draft,
+    DraftLine, DraftParty, DraftSource, Einvoice, EinvoiceError, FailedDocuments, Reconciliation,
+    SERVICE,
 };
 use bilibi_finance_ledger::{
     Entry, EntryOwner, EntryQuery, Ledger, LedgerError, Money, NewEntry, NewLine, PostOptions,
@@ -181,6 +182,30 @@ async fn clear(
     einvoice.submit_document(scope, company, id).await?;
     jobs_settle(raw).await?;
     Ok(einvoice.get_document(scope, company, id).await?)
+}
+
+/// Finance home's failed counts and the documents list's "Still to act on"
+/// rows in the same environment.
+async fn still_to_act(einvoice: &Einvoice, scope: &Scope) -> Outcome<(FailedDocuments, Vec<i64>)> {
+    let failed = einvoice.failed_documents(scope, LINKED_COMPANY).await?;
+    let ids = einvoice
+        .list_documents(
+            scope,
+            LINKED_COMPANY,
+            &DocumentQuery {
+                environment: failed.environment.clone(),
+                needs_action: true,
+                page_size: 300,
+                ..DocumentQuery::default()
+            },
+        )
+        .await?
+        .entries
+        .iter()
+        .map(|d| d.id)
+        .collect::<Vec<_>>();
+    assert_eq!((failed.refused + failed.invalid) as usize, ids.len());
+    Ok((failed, ids))
 }
 
 pub(crate) async fn run(
@@ -1003,6 +1028,55 @@ pub(crate) async fn run(
             ledger_side(&view)
         );
     }
+    println!("\n-- Failed documents still to act on (Finance home)");
+    let (before, ids) = still_to_act(&einvoice, manager).await?;
+    for consolidated in einvoice
+        .list_documents(
+            manager,
+            LINKED_COMPANY,
+            &DocumentQuery {
+                search: "NE4-CONS-REFUSE-1".into(),
+                ..DocumentQuery::default()
+            },
+        )
+        .await?
+        .entries
+    {
+        assert!(
+            !ids.contains(&consolidated.id),
+            "a consolidated document is counted"
+        );
+    }
+    let bill = |code: &str| {
+        self_billed(Draft {
+            source: source(&ap.module, &ap.record, payable.id),
+            ..untaxed(code, "11", recognised(&payable))
+        })
+    };
+    let first = issue(&einvoice, manager, LINKED_COMPANY, &bill("NE4-AP-REFUSE-1")).await?;
+    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, first).await?;
+    assert_eq!(view.status, "refused");
+    let (failed, ids) = still_to_act(&einvoice, manager).await?;
+    assert_eq!(failed.refused, before.refused + 1);
+    assert!(ids.contains(&first));
+    let second = issue(&einvoice, manager, LINKED_COMPANY, &bill("NE4-AP-REFUSE-2")).await?;
+    let (failed, ids) = still_to_act(&einvoice, manager).await?;
+    assert_eq!(failed.refused, before.refused + 1);
+    assert!(ids.contains(&first) && !ids.contains(&second));
+    println!("a newer issued document for the bill leaves the refused one to act on");
+    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, second).await?;
+    assert_eq!(view.status, "refused");
+    let (failed, ids) = still_to_act(&einvoice, manager).await?;
+    assert_eq!(failed.refused, before.refused + 1);
+    assert!(!ids.contains(&first) && ids.contains(&second));
+    println!("a newer refused document for the bill is the one to act on");
+    let third = issue(&einvoice, manager, LINKED_COMPANY, &bill("NE4-AP-2")).await?;
+    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, third).await?;
+    assert_eq!(view.status, "valid");
+    let (failed, ids) = still_to_act(&einvoice, manager).await?;
+    assert_eq!(failed.refused, before.refused);
+    assert!(!ids.contains(&first) && !ids.contains(&second));
+    println!("once a newer document for the bill stands, neither refused one is left to act on");
     print_reconciliation(
         "Company 001's reconciliation (linked documents never post)",
         einvoice.reconciliation(manager, LINKED_COMPANY).await,

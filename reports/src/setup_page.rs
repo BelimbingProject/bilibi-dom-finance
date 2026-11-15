@@ -8,6 +8,9 @@ use crate::setup::SetupState;
 use askama::Template;
 use bilibi_agent_api::{page::PageContracts, Error as ContractError};
 use bilibi_database::{Db, Error, Result};
+use bilibi_datetime::{Clock, DisplayPolicy};
+use bilibi_finance_ledger::{MinorUnits, Money, OwedFigure, OwedSummary, Tally};
+use bilibi_locale::Locales;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{
@@ -15,8 +18,8 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, Card, EmptyState, FlashGroup, FlexRow,
-    FlexTable, Header, Html, ListColumns, PageVariant, SectionHeading, StatusKind, TableEmpty,
-    NO_FLASH,
+    FlexTable, Header, Html, ListColumns, PageVariant, SectionHeading, StatItem, StatStrip,
+    StatusKind, TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -29,6 +32,8 @@ pub(crate) struct Pages {
     pub db: Db,
     pub contracts: Arc<PageContracts>,
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
+    pub display: Arc<DisplayPolicy>,
+    pub locales: Arc<Locales>,
 }
 
 fn render(template: impl Template) -> Result<Html> {
@@ -63,9 +68,28 @@ struct SetupArea {
 struct Setup {
     pages: Pages,
     columns: HashMap<&'static str, ListColumns>,
+    details: bool,
 }
 
 struct Line(String);
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="space-y-4">{{ body|safe }}</div>"#,
+    ext = "html"
+)]
+struct Stack {
+    body: Html,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="grid gap-3 sm:grid-cols-3">{{ body|safe }}</div>"#,
+    ext = "html"
+)]
+struct WorkGrid {
+    body: Html,
+}
 
 impl Setup {
     fn badge(area: &SetupArea) -> Result<Html> {
@@ -167,9 +191,239 @@ impl Setup {
         })
     }
 
+    async fn home(&self, scope: &Scope, company: i64) -> Result<Html> {
+        let client = self.pages.db.get().await?;
+        let locale = self
+            .pages
+            .locales
+            .resolve(&**client, scope, None)
+            .await?
+            .locale;
+        let display = self
+            .pages
+            .display
+            .display(&**client, scope, scope.current_company(), locale)
+            .await?;
+        let clock = Clock::resolve(&display, None, jiff::Timestamp::now());
+        let today = clock.today.to_string();
+        drop(client);
+        let book = self
+            .pages
+            .contracts
+            .read(
+                scope,
+                "finance.ledger.book.get",
+                &json!({"company_id":company}),
+            )
+            .await;
+        let (units, currency) = match book {
+            Ok(value) => (
+                value["result"]["book"]["minor_units"]
+                    .as_i64()
+                    .and_then(MinorUnits::new),
+                value["result"]["book"]["currency_code"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            Err(_) => (None, String::new()),
+        };
+        let mut body = Html::EMPTY;
+        for (id, heading, contract, path, singular, plural) in [
+            (
+                "home-receivables",
+                "Money owed to you",
+                "finance.receivables.document.summary",
+                "/finance/receivables/invoices",
+                "invoice",
+                "invoices",
+            ),
+            (
+                "home-payables",
+                "Bills to pay",
+                "finance.payables.document.summary",
+                "/finance/payables/bills",
+                "bill",
+                "bills",
+            ),
+        ] {
+            let answer = self
+                .pages
+                .contracts
+                .read(
+                    scope,
+                    contract,
+                    &json!({"company_id":company,"as_of":today}),
+                )
+                .await;
+            let Ok(answer) = answer else { continue };
+            let Ok(summary) = serde_json::from_value::<OwedSummary>(answer["result"].clone())
+            else {
+                continue;
+            };
+            let amount = |tally: &Tally| {
+                format!(
+                    "{} {}",
+                    Money::display_decimal(tally.amount, units),
+                    currency
+                )
+                .trim()
+                .to_owned()
+            };
+            let mut section = render(SectionHeading {
+                id: &format!("{id}-heading"),
+                title: heading,
+                ..SectionHeading::default()
+            })?;
+            section.push(&OwedSummary::strips(
+                id,
+                vec![
+                    OwedFigure {
+                        title: "Awaiting payment",
+                        detail: OwedSummary::counted(
+                            summary.awaiting_payment.count,
+                            singular,
+                            plural,
+                        ),
+                        amount: amount(&summary.awaiting_payment),
+                        href: format!("{path}?status=unpaid"),
+                    },
+                    OwedFigure {
+                        title: "Overdue",
+                        detail: summary.overdue_detail(singular, plural),
+                        amount: amount(&summary.overdue),
+                        href: format!("{path}?status=overdue"),
+                    },
+                ],
+            )?);
+            body.push(&section);
+        }
+        if let Ok(answer) = self
+            .pages
+            .contracts
+            .read(
+                scope,
+                "finance.reports.home.get",
+                &json!({"company_id":company,"as_of":today,"timezone":clock.timezone}),
+            )
+            .await
+        {
+            let data = &answer["result"];
+            let mut work = Html::EMPTY;
+            if let Some(banks) = data["bank_accounts"].as_array() {
+                for bank in banks {
+                    let id = bank["bank_account_id"].as_i64().unwrap_or_default();
+                    let count = bank["count"].as_i64().unwrap_or_default();
+                    let name = bank["name"].as_str().unwrap_or_default();
+                    let href = format!("/finance/reconciliation/accounts/{id}/matching");
+                    let label = if count == 1 {
+                        "statement line to match"
+                    } else {
+                        "statement lines to match"
+                    };
+                    work.push(&render(StatStrip {
+                        id: &format!("home-bank-{id}"),
+                        title: name,
+                        href: &href,
+                        items: vec![StatItem::number(label, count.to_string())],
+                    })?);
+                }
+            }
+            if let Some(count) = data["journal_approvals"]
+                .as_i64()
+                .filter(|count| *count > 0)
+            {
+                work.push(&render(StatStrip {
+                    id: "home-journals",
+                    title: "Journals waiting for approval",
+                    href: "/finance/ledger/journals?status=submitted",
+                    items: vec![StatItem::number("journals", count.to_string())],
+                })?);
+            }
+            if let Some(count) = data["payment_approvals"]
+                .as_i64()
+                .filter(|count| *count > 0)
+            {
+                work.push(&render(StatStrip {
+                    id: "home-approvals",
+                    title: "Payments waiting for approval",
+                    href: "/finance/payables/payments?status=submitted",
+                    items: vec![StatItem::number("payment requests", count.to_string())],
+                })?);
+            }
+            let failed = &data["failed_einvoices"];
+            let environment = failed["environment"].as_str().unwrap_or_default();
+            for (status, title) in [
+                ("refused", "E-invoices refused"),
+                ("invalid", "E-invoices invalid"),
+            ] {
+                let Some(count) = failed[status].as_u64().filter(|count| *count > 0) else {
+                    continue;
+                };
+                let href = format!(
+                    "/finance/einvoice/documents?status={status}&environment={environment}&attention=needs_action"
+                );
+                work.push(&render(StatStrip {
+                    id: &format!("home-einvoice-{status}"),
+                    title,
+                    href: &href,
+                    items: vec![StatItem::number("e-invoices", count.to_string())],
+                })?);
+            }
+            if let Some(periods) = data["due_periods"].as_array() {
+                for period in periods {
+                    let start = period["period_start"].as_str().unwrap_or_default();
+                    let due = bilibi_finance_ledger::dates::display_text(
+                        period["due_date"].as_str().unwrap_or_default(),
+                    );
+                    let end = period["period_end"].as_str().unwrap_or_default();
+                    let period_name = if start
+                        .parse::<jiff::civil::Date>()
+                        .is_ok_and(|date| date.day() != 1)
+                    {
+                        format!(
+                            "{} to {}",
+                            bilibi_finance_ledger::dates::display_text(start),
+                            bilibi_finance_ledger::dates::display_text(end)
+                        )
+                    } else {
+                        bilibi_finance_ledger::dates::months_text(start, end)
+                    };
+                    let href = period["return_id"].as_i64().map_or_else(
+                        || format!("/finance/sst#period-{start}"),
+                        |id| format!("/finance/sst/returns/{id}"),
+                    );
+                    work.push(&render(StatStrip {
+                        id: &format!("home-return-{start}"),
+                        title: "SST return due",
+                        href: &href,
+                        items: vec![StatItem::number(period_name, format!("Due {due}"))],
+                    })?);
+                }
+            }
+            if !work.to_string().is_empty() {
+                body.push(&render(SectionHeading {
+                    id: "home-work-heading",
+                    title: "Work to do",
+                    ..SectionHeading::default()
+                })?);
+                body.push(&render(WorkGrid { body: work })?);
+            }
+        }
+        body.push(&render(Card {
+            id: "home-assistant",
+            title: "Ask your AI assistant",
+            body: Html::text("Your assistant can help prepare Finance work for you to review."),
+            ..Card::default()
+        })?);
+        Ok(body)
+    }
+
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let mut body = Html::EMPTY;
         let mut subtitle = String::new();
+        let mut is_home = false;
+        let mut complete = false;
         match scope.current_company() {
             None => body.push(&render(
                 EmptyState::missing(
@@ -203,7 +457,14 @@ impl Setup {
                             serde_json::from_value(value["result"]["areas"].clone())
                                 .unwrap_or_default();
                         let result = &value["result"];
-                        let summary = match (
+                        complete = result["required_total"].as_u64().is_some_and(|total| {
+                            total > 0 && result["required_set_up"].as_u64() == Some(total)
+                        });
+                        if complete && !self.details {
+                            is_home = true;
+                            body.push(&self.home(scope, company.get()).await?);
+                        } else {
+                            let summary = match (
                             result["required_set_up"].as_u64(),
                             result["required_total"].as_u64(),
                         ) {
@@ -221,26 +482,35 @@ impl Setup {
                                     .to_owned()
                             }
                         };
-                        body.push(&render(Alert {
-                            id: "setup-summary",
-                            kind: StatusKind::Info,
-                            class: "mb-3",
-                            body: Html::text(&summary),
-                        })?);
-                        let (optional, required): (Vec<SetupArea>, Vec<SetupArea>) =
-                            areas.into_iter().partition(|a| a.optional);
-                        body.push(&self.table(
-                            "setup-required",
-                            "Start here",
-                            "Finish these three steps before you record anything.",
-                            &required,
-                        )?);
-                        body.push(&self.table(
-                            "setup-optional",
-                            "As the company needs them",
-                            "Set these up when the company uses them.",
-                            &optional,
-                        )?);
+                            body.push(&render(Alert {
+                                id: "setup-summary",
+                                kind: StatusKind::Info,
+                                class: "mb-3",
+                                body: Html::text(&summary),
+                            })?);
+                            let (optional, required): (Vec<SetupArea>, Vec<SetupArea>) =
+                                areas.into_iter().partition(|a| a.optional);
+                            body.push(&self.table(
+                                "setup-required",
+                                if complete {
+                                    "Needed to start work"
+                                } else {
+                                    "Start here"
+                                },
+                                if complete {
+                                    "Setup is complete."
+                                } else {
+                                    "Finish these three steps before you record anything."
+                                },
+                                &required,
+                            )?);
+                            body.push(&self.table(
+                                "setup-optional",
+                                "As the company needs them",
+                                "Set these up when the company uses them.",
+                                &optional,
+                            )?);
+                        }
                     }
                     Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
                         body.push(&render(
@@ -260,13 +530,35 @@ impl Setup {
                 }
             }
         }
+        let title = if is_home {
+            "Finance home"
+        } else {
+            "Finance setup"
+        };
+        let actions = if is_home {
+            render(Button {
+                id: "home-setup",
+                href: "/finance/setup/details",
+                body: Html::text("Finance setup"),
+                ..Button::default()
+            })?
+        } else if self.details && complete {
+            render(Button {
+                id: "setup-home",
+                href: "/finance/setup",
+                body: Html::text("Finance home"),
+                ..Button::default()
+            })?
+        } else {
+            Html::EMPTY
+        };
         let mut page = render(Header {
-            title: Html::text("Finance setup"),
+            title: Html::text(title),
+            actions,
             subtitle: &subtitle,
             title_actions: bilibi_ui::Html::EMPTY,
-            ..Header::default()
         })?;
-        page.push(&body);
+        page.push(&render(Stack { body })?);
         let mut html = render(FlashGroup {
             id: "flash-group",
             flash: NO_FLASH,
@@ -304,8 +596,12 @@ impl LiveState<Scope, Error> for Setup {
 }
 
 impl Page<Scope, Error> for Pages {
-    fn title(&self, _operation: &str) -> Option<&'static str> {
-        Some("Finance setup")
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(if operation == "details" {
+            "Finance setup"
+        } else {
+            "Finance home"
+        })
     }
 
     fn render<'a>(&'a self, r: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
@@ -314,6 +610,7 @@ impl Page<Scope, Error> for Pages {
             let mut state = Setup {
                 pages: self.clone(),
                 columns: HashMap::new(),
+                details: r.operation == "details",
             };
             let body = state
                 .update(LiveRequest {
@@ -330,11 +627,12 @@ impl Page<Scope, Error> for Pages {
         })
     }
 
-    fn mount<'a>(&'a self, _r: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
+    fn mount<'a>(&'a self, r: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
             Ok(Some(Box::new(Setup {
                 pages: self.clone(),
                 columns: HashMap::new(),
+                details: r.operation == "details",
             }) as Box<dyn LiveState<Scope, Error>>))
         })
     }

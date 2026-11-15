@@ -38,6 +38,10 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
                 "environment".into(),
                 Filter::one_of(&["", "sandbox", "production"], ""),
             ),
+            (
+                "attention".into(),
+                Filter::one_of(&["", "needs_action"], ""),
+            ),
         ]
         .into(),
         ..ListSpec::default()
@@ -139,6 +143,7 @@ impl Index {
             status: self.list.filters["status"].clone(),
             document_type: self.list.filters["document_type"].clone(),
             environment: self.list.filters["environment"].clone(),
+            needs_action: self.list.filters["attention"] == "needs_action",
             page: self.list.page,
             page_size: self.list.page_size,
         };
@@ -215,6 +220,16 @@ impl Index {
                         Choice::new("All environments", ""),
                         Choice::new("Sandbox", "sandbox"),
                         Choice::new("Production", "production"),
+                    ],
+                ),
+                ToolbarControl::select(
+                    "einvoice-documents-attention",
+                    "attention",
+                    "Filter by what needs action",
+                    &self.list.filters["attention"],
+                    vec![
+                        Choice::new("All documents", ""),
+                        Choice::new("Still to act on", "needs_action"),
                     ],
                 ),
             ],

@@ -230,6 +230,8 @@ A company requires separation of duties unless it turns it off. The setting is t
 
 ## Manual journals
 
+`Ledger::pending_journal_count` counts journals awaiting a decision under the ledger view capability; Finance home links that count to the submitted journals list.
+
 Manual journals use Workflow's shared approval cases. Open **Approval rules**, choose the current company and **Manual journals**, review the proposed rules and publish them with a reason. This is an explicit setup action; boot, opening a book and submission do not install a policy. The initial proposal needs one independent holder of `finance.ledger.journals.approve`. Rules can add stages, named reviewers, cover, amount conditions and reminders. Amount conditions use the book's currency and the journal's total debits.
 
 `submit_journal(scope, company_id, &NewEntry)` validates and keeps immutable lines, then creates the Workflow round in that same transaction. The journal's ID identifies its immutable revision. Workflow keeps the preparer account and impersonator, resolves their Person identities, and checks both at decision time. An agent represents its account holder and never supplies another independent approval.
@@ -257,7 +259,7 @@ Retain the approved source trial balance, chart mapping, source system/export da
 ### Prepare and review in the UI
 
 1. Open the book with the source currency and appropriate minor units. Create the approved chart and open the fiscal year covering conversion. Complete these steps before preparing the opening journal.
-2. Open **Finance setup → Opening balances** (or the Opening balances button in Journals, shown until opening balances are approved). Enter the conversion date and a permanent source reference, then fill each account's balance: type it, or paste the source trial balance from a spreadsheet and check the columns the page guessed before choosing **Fill the grid**. The currency is the book's.
+2. Open **Finance home → Finance setup → Opening balances** (or the Opening balances button in Journals, shown until opening balances are approved). Enter the conversion date and a permanent source reference, then fill each account's balance: type it, or paste the source trial balance from a spreadsheet and check the columns the page guessed before choosing **Fill the grid**. The currency is the book's.
 3. When debits and credits match, check every account and amount in the review against the source closing trial balance. An inactive account, invalid precision or unbalanced total refuses the entire submission. No suspense line or currency conversion is added.
 4. Choose **Submit for approval**. This keeps one immutable journal and its source evidence; it posts nothing. The returned journal appears in Journals.
 5. An independent authorized reviewer opens that journal, chooses Approve and reviews the approval decision. The ordinary period, account and Workflow independence controls still apply. Where the journal rules permit preparer approval, it records an exception in Workflow for independent review.

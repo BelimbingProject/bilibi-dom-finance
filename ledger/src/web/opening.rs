@@ -248,7 +248,7 @@ impl Opening {
             body.push(&no_company("opening-no-company")?);
         }
         actions.push(&render(BackLink {
-            href: "/finance/setup",
+            href: "/finance/setup/details",
             id: "opening-back",
             title: "Back to Finance setup",
             ..BackLink::default()

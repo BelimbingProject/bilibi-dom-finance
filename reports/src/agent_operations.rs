@@ -143,6 +143,72 @@ impl ReadHandler for SetupRead {
         })
     }
 }
+/// Daily work from each owner's authorized facade. Missing access is null, not zero.
+struct HomeRead;
+impl ReadHandler for HomeRead {
+    fn owner(&self) -> &'static str {
+        MODULE
+    }
+    fn call<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let company = input["company_id"]
+                .as_i64()
+                .and_then(|id| OrganisationId::new(id).ok())
+                .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
+            bilibi_company::authorize_work_target(client, scope, company.get(), VIEW).await?;
+            let owner = OWNER.get().ok_or(Error::Internal)?;
+            let company = company.get();
+            let banks = owner
+                .sources
+                .reconciliation
+                .unmatched_statement_counts(scope, company)
+                .await
+                .ok();
+            let journals = owner
+                .ledger
+                .pending_journal_count(scope, company)
+                .await
+                .ok();
+            let approvals = owner
+                .sources
+                .payables
+                .page_payment_requests(
+                    scope,
+                    company,
+                    &bilibi_finance_payables::PaymentRequestPageQuery {
+                        status: Some("submitted".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .ok()
+                .map(|page| page.total);
+            let failed = owner
+                .sources
+                .einvoice
+                .failed_documents(scope, company)
+                .await
+                .ok();
+            let today = input["as_of"]
+                .as_str()
+                .and_then(|s| s.parse::<jiff::civil::Date>().ok())
+                .ok_or_else(|| bilibi_agent_api::invalid("as_of", "Enter a date."))?;
+            let timezone = input["timezone"].as_str().unwrap_or("UTC");
+            let returns = owner
+                .sources
+                .sst
+                .due_periods(scope, company, today, timezone)
+                .await
+                .ok();
+            Ok(json!({"bank_accounts":banks,"payment_approvals":approvals,"journal_approvals":journals,"failed_einvoices":failed,"due_periods":returns}).into())
+        })
+    }
+}
 struct Layout;
 impl ReadHandler for Layout {
     fn owner(&self) -> &'static str {
@@ -203,6 +269,13 @@ impl WriteHandler for Layout {
 fn get_schema() -> Value {
     json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1}}})
 }
+fn home_schema() -> Value {
+    let mut s = get_schema();
+    s["required"] = json!(["company_id", "as_of", "timezone"]);
+    s["properties"]["as_of"] = json!({"type":"string","format":"date"});
+    s["properties"]["timezone"] = json!({"type":"string","maxLength":100});
+    s
+}
 fn set_schema() -> Value {
     let mut s = get_schema();
     s["required"] = json!(["company_id", "sections"]);
@@ -215,6 +288,7 @@ fn output() -> Value {
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/reports.layout-operations",Provenance {module:MODULE,source:file!(),line:line!()}, &Definitions {
     operations: &[
         Operation {key:"finance.reports.sections.get",title:"Read report sections",summary:"Read the company's headings and account choices.",keywords:&[],capability:VIEW,input:get_schema,output,handler:Handler::Read(&Layout),channels:Channels::Every,step_up:&[]},
+        Operation {key:"finance.reports.home.get",title:"Read daily Finance work",summary:"Read unmatched bank lines, payment requests waiting, refused and invalid e-invoices still to act on, and ended SST periods still due, with each area's own access.",keywords:&["home","work"],capability:VIEW,input:home_schema,output,handler:Handler::Read(&HomeRead),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.setup.get",title:"Read the Finance setup",summary:"Read which Finance areas the company has set up and which remain, each with the page that sets it up. A step has a status only where its module can tell.",keywords:&["setup","onboarding","checklist"],capability:VIEW,input:get_schema,output,handler:Handler::Read(&SetupRead),channels:Channels::Every,step_up:&[]},
         Operation {key:"finance.reports.sections.set",title:"Arrange report sections",summary:"Replace the company's report headings and account choices in order.",keywords:&[],capability:MANAGE,input:set_schema,output,handler:Handler::SafeWrite(&Layout),channels:Channels::Every,step_up:&[]},
     ], guides:&[],

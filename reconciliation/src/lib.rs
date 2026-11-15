@@ -360,6 +360,14 @@ pub struct BankAccount {
     pub active: bool,
 }
 
+/// A bank account with statement lines still to match.
+#[derive(Clone, Debug, Serialize)]
+pub struct UnmatchedStatementCount {
+    pub bank_account_id: i64,
+    pub name: String,
+    pub count: i64,
+}
+
 /// What adds a bank account: a `name` of at most 200 characters, the
 /// `ledger_account_id` (an active asset account of the company no other bank
 /// account maps), the `import_mapping` (see [`ImportMapping::parse`]; `null`
@@ -856,6 +864,27 @@ impl Reconciliation {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company_id, VIEW).await?;
         Ok(bank_accounts::list(&**client, scope.tenant(), company_id).await?)
+    }
+
+    /// Unmatched statement lines per bank account, including inactive accounts.
+    /// This counts the same standing matches as `unmatched_items` without loading
+    /// ledger entries or every line into the caller.
+    pub async fn unmatched_statement_counts(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Vec<UnmatchedStatementCount>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
+        let rows = client.query("SELECT a.id, a.name, count(l.id)::bigint FROM finance_reconciliation_bank_accounts a JOIN finance_reconciliation_statement_lines l ON l.tenant_id=a.tenant_id AND l.company_id=a.company_id AND l.bank_account_id=a.id WHERE a.tenant_id=$1 AND a.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_reconciliation_match_lines ml JOIN finance_reconciliation_matches m ON m.id=ml.match_id JOIN finance_reconciliation_match_events e ON e.match_id=m.id AND e.action='matched' WHERE ml.statement_line_id=l.id AND m.tenant_id=$1 AND m.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_reconciliation_match_events u WHERE u.match_id=m.id AND u.action='unmatched')) GROUP BY a.id,a.name ORDER BY a.name,a.id", &[&scope.tenant(), &company_id]).await.map_err(Error::from)?;
+        Ok(rows
+            .iter()
+            .map(|r| UnmatchedStatementCount {
+                bank_account_id: r.get(0),
+                name: r.get(1),
+                count: r.get(2),
+            })
+            .collect())
     }
 
     /// One bank account (`finance.reconciliation.view`).
