@@ -238,8 +238,8 @@ async fn main() -> Outcome<()> {
             "closing=excluded&from=2026-10-01&through={through}&to=2026-10-31"
         )));
     has(&first, "<select id=\"report-period-period\"");
-    assert!(first.html.contains("from=2026-09-01"));
-    has(&first, "name=\"through\" value=\"5\"");
+    assert!(first.html.contains("from=2025-10-01"));
+    has(&first, "id=\"report-save\"");
     has(
         &first,
         "The report sections name account codes the chart does not have: MISSING.",
@@ -258,7 +258,7 @@ async fn main() -> Outcome<()> {
     .await?;
     tokio::time::timeout(Duration::from_secs(3), wakes[0].receiver.recv()).await??;
     let new = update(&mut latest, &manager, LiveInput::Refresh).await?;
-    has(&new, &format!("name=\"through\" value=\"{after}\""));
+    assert!(new.html.contains(&format!("through={after}")));
     let pinned = update(
         &mut latest,
         &manager,
@@ -359,7 +359,7 @@ async fn main() -> Outcome<()> {
     let single = update(
         &mut latest,
         &manager,
-        LiveInput::Event(&json!({"type":"compare","compare":"false"})),
+        LiveInput::Event(&json!({"type":"compare","filters[compare]":"none"})),
     )
     .await?;
     assert_eq!(single.query["compare"], "none");

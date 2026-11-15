@@ -7,7 +7,7 @@ use crate::{ActivityQuery, Reports, ReportsError};
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{
-    filter::Outcome, Clock, DisplayContext, DisplayPolicy, Period, PeriodFilter,
+    filter::Outcome, Clock, DisplayContext, DisplayPolicy, FinancialYears, Period, PeriodFilter,
 };
 use bilibi_locale::Locales;
 use bilibi_tenancy::Scope;
@@ -16,8 +16,8 @@ use bilibi_ui::{
         self, LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest, Subscription,
     },
-    params, FlashMap, Html, ListColumns, ListSpec, ListState, StatusKind, Tab, Tabs, Toggle,
-    NO_FLASH,
+    params, Choice, FilterToolbar, FlashMap, Html, ListColumns, ListSpec, ListState, StatusKind,
+    Tab, Tabs, ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -56,6 +56,7 @@ struct State {
     list: ListState,
     filter: PeriodFilter,
     clock: Clock,
+    years: Option<FinancialYears>,
     display: DisplayContext,
     browser_zone: Option<String>,
     timezone_request: String,
@@ -90,6 +91,7 @@ impl State {
         };
         let display = pages.display(scope).await?;
         let clock = display.clock(None, Timestamp::now());
+        let years = pages.financial_years(scope, clock.today).await?;
         let spec = ListSpec {
             omit_defaults: true,
             ..ListSpec::default()
@@ -127,8 +129,10 @@ impl State {
             account_id: params::positive_id(request.path.get("account_id").map(String::as_str)),
             query: query.clone(),
             list: ListState::parse(request.query, spec).map_err(|_| Error::Internal)?,
-            filter: PeriodFilter::new("report-period", period(&query, &clock), &clock),
+            filter: PeriodFilter::new("report-period", period(&query, &clock, years), &clock)
+                .financial_years(years),
             clock,
+            years,
             display,
             browser_zone: None,
             timezone_request: Timestamp::now().to_string(),
@@ -181,8 +185,10 @@ impl State {
         } else {
             query.extend(self.filter.period.params().map(|(k, v)| (k.into(), v)));
             query.insert("view".into(), self.view().into());
-            if !self.compare() {
-                query.insert("compare".into(), "none".into());
+            if let Some(value) = self.query.get("compare").filter(|v| {
+                v.as_str() == "previous" || (v.as_str() == "none" && self.view() != "overview")
+            }) {
+                query.insert("compare".into(), value.clone());
             }
         }
         if let Some(pin) = self.pinned() {
@@ -237,13 +243,26 @@ impl State {
                 to: self.filter.period.to,
             };
             if self.view() == "overview" {
-                reports
-                    .overview(scope, company, current, through)
-                    .await
-                    .map(figures::Report::Overview)
+                let previous = if self.query.get("compare").is_some_and(|v| v == "previous") {
+                    crate::previous_period(current)
+                } else {
+                    crate::previous_year(current)
+                };
+                match previous {
+                    Ok(previous) => reports
+                        .overview_compared(scope, company, current, previous, through)
+                        .await
+                        .map(figures::Report::Overview),
+                    Err(error) => Err(error),
+                }
             } else {
                 let periods = if self.compare() {
-                    crate::previous_period(current).map(|previous| vec![current, previous])
+                    (if self.query.get("compare").is_some_and(|v| v == "previous") {
+                        crate::previous_period(current)
+                    } else {
+                        crate::previous_year(current)
+                    })
+                    .map(|previous| vec![current, previous])
                 } else {
                     Ok(vec![current])
                 };
@@ -303,7 +322,11 @@ impl State {
                 Ok(company) => {
                     self.pages
                         .reports
-                        .export_auditor_pack(scope, company, period(&self.query, &self.clock).to)
+                        .export_auditor_pack(
+                            scope,
+                            company,
+                            period(&self.query, &self.clock, self.years).to,
+                        )
                         .await
                 }
                 Err(_) => Err(ReportsError::Unauthorized),
@@ -349,11 +372,17 @@ impl State {
         }
         match kind {
             "compare" => {
-                // The toggle carries the state it switches to.
-                if value["compare"].as_str() == Some("true") {
-                    self.query.remove("compare");
-                } else {
-                    self.query.insert("compare".into(), "none".into());
+                let values = params::string_values(value);
+                match values.get("filters[compare]").map(String::as_str) {
+                    Some("previous") => {
+                        self.query.insert("compare".into(), "previous".into());
+                    }
+                    Some("none") if self.view() != "overview" => {
+                        self.query.insert("compare".into(), "none".into());
+                    }
+                    _ => {
+                        self.query.remove("compare");
+                    }
                 }
             }
             "pin" => {
@@ -370,7 +399,7 @@ impl State {
             _ => return Ok(()),
         }
         self.filter
-            .set(period(&self.query, &self.clock), &self.clock);
+            .set(period(&self.query, &self.clock, self.years), &self.clock);
         self.canonicalize();
         self.load(scope).await
     }
@@ -380,6 +409,8 @@ impl State {
         self.clock = self
             .display
             .clock(self.browser_zone.as_deref(), Timestamp::now());
+        self.years = self.pages.financial_years(scope, self.clock.today).await?;
+        self.filter = self.filter.clone().financial_years(self.years);
         Ok(())
     }
 
@@ -396,11 +427,17 @@ impl State {
         let mut before = Vec::new();
         let mut after = Vec::new();
         let report = self.loaded.as_ref().and_then(|v| v.as_ref().ok());
+        let mut export_query = self.query.clone();
+        export_query.insert("from".into(), self.filter.period.from.to_string());
+        export_query.insert("to".into(), self.filter.period.to.to_string());
+        if let Some(header) = report.and_then(figures::Report::header) {
+            export_query.insert("through".into(), header.through_entry_number.to_string());
+        }
         before.push(figures::header(
             report,
             self.activity,
             self.pinned().is_some(),
-            &self.query,
+            &export_query,
             self.auditor_pack.as_deref(),
         )?);
         if !self.activity {
@@ -415,7 +452,6 @@ impl State {
                     .map(|((view, label), url)| Tab::patch(url, label, self.view() == *view))
                     .collect(),
             })?);
-            after.push(figures::notice()?);
             if self.notices_unavailable {
                 after.push(figures::live_warning()?);
             }
@@ -456,21 +492,34 @@ impl State {
             } else {
                 Some(Html::render(&self.filter).map_err(|_| Error::Internal)?)
             },
-            compare: (!self.activity && self.view() != "overview")
-                .then(|| {
-                    let on = self.compare();
-                    Html::render(&Toggle {
-                        on,
-                        label: "Compare with the previous period",
-                        id: "report-compare-input",
-                        event: "compare",
-                        name: "compare",
-                        value: if on { "false" } else { "true" },
-                        ..Toggle::default()
-                    })
-                })
-                .transpose()
-                .map_err(|_| Error::Internal)?,
+            compare: if self.activity {
+                None
+            } else {
+                let selected = self
+                    .query
+                    .get("compare")
+                    .map(String::as_str)
+                    .unwrap_or("year");
+                let mut choices = vec![
+                    Choice::new("Same dates last year", "year"),
+                    Choice::new("Previous period", "previous"),
+                ];
+                if self.view() != "overview" {
+                    choices.push(Choice::new("No comparison", "none"));
+                }
+                let mut toolbar = FilterToolbar::new(
+                    "report-comparison",
+                    vec![ToolbarControl::select(
+                        "report-comparison-choice",
+                        "compare",
+                        "Compare with",
+                        selected,
+                        choices,
+                    )],
+                );
+                toolbar.event = "compare";
+                Some(render(toolbar)?)
+            },
             timezone_request: &self.timezone_request,
         }
         .render()
@@ -485,6 +534,54 @@ impl State {
 }
 
 impl Pages {
+    async fn financial_years(
+        &self,
+        scope: &Scope,
+        today: jiff::civil::Date,
+    ) -> Result<Option<FinancialYears>> {
+        let mut after: Option<String> = None;
+        let mut previous: Option<(jiff::civil::Date, jiff::civil::Date)> = None;
+        loop {
+            let mut input = serde_json::json!({"company_id": company(scope)?, "page_size": 100});
+            if let Some(cursor) = &after {
+                input["after_start_date"] = cursor.clone().into();
+            }
+            let page = self
+                .contracts
+                .read(scope, "finance.ledger.fiscal_year.list", &input)
+                .await
+                .map_err(|_| Error::Internal)?;
+            let records = page["result"]["records"]
+                .as_array()
+                .ok_or(Error::Internal)?;
+            for row in records {
+                let start = row["start_date"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or(Error::Internal)?;
+                let end: jiff::civil::Date = row["end_date"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or(Error::Internal)?;
+                if start <= today && today <= end {
+                    return Ok(previous.and_then(|(prior_start, prior_end)| {
+                        if prior_end.tomorrow().ok() != Some(start) {
+                            return None;
+                        }
+                        FinancialYears::new(prior_start, start, end.tomorrow().ok()?).ok()
+                    }));
+                }
+                previous = Some((start, end));
+            }
+            after = page["result"]["next_after_start_date"]
+                .as_str()
+                .map(str::to_owned);
+            if after.is_none() {
+                return Ok(None);
+            }
+        }
+    }
+
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let client = self.reports.db.get().await?;
         let locale = self.locales.resolve(&**client, scope, None).await?.locale;
@@ -581,7 +678,8 @@ impl LiveState<Scope, Error> for State {
                     self.list = ListState::parse(query, self.list.spec().clone().into())
                         .map_err(|_| Error::Internal)?;
                     self.reclock(request.scope).await?;
-                    self.filter.set(period(query, &self.clock), &self.clock);
+                    self.filter
+                        .set(period(query, &self.clock, self.years), &self.clock);
                     self.canonicalize();
                     self.load(request.scope).await?;
                 }
@@ -634,8 +732,8 @@ fn period_event(kind: &str) -> bool {
     )
 }
 
-fn period(query: &HashMap<String, String>, clock: &Clock) -> Period {
-    Period::parse(
+fn period(query: &HashMap<String, String>, clock: &Clock, years: Option<FinancialYears>) -> Period {
+    Period::parse_with_financial_years(
         |k| {
             query
                 .get(k)
@@ -643,6 +741,7 @@ fn period(query: &HashMap<String, String>, clock: &Clock) -> Period {
                 .or_else(|| (k == "period").then(|| "this_month".into()))
         },
         clock.today,
+        years,
     )
 }
 fn render(template: impl Template) -> Result<Html> {

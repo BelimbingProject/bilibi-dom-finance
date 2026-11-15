@@ -115,6 +115,10 @@ bilibi_menu::contribute!(
     .order(3)
 );
 
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "finance/reports.export", provenance!(), &bilibi_module_registry::contributions::Download {
+    path: "/finance/reports/export", service: "finance/reports.export-downloads", operation: "export", access: Access::Capability(crate::VIEW),
+}) }
+
 // Bilimbi Reports.Web.AuditorPackController: every click reauthorizes the artifact.
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "finance/reports.auditor-pack", provenance!(), &bilibi_module_registry::contributions::Download {
     path: "/finance/reports/auditor-packs/{artifact_id}", service: "finance/reports.downloads",

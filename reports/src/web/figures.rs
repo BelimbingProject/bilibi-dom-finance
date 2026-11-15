@@ -60,7 +60,7 @@ impl Report {
             })?);
         }
         match self {
-            Self::Overview(r) => parts.extend(overview(r, columns, list, query)?),
+            Self::Overview(r) => parts.extend(overview(r, columns, list, query, display)?),
             Self::Activity(r) => parts.extend(activity(r, columns, list, query, display, names)?),
             Self::Profit(r) => {
                 let mut rows = Vec::new();
@@ -84,6 +84,7 @@ impl Report {
                     )),
                     columns,
                     list,
+                    display,
                 )?);
             }
             Self::Balance(r) => {
@@ -94,12 +95,29 @@ impl Report {
                     group(&mut grouped, "balance-sheet", g, &r.header, framed)?;
                     if g.account_type == AccountType::Equity {
                         let last = grouped.pop().expect("group total");
-                        grouped.push(extra(
-                            "balance-sheet-earnings",
-                            "Income less expenses not yet closed",
-                            &r.earnings,
-                            r.header.minor_units,
-                        )?);
+                        if let (Some(current), Some(earlier)) =
+                            (&r.current_year_earnings, &r.earlier_years_earnings)
+                        {
+                            grouped.push(extra(
+                                "balance-sheet-current-earnings",
+                                "Current year earnings",
+                                current,
+                                r.header.minor_units,
+                            )?);
+                            grouped.push(extra(
+                                "balance-sheet-earlier-earnings",
+                                "Earlier years’ earnings, not yet closed",
+                                earlier,
+                                r.header.minor_units,
+                            )?);
+                        } else {
+                            grouped.push(extra(
+                                "balance-sheet-earnings",
+                                "Income less expenses not yet closed",
+                                &r.earnings,
+                                r.header.minor_units,
+                            )?);
+                        }
                         grouped.push(last);
                     }
                     rows.extend(grouped);
@@ -117,6 +135,7 @@ impl Report {
                     None,
                     columns,
                     list,
+                    display,
                 )?);
             }
             Self::Cash(r) => {
@@ -135,7 +154,7 @@ impl Report {
                     &r.totals,
                     r.header.minor_units,
                 )?);
-                parts.push(statement("cash-position",&r.header,rows,r.sections.is_empty().then_some(("No cash accounts configured","Add a bank account in Bank reconciliation, or choose accounts in Report sections.")),columns,list)?);
+                parts.push(statement("cash-position",&r.header,rows,r.sections.is_empty().then_some(("No cash accounts configured","Add a bank account in Bank reconciliation, or choose accounts in Report sections.")),columns,list,display)?);
             }
         }
         Ok(parts)
@@ -146,7 +165,7 @@ pub(super) fn header(
     report: Option<&Report>,
     activity: bool,
     pinned: bool,
-    _query: &HashMap<String, String>,
+    query: &HashMap<String, String>,
     auditor_pack: Option<&str>,
 ) -> Result<Html> {
     let mut subtitle = Html::EMPTY;
@@ -169,7 +188,7 @@ pub(super) fn header(
                 type_label(a.account.account_type),
                 window(a)
             )));
-            if _query.get("closing").is_some_and(|v| v == "excluded") {
+            if query.get("closing").is_some_and(|v| v == "excluded") {
                 subtitle.push(&text(
                     "activity-closing",
                     " · year-end closing entries left out",
@@ -178,19 +197,40 @@ pub(super) fn header(
             }
         }
     } else if let Some(header) = report.and_then(Report::header) {
-        subtitle = text("report-currency", &header.currency_code, false)?;
+        subtitle = text(
+            "report-currency",
+            &format!(
+                "{} · Management reports, not audited statements.",
+                header.currency_code
+            ),
+            false,
+        )?;
         if pinned {
             subtitle.push(&Html::text(" · figures frozen"));
         }
+        for (format, label, id) in [
+            ("pdf", "Print", "report-pdf"),
+            ("save", "Save a copy", "report-save"),
+            ("csv", "Export spreadsheet", "report-csv"),
+        ] {
+            let mut params = query.clone();
+            params.insert("format".into(), format.into());
+            actions.push(&render(Button {
+                id,
+                href: &params::address("/finance/reports/export", &params),
+                body: Html::text(label),
+                ..Button::default()
+            })?);
+        }
         // The shared button has no patch-link variant. A page event changes
         // only URL/read state, retaining the mounted page just as patch does.
-        actions = render(Button {
+        actions.push(&render(Button {
             id: "export-auditor-pack",
             event: "export_auditor_pack",
             button_type: "button",
-            body: Html::text("Generate auditor pack"),
+            body: Html::text("Auditor pack"),
             ..Button::default()
-        })?;
+        })?);
         if let Some(artifact) = auditor_pack {
             actions.push(&render(Button {
                 id: "download-auditor-pack",
@@ -199,19 +239,15 @@ pub(super) fn header(
                 ..Button::default()
             })?);
         }
-        actions.push(&render(Button {
-            id: if pinned { "unpin-report" } else { "pin-report" },
-            event: if pinned { "unpin" } else { "pin" },
-            name: "through",
-            value: &header.through_entry_number.to_string(),
-            button_type: "button",
-            body: Html::text(if pinned {
-                "Show latest figures"
-            } else {
-                "Freeze these figures"
-            }),
-            ..Button::default()
-        })?);
+        if pinned {
+            actions.push(&render(Button {
+                id: "unpin-report",
+                event: "unpin",
+                button_type: "button",
+                body: Html::text("Show latest figures"),
+                ..Button::default()
+            })?);
+        }
     }
     // Bilimbi shows only the back link above a refused account's empty state.
     let missing = activity && !matches!(report, Some(Report::Activity(_)));
@@ -235,14 +271,6 @@ pub(super) fn header(
     })
 }
 
-pub(super) fn notice() -> Result<Html> {
-    render(Alert {
-        id: "management-report-notice",
-        class: "mb-3",
-        body: Html::text("For management use, not statutory statements."),
-        ..Alert::default()
-    })
-}
 pub(super) fn live_warning() -> Result<Html> {
     render(Alert {
         id: "report-live-warning",
@@ -279,6 +307,7 @@ fn overview(
     columns: &mut HashMap<&'static str, ListColumns>,
     list: &ListState,
     query: &HashMap<String, String>,
+    display: &DisplayContext,
 ) -> Result<Vec<Html>> {
     let mut rows = Vec::new();
     let figures = [
@@ -344,14 +373,14 @@ fn overview(
             .columns
             .iter()
             .enumerate()
-            .map(|(i, c)| (format!("v{i}"), column_label(c))),
+            .map(|(i, c)| (format!("v{i}"), column_label(c, display))),
     );
     labels.push(("change".into(), "Change".into()));
     let table = table(
         "overview-figures",
         &labels,
         rows,
-        "Headline figures against the previous period",
+        "Headline figures against the comparison period",
         None,
         columns,
         list,
@@ -490,8 +519,14 @@ fn statement(
     empty: Option<(&str, &str)>,
     columns: &mut HashMap<&'static str, ListColumns>,
     list: &ListState,
+    display: &DisplayContext,
 ) -> Result<Html> {
-    let title = format!("Report: {}", id.replace('-', " "));
+    let title = match id {
+        "profit-and-loss" => "Profit and loss",
+        "balance-sheet" => "Balance sheet",
+        "cash-position" => "Cash position",
+        _ => id,
+    };
     let mut body = Html::EMPTY;
     if let Some((title, reason)) = empty {
         body.push(&render(EmptyState::missing(title, reason))?);
@@ -501,7 +536,7 @@ fn statement(
             h.columns
                 .iter()
                 .enumerate()
-                .map(|(i, c)| (format!("v{i}"), column_label(c))),
+                .map(|(i, c)| (format!("v{i}"), column_label(c, display))),
         );
         body.push(&table(id, &labels, rows, &title, None, columns, list)?);
     }
@@ -509,7 +544,7 @@ fn statement(
     // outside that card so the shared component can reserve the notch's gap.
     let mut statement = render(SectionHeading {
         id: &format!("{id}-label"),
-        title: &title,
+        title,
         ..SectionHeading::default()
     })?;
     statement.push(&render(Card {
@@ -726,8 +761,13 @@ fn type_label(t: AccountType) -> &'static str {
         AccountType::Expense => "Expenses",
     }
 }
-fn column_label(c: &Column) -> String {
+fn column_label(c: &Column, display: &DisplayContext) -> String {
     match c {
+        Column::Period { from, to }
+            if *from == from.first_of_month() && *to == from.last_of_month() =>
+        {
+            display.month_label(*from)
+        }
         Column::Period { from, to } => format!(
             "{} – {}",
             bilibi_finance_ledger::dates::display(*from),
