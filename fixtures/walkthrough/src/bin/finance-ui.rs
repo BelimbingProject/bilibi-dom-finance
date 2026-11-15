@@ -689,7 +689,7 @@ async fn main() -> Outcome<()> {
                 .unmatched_items(manager, COMPANY, bank.id, None)
                 .await?;
             assert_eq!(items.lines.len() as i64, expected);
-            Ok::<_, Error>(items)
+            Ok::<_, Box<dyn std::error::Error>>(items)
         }
     };
     let items = unmatched_count(2).await?;
