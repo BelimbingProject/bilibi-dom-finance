@@ -531,6 +531,9 @@ impl State {
                 self.exception_parts(scope, &display).await
             };
             match result {
+                Ok(content) if self.bookkeeping => {
+                    parts.push(html(ControlStack { parts: content })?)
+                }
                 Ok(content) => parts.extend(content),
                 Err(error) => {
                     self.close();
@@ -1465,6 +1468,14 @@ fn refusal(error: &LedgerError) -> String {
         other => return format!("{}.", other.to_string().trim_end_matches('.')),
     }
     .into()
+}
+#[derive(Template)]
+#[template(
+    source = r#"<div class="space-y-4">{% for part in parts %}{{ part }}{% endfor %}</div>"#,
+    ext = "html"
+)]
+struct ControlStack {
+    parts: Vec<Html>,
 }
 #[derive(Template)]
 #[template(path = "control_page.html")]
