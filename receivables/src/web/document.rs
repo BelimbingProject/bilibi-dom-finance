@@ -22,14 +22,17 @@ use bilibi_finance_ledger::RecordActions;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    params, Button, ButtonVariant, CommitStates, CommitStatus, Form, Html, ListColumns, ModalWidth,
-    StatusKind, Field, InputKind,
+    params, Button, ButtonVariant, CommitStates, CommitStatus, Field, Form, Html, InputKind,
+    ListColumns, ModalWidth, StatusKind,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// The draft's lines being edited, and what the last save was refused for.
-struct Mailing { values: HashMap<String, String>, errors: Errors }
+struct Mailing {
+    values: HashMap<String, String>,
+    errors: Errors,
+}
 
 struct Editing {
     lines: Lines,
@@ -42,6 +45,7 @@ pub(super) struct Document {
     balance_input: Value,
     balance_pins: Value,
     record: Option<Record>,
+    mail_status: Option<String>,
     customer: Option<Customer>,
     series: Option<Series>,
     accounts: Vec<Account>,
@@ -88,6 +92,7 @@ impl Document {
             balance_input: super::credits::balance_query(query)?,
             balance_pins: Value::Null,
             record: None,
+            mail_status: None,
             customer: None,
             series: None,
             accounts: vec![],
@@ -174,8 +179,27 @@ impl Document {
         match action {
             "send" => {
                 if self.can_manage {
-                    if let Some(d) = self.record.as_ref().filter(|d| d.status == "issued" && d.kind == "invoice" && d.opening.is_none()) {
-                        self.mailing = Some(Mailing { values: [("recipient".into(), d.party_email.clone().unwrap_or_default()), ("subject".into(), format!("Invoice {}", d.document_reference.as_deref().unwrap_or(""))), ("body".into(), "Please find your invoice attached.".into())].into(), errors: Errors::default() });
+                    if let Some(d) = self.record.as_ref().filter(|d| {
+                        d.status == "issued" && d.kind == "invoice" && d.opening.is_none()
+                    }) {
+                        self.mailing = Some(Mailing {
+                            values: [
+                                (
+                                    "recipient".into(),
+                                    d.party_email.clone().unwrap_or_default(),
+                                ),
+                                (
+                                    "subject".into(),
+                                    format!(
+                                        "Invoice {}",
+                                        d.document_reference.as_deref().unwrap_or("")
+                                    ),
+                                ),
+                                ("body".into(), "Please find your invoice attached.".into()),
+                            ]
+                            .into(),
+                            errors: Errors::default(),
+                        });
                     }
                 }
             }
@@ -210,6 +234,7 @@ impl Document {
             .await
         {
             Ok(mut value) => {
+                self.mail_status = value["mail_status"].as_str().map(str::to_owned);
                 self.balance_pins = value["balance_pins"].clone();
                 if self.balance_pins.is_object() {
                     self.balance_input = self.balance_pins.clone();
@@ -395,15 +420,54 @@ impl Document {
 
     fn mail_dialog(&self, d: &Mailing) -> Result<Html> {
         let mut body = Html::EMPTY;
-        for (key, label) in [("recipient", "Email address"), ("subject", "Subject"), ("body", "Message")] {
-            let mut field = Field::in_form("mail", key).id(format!("invoice-mail-{key}")).label(label).value(d.values.get(key).cloned().unwrap_or_default()).errors(d.errors.under(key, label)).required();
-            if key == "body" { field = field.kind(InputKind::Textarea); }
+        for (key, label) in [
+            ("recipient", "Email address"),
+            ("subject", "Subject"),
+            ("body", "Message"),
+        ] {
+            let mut field = Field::in_form("mail", key)
+                .id(format!("invoice-mail-{key}"))
+                .label(label)
+                .value(d.values.get(key).cloned().unwrap_or_default())
+                .errors(d.errors.under(key, label))
+                .required();
+            if key == "body" {
+                field = field.kind(InputKind::Textarea);
+            }
             body.push(&render(field)?);
         }
-        let mut actions = render(Button { id: "invoice-mail-cancel", button_type: "button", event: "cancel_dialog", body: Html::text("Cancel"), ..Button::default() })?;
-        actions.push(&render(Button { id: "invoice-mail-send", button_type: "submit", variant: ButtonVariant::Primary, working: "Sending…", body: Html::text("Send invoice"), ..Button::default() })?);
-        let form = render(Form { id: "invoice-mail-form", event: "send_invoice", change: false, class: "mt-4", body, actions: f::actions(actions)? })?;
-        f::modal("invoice-mail-modal", "Send invoice", "The invoice PDF will be attached.", "cancel_dialog", ModalWidth::Narrow, &self.flash, form)
+        let mut actions = render(Button {
+            id: "invoice-mail-cancel",
+            button_type: "button",
+            event: "cancel_dialog",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        actions.push(&render(Button {
+            id: "invoice-mail-send",
+            button_type: "submit",
+            variant: ButtonVariant::Primary,
+            working: "Sending…",
+            body: Html::text("Send invoice"),
+            ..Button::default()
+        })?);
+        let form = render(Form {
+            id: "invoice-mail-form",
+            event: "send_invoice",
+            change: false,
+            class: "mt-4",
+            body,
+            actions: f::actions(actions)?,
+        })?;
+        f::modal(
+            "invoice-mail-modal",
+            "Send invoice",
+            "The invoice PDF will be attached.",
+            "cancel_dialog",
+            ModalWidth::Narrow,
+            &self.flash,
+            form,
+        )
     }
 
     async fn save_field(&mut self, scope: &Scope, credential: &str, v: &Value) -> Result<()> {
@@ -510,8 +574,22 @@ impl Document {
                 if let Some(d) = &mut self.mailing {
                     d.values.extend(params::form_values(v, "mail"));
                     let input = json!({"document_id":self.id, "recipient":d.values.get("recipient"), "subject":d.values.get("subject"), "body":d.values.get("body")});
-                    match self.pages.write(scope, credential, "send_invoice", "finance.receivables.document.send", input).await? {
-                        Written::Done(_) => { self.mailing = None; self.flash.set(StatusKind::Success, "Invoice queued for sending."); }
+                    match self
+                        .pages
+                        .write(
+                            scope,
+                            credential,
+                            "send_invoice",
+                            "finance.receivables.document.send",
+                            input,
+                        )
+                        .await?
+                    {
+                        Written::Done(_) => {
+                            self.mailing = None;
+                            self.flash
+                                .set(StatusKind::Success, "Invoice queued for sending.");
+                        }
                         Written::Invalid(fields) => d.errors = Errors(fields),
                         Written::Refused(message) => self.flash.set(StatusKind::Error, message),
                     }

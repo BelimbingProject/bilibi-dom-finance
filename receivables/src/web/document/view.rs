@@ -117,6 +117,14 @@ impl Document {
                 .await?,
         );
         let mut summary = self.summary_card(&d, status, owed, &display, &people)?;
+        if let Some(status) = self.mail_status.as_deref() {
+            let words = match status { "queued" => "Invoice email is queued.", "sent" => "Invoice email was sent.", _ => "Delivery could not be confirmed. Check with the recipient before sending again." };
+            summary.push(&render(Card {
+                id: "invoice-mail-status",
+                body: Html::text(words),
+                ..Card::default()
+            })?);
+        }
         if let Some(applied) = self.applied_card(&d)? {
             summary.push(&applied);
         }
@@ -169,7 +177,9 @@ impl Document {
             }
         }
         if issued && !historical && d.kind == "invoice" {
-            if self.can_manage && d.opening.is_none() { items.push(RecordAction::here("mail", "Send invoice", &here, "send")); }
+            if self.can_manage && d.opening.is_none() {
+                items.push(RecordAction::here("mail", "Send invoice", &here, "send"));
+            }
             if owed && self.can_receive {
                 primary = Some(render(Button {
                     id: "receivables-invoice-receive",
@@ -709,7 +719,9 @@ impl Document {
         {
             return Ok(Some(dialog));
         }
-        if let Some(mailing) = &self.mailing { return Ok(Some(self.mail_dialog(mailing)?)); }
+        if let Some(mailing) = &self.mailing {
+            return Ok(Some(self.mail_dialog(mailing)?));
+        }
         if let Some(editing) = &self.editing {
             return Ok(Some(self.lines_dialog(editing)?));
         }

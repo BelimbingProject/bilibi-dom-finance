@@ -535,7 +535,9 @@ impl ReadHandler for Read {
                             let mut document = documents::read(client,tenant,company,id(input,"document_id")?).await?;
                             let asked = [(document.id, document.kind.as_str(), document.status.as_str(), document.opening.is_some())];
                             document.fiscal = service.fiscal_on(client, scope, company, &asked).await?.0.pop().unwrap_or_default();
-                            json!(document)
+                            let mut result = json!(document);
+                            result["mail_status"] = client.query_opt("SELECT status FROM finance_receivables_mail WHERE tenant_id=$1 AND company_id=$2 AND document_id=$3 ORDER BY id DESC LIMIT 1", &[&tenant, &company, &document.id]).await?.map_or(Value::Null, |r| json!(r.get::<_, String>(0)));
+                            result
                         }
                     },
                     Self::DocumentPage => crate::document_page::page(client, service, scope, company, input).await?,
@@ -785,7 +787,10 @@ fn document_summary() -> Value {
     )
 }
 fn send_invoice() -> Value {
-    schema(&["document_id", "recipient", "subject", "body"], json!({"document_id":identifier(), "recipient":string(254), "subject":string(200), "body":string(16000)}))
+    schema(
+        &["document_id", "recipient", "subject", "body"],
+        json!({"document_id":identifier(), "recipient":string(254), "subject":string(200), "body":string(16000)}),
+    )
 }
 fn aging() -> Value {
     complete_pins(schema(

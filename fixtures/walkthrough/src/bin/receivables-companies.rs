@@ -313,6 +313,32 @@ async fn main() -> Outcome<()> {
         assert_eq!(party[&key], committed["result"]["record"][&key]);
     }
     tx.commit().await?;
+    // A send preview and a rolled-back commit must not leave a delivery job.
+    let send_key = "finance.receivables.document.send";
+    let send = handler(&registry, send_key);
+    let mail = json!({"company_id":1,"document_id":draft.id,"recipient":"finance@orchid.example.test","subject":"Invoice","body":"Please find your invoice attached."});
+    let mut tx = mutations
+        .begin(
+            &mut raw,
+            manager.mutation_context("walkthrough.send_invoice"),
+        )
+        .await?;
+    let preview = send
+        .preview(tx.sql(), &manager, &mail)
+        .await?
+        .envelope(send_key);
+    assert_eq!(
+        preview["result"]["changes"]["recipient"],
+        "finance@orchid.example.test"
+    );
+    send.commit(&mut tx, &manager, &mail).await?;
+    tx.rollback().await?;
+    let count: i64 = raw
+        .query_one("SELECT count(*) FROM finance_receivables_mail", &[])
+        .await?
+        .get(0);
+    assert_eq!(count, 0, "rolled-back send must leave no email or job");
+    println!("PASS: invoice send reviews the recipient and rolls back with its plan");
     let frozen = ar.get_document(&manager, 1, draft.id).await?;
     assert_eq!(frozen.party_line1.as_deref(), Some(long_line.as_str()));
     println!(
@@ -423,6 +449,11 @@ async fn main() -> Outcome<()> {
     );
     drop(raw);
     if std::env::var("CUSTOMERS_BROWSER").as_deref() == Ok("1") {
+        bilibi_walkthrough_fixture::set_instance_role(&db, "development").await?;
+        let executor =
+            bilibi_queue::Executor::from_services(&app.services, bilibi_queue::Config::default())?;
+        let (_stop, stopped) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move { executor.run(stopped).await });
         let listener = tokio::net::TcpListener::bind(
             std::env::var("BIND_ADDR").unwrap_or("127.0.0.1:43999".into()),
         )

@@ -6,7 +6,7 @@ CREATE TABLE finance_receivables_mail (
     recipient text NOT NULL,
     subject text NOT NULL,
     body text NOT NULL,
-    status text NOT NULL CHECK (status IN ('queued', 'sent')),
+    status text NOT NULL CHECK (status IN ('queued', 'sending', 'sent')),
     inserted_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'),
     updated_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'),
     FOREIGN KEY (tenant_id, company_id) REFERENCES companies(tenant_id, id),
