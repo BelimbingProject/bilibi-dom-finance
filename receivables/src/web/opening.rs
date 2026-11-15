@@ -832,9 +832,13 @@ impl Opening {
             })?;
         } else {
             page = render(Modal {
-                id: "conversion-modal", title: TITLE,
-                description: "Reconcile the source register with the current company's approved opening balances.",
-                cancel_event: "close_opening", width: ModalWidth::Wide, body: page, ..Modal::default()
+                id: "conversion-modal",
+                title: TITLE,
+                description: "Import the invoices customers had not paid on the conversion date.",
+                cancel_event: "close_opening",
+                width: ModalWidth::Wide,
+                body: page,
+                ..Modal::default()
             })?;
         }
         Ok(page)

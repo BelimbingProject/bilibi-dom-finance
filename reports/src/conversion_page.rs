@@ -440,7 +440,7 @@ impl State {
         let previewing = self.id.is_none() && !self.document.is_null() && !listing;
         body.push(&render(Header {
             title: Html::text("Conversion reports"),
-            subtitle: &format!("Current company: {name}"),
+            subtitle: &name,
             actions: if company.is_none() {
                 Html::EMPTY
             } else if self.id.is_some() {
@@ -746,7 +746,7 @@ impl State {
                         ..Alert::default()
                     })?);
                 }
-                body.push(&render(Confirmation {consequence:if review.contract==ISSUE {"Issue this conversion report?"}else{"Sign this issued conversion report?"},detail:&format!("Current company: {name}. Review the report's sources, differences and limits before confirming. This record cannot be changed."),confirm:if review.contract==ISSUE {"Issue"}else{"Sign"},event:if review.contract==ISSUE {"issue"}else{"sign"},body:confirmation})?);
+                body.push(&render(Confirmation {consequence:if review.contract==ISSUE {"Issue this conversion report?"}else{"Sign this issued conversion report?"},detail:&format!("{name}. Review the report's sources, differences and limits before confirming. This record cannot be changed."),confirm:if review.contract==ISSUE {"Issue"}else{"Sign"},event:if review.contract==ISSUE {"issue"}else{"sign"},body:confirmation})?);
             }
         } else {
             body.push(&render(Alert {

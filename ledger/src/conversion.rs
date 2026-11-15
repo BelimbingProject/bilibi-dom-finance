@@ -41,7 +41,7 @@ impl Ledger {
     ) -> Result<OpeningContext> {
         agent_operations::authorize_on(client, scope, company, VIEW).await?;
         let row = client.query_opt("SELECT o.source_reference,o.journal_id,e.entry_id FROM finance_ledger_opening_balances o JOIN finance_ledger_journal_events e ON e.journal_id=o.journal_id AND e.tenant_id=o.tenant_id AND e.company_id=o.company_id AND e.event='approved' JOIN finance_ledger_entries p ON p.id=e.entry_id AND p.tenant_id=o.tenant_id AND p.company_id=o.company_id WHERE o.tenant_id=$1 AND o.company_id=$2 AND NOT EXISTS(SELECT 1 FROM finance_ledger_entries r WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.reverses_entry_id=p.id) ORDER BY o.id DESC LIMIT 1", &[&scope.tenant(), &company]).await?
-            .ok_or_else(|| LedgerError::Invalid(vec![FieldError::new("opening", "approve the opening balances journal before importing opening items")]))?;
+            .ok_or_else(|| LedgerError::Invalid(vec![FieldError::new("opening", "Opening balances must be approved first.")]))?;
         let entry = self
             .get_entry_on(client, scope, company, row.get(2))
             .await?;

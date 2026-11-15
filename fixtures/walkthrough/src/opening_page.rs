@@ -56,7 +56,7 @@ pub async fn proof(
     for expected in [
         "opening-steps",
         "Not started",
-        "Opens once the balances journal is approved.",
+        "After the balances are approved.",
         "Paste from a spreadsheet",
         "No balances yet",
     ] {

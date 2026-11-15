@@ -94,7 +94,7 @@ impl Opening {
                 (false, None) => (
                     BadgeKind::Neutral,
                     "Waiting",
-                    "Opens once the balances journal is approved.".to_owned(),
+                    "After the balances are approved.".to_owned(),
                     false,
                 ),
             };
@@ -126,7 +126,7 @@ impl Opening {
             id: "opening-steps-heading",
             title: "Steps",
             description:
-                "Balances come first. The other steps open once that journal is approved, because each invoice, bill or asset must add up to its account's opening balance.",
+                "Start with the account balances. After they are approved, add the unpaid invoices, unpaid bills and assets that make up those balances.",
             class: "p-5 pb-0",
             ..SectionHeading::default()
         })?;
