@@ -237,9 +237,70 @@ async fn main() -> Outcome<()> {
         .contains(&format!(
             "closing=excluded&from=2026-10-01&through={through}&to=2026-10-31"
         )));
+    // The exported sheet uses the same current and comparison figures at the
+    // clicked cutoff, including real numeric amounts rather than UI markup.
+    let downloads = services.get::<bilibi_ui::download::DownloadService<Scope, Error>>(
+        "finance/reports.export-downloads",
+    )?;
+    let mut export_query = q.clone();
+    export_query.insert("through".into(), through.to_string());
+    export_query.insert("format".into(), "csv".into());
+    let path = HashMap::new();
+    let csv = downloads
+        .0
+        .serve(bilibi_ui::download::DownloadRequest {
+            operation: "export",
+            scope: &manager,
+            path: &path,
+            query: &export_query,
+        })
+        .await?;
+    let csv = String::from_utf8(csv.bytes)?;
+    assert!(csv.contains("1101.00"));
+    assert!(csv.contains("Net income"));
+    assert_eq!(
+        csv.lines().next(),
+        Some("\"Account\",\"Oct 2026\",\"Oct 2025\"")
+    );
+    for (view, from, to, expected) in [
+        (
+            "profit-and-loss",
+            "2026-11-01",
+            "2026-11-30",
+            "\"Account\",\"Nov 2026\",\"Nov 2025\"",
+        ),
+        (
+            "profit-and-loss",
+            "2026-10-02",
+            "2026-10-31",
+            "\"Account\",\"2 Oct 2026 to 31 Oct 2026\",\"2 Oct 2025 to 31 Oct 2025\"",
+        ),
+        (
+            "balance-sheet",
+            "2026-10-01",
+            "2026-10-31",
+            "\"Account\",\"As of 31 Oct 2026\",\"As of 31 Oct 2025\"",
+        ),
+    ] {
+        let mut heading_query = export_query.clone();
+        heading_query.insert("view".into(), view.into());
+        heading_query.insert("from".into(), from.into());
+        heading_query.insert("to".into(), to.into());
+        let sheet = downloads
+            .0
+            .serve(bilibi_ui::download::DownloadRequest {
+                operation: "export",
+                scope: &manager,
+                path: &path,
+                query: &heading_query,
+            })
+            .await?;
+        let sheet = String::from_utf8(sheet.bytes)?;
+        assert_eq!(sheet.lines().next(), Some(expected));
+    }
     has(&first, "<select id=\"report-period-period\"");
-    assert!(first.html.contains("from=2026-09-01"));
-    has(&first, "name=\"through\" value=\"5\"");
+    assert!(first.html.contains("from=2025-10-01"));
+    has(&first, "id=\"report-save\"");
     has(
         &first,
         "The report sections name account codes the chart does not have: MISSING.",
@@ -258,7 +319,7 @@ async fn main() -> Outcome<()> {
     .await?;
     tokio::time::timeout(Duration::from_secs(3), wakes[0].receiver.recv()).await??;
     let new = update(&mut latest, &manager, LiveInput::Refresh).await?;
-    has(&new, &format!("name=\"through\" value=\"{after}\""));
+    assert!(new.html.contains(&format!("through={after}")));
     let pinned = update(
         &mut latest,
         &manager,
@@ -359,7 +420,7 @@ async fn main() -> Outcome<()> {
     let single = update(
         &mut latest,
         &manager,
-        LiveInput::Event(&json!({"type":"compare","compare":"false"})),
+        LiveInput::Event(&json!({"type":"compare","filters[compare]":"none"})),
     )
     .await?;
     assert_eq!(single.query["compare"], "none");

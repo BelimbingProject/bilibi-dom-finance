@@ -1,8 +1,8 @@
 //! Management reports, module `finance/reports` (Bilimbi
 //! `Bilimbi.Finance.Reports`): a company's figures read live from its general
 //! ledger: profit and loss for date ranges, the balance sheet and the cash
-//! position as of dates, headline figures for a period against the one before
-//! it, and the entries behind any account's figure. They are management
+//! position as of dates, comparative headline figures (see the module README),
+//! and the entries behind any account's figure. They are management
 //! reports for the company's own use, not statutory financial statements. The
 //! module also retains source-period conversion schedules as evidence without
 //! turning them into postings, tax returns, payroll runs or remittances.
@@ -38,6 +38,7 @@ mod conversion;
 pub use conversion::ConversionPins;
 mod conversion_operations;
 mod conversion_page;
+mod export;
 mod issued;
 mod layout;
 mod pack_owner;
@@ -162,6 +163,8 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
             }))))
+        } }, Service { id: "finance/reports.export-downloads", factory: |services| {
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(export::Downloads { reports: services.get(SERVICE)?, locales: services.get("base/locale.locales")? }))))
         } }, Service { id: "finance/reports.downloads", factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(auditor_pack::Downloads { reports: services.get(SERVICE)? }))))
         } }],
@@ -315,6 +318,10 @@ pub struct BalanceSheet {
     pub unmatched_codes: Vec<String>,
     pub groups: Vec<Group>,
     pub earnings: Vec<Money>,
+    /// Current financial-year earnings, absent where no year covers the date.
+    pub current_year_earnings: Vec<Option<Money>>,
+    /// Unclosed earnings from earlier financial years, absent without a year.
+    pub earlier_years_earnings: Vec<Option<Money>>,
     pub total_assets: Vec<Money>,
     pub total_liabilities_and_equity: Vec<Money>,
 }
@@ -441,6 +448,23 @@ pub fn previous_period(period: Period) -> Result<Period> {
     })
 }
 
+/// The corresponding dates in the preceding calendar year. A leap day is
+/// constrained to the last day of February in a non-leap year.
+pub fn previous_year(period: Period) -> Result<Period> {
+    let from = period
+        .from
+        .checked_sub(Span::new().years(1))
+        .map_err(|_| ReportsError::InvalidOption)?;
+    let mut to = period
+        .to
+        .checked_sub(Span::new().years(1))
+        .map_err(|_| ReportsError::InvalidOption)?;
+    if period.from == period.from.first_of_month() && period.to == period.to.last_of_month() {
+        to = to.last_of_month();
+    }
+    Ok(Period { from, to })
+}
+
 /// The facade, resolved from the registry as [`SERVICE`].
 pub struct Reports {
     db: Db,
@@ -556,7 +580,7 @@ impl Reports {
             .0)
     }
 
-    /// Headline figures for `period` and [`previous_period`] of it: income,
+    /// Headline figures for `period` and [`previous_year`] of it: income,
     /// expense and net income over each period, and assets, liabilities,
     /// equity and cash as of each period's last day.
     pub async fn overview(
@@ -566,9 +590,28 @@ impl Reports {
         period: Period,
         through_entry_number: Option<i64>,
     ) -> Result<Overview> {
+        self.overview_compared(
+            scope,
+            company_id,
+            period,
+            previous_year(period)?,
+            through_entry_number,
+        )
+        .await
+    }
+
+    /// Headline figures compared with the specified period at one ledger cutoff.
+    pub async fn overview_compared(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        period: Period,
+        comparison: Period,
+        through_entry_number: Option<i64>,
+    ) -> Result<Overview> {
         self.authorize(scope, company_id, VIEW).await?;
         let current = periods_checked(&[period])?[0];
-        let previous = previous_period(current)?;
+        let previous = periods_checked(&[comparison])?[0];
         let windows = vec![
             flow(current),
             flow(previous),
@@ -945,14 +988,26 @@ impl Reports {
         through: Option<i64>,
     ) -> Result<(BalanceSheet, Read, Arranged)> {
         let dates = dates_checked(dates)?;
-        let read = self
-            .read(
-                scope,
-                company_id,
-                dates.iter().map(|d| balance(*d)).collect(),
-                through,
-            )
-            .await?;
+        let years = self.ledger.list_fiscal_years(scope, company_id).await?;
+        let starts: Vec<Option<Date>> = dates
+            .iter()
+            .map(|date| {
+                years
+                    .iter()
+                    .find(|year| year.start_date <= *date && *date <= year.end_date)
+                    .map(|year| year.start_date)
+            })
+            .collect();
+        let mut windows: Vec<_> = dates.iter().map(|d| balance(*d)).collect();
+        windows.extend(starts.iter().zip(dates.iter()).filter_map(|(start, end)| {
+            start.map(|start| TotalsQuery {
+                from: Some(start),
+                to: Some(*end),
+                ..TotalsQuery::default()
+            })
+        }));
+        let mut read = self.read(scope, company_id, windows, through).await?;
+        let current_columns = read.columns.split_off(dates.len());
         let arranged = read.arrange("balance_sheet");
         let sheet = statement::balance_sheet(
             &read.accounts,
@@ -960,7 +1015,32 @@ impl Reports {
             &arranged.membership,
             &read.columns,
         );
+        let mut columns = current_columns.iter();
+        let current_year_earnings: Vec<Option<Money>> = starts
+            .iter()
+            .map(|start| {
+                start.map(|_| {
+                    let totals = columns.next().expect("one totals window per fiscal year");
+                    read.accounts
+                        .iter()
+                        .filter(|a| {
+                            matches!(a.account_type, AccountType::Income | AccountType::Expense)
+                        })
+                        .filter_map(|a| totals.get(&a.id))
+                        .map(|(debits, credits)| *credits - *debits)
+                        .sum()
+                })
+            })
+            .collect();
+        let earlier_years_earnings = sheet
+            .earnings
+            .iter()
+            .zip(&current_year_earnings)
+            .map(|(total, current)| current.map(|current| *total - current))
+            .collect();
         let report = BalanceSheet {
+            current_year_earnings,
+            earlier_years_earnings,
             header: read.header(as_of(dates)),
             unmatched_codes: arranged.unmatched.clone(),
             groups: sheet.groups,

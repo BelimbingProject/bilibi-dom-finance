@@ -838,3 +838,149 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     }
     Ok(())
 }
+
+/// A separate company's two unclosed years prove that the earnings labels do
+/// not silently attribute an earlier year's result to the current year.
+pub async fn earnings_split(db: &Db, services: &Services) -> Outcome<()> {
+    use bilibi_company::{CompanyService, CreateOutcome, NewCompany};
+    use bilibi_finance_ledger::{AccountType, NewBook, NewFiscalYear};
+    assert_eq!(
+        bilibi_finance_reports::previous_year(Period {
+            from: date(2026, 1, 1),
+            to: date(2026, 11, 30)
+        })?,
+        Period {
+            from: date(2025, 1, 1),
+            to: date(2025, 11, 30)
+        }
+    );
+    assert_eq!(
+        bilibi_finance_reports::previous_year(Period {
+            from: date(2025, 2, 1),
+            to: date(2025, 2, 28)
+        })?,
+        Period {
+            from: date(2024, 2, 1),
+            to: date(2024, 2, 29)
+        }
+    );
+    let admin = sign_in(db, services, 1, 4).await?;
+    let companies = services.get::<CompanyService>(bilibi_company::SERVICE)?;
+    let company = match companies
+        .create_company(
+            &admin,
+            &NewCompany {
+                name: "Report earnings proof".into(),
+                ..NewCompany::default()
+            },
+        )
+        .await?
+    {
+        CreateOutcome::Created(company) => company.id,
+        other => return Err(format!("company creation refused: {other:?}").into()),
+    };
+    crate::give_desk(db, 1, 4, company).await?;
+    let ledger = services.get::<Ledger>(LEDGER)?;
+    let reports = services.get::<Reports>(SERVICE)?;
+    let money = |value: &str| {
+        Money::parse(value, MinorUnits::new(2).expect("minor units")).expect("fixture amount")
+    };
+    ledger
+        .open_book(
+            &admin,
+            company,
+            &NewBook {
+                currency_code: "MYR".into(),
+                minor_units: 2,
+            },
+        )
+        .await?;
+    let cash = ledger
+        .create_account(
+            &admin,
+            company,
+            &NewAccount::new("1000", "Cash", AccountType::Asset),
+        )
+        .await?
+        .id;
+    let sales = ledger
+        .create_account(
+            &admin,
+            company,
+            &NewAccount::new("4000", "Sales", AccountType::Income),
+        )
+        .await?
+        .id;
+    let mut retained = NewAccount::new("3100", "Retained earnings", AccountType::Equity);
+    retained.retained_earnings = true;
+    let retained = ledger.create_account(&admin, company, &retained).await?.id;
+    for year in [2025, 2026] {
+        ledger
+            .open_fiscal_year(
+                &admin,
+                company,
+                &NewFiscalYear {
+                    start_date: Some(date(year, 1, 1)),
+                    end_date: None,
+                },
+            )
+            .await?;
+    }
+    for (when, credit, amount) in [
+        (date(2025, 1, 2), retained, "30.00"),
+        (date(2025, 2, 1), sales, "100.00"),
+        (date(2026, 2, 1), sales, "50.00"),
+    ] {
+        ledger
+            .post_entry(
+                &admin,
+                company,
+                &NewEntry {
+                    entry_date: when,
+                    description: "Earnings split proof".into(),
+                    reference: None,
+                    lines: vec![
+                        NewLine::debit(cash, money(amount)),
+                        NewLine::credit(credit, money(amount)),
+                    ],
+                },
+                &PostOptions::default(),
+            )
+            .await?;
+    }
+    let sheet = reports
+        .balance_sheet(&admin, company, &[date(2026, 12, 31)], None)
+        .await?;
+    assert_eq!(sheet.current_year_earnings[0], Some(money("50.00")));
+    assert_eq!(sheet.earlier_years_earnings[0], Some(money("100.00")));
+    assert_eq!(sheet.earnings[0], money("150.00"));
+    assert_eq!(
+        sheet
+            .groups
+            .iter()
+            .find(|g| g.account_type == AccountType::Equity)
+            .unwrap()
+            .totals[0],
+        money("180.00")
+    );
+    assert_eq!(sheet.total_assets[0], sheet.total_liabilities_and_equity[0]);
+    let mixed = reports
+        .balance_sheet(
+            &admin,
+            company,
+            &[date(2026, 12, 31), date(2024, 12, 31)],
+            None,
+        )
+        .await?;
+    assert_eq!(
+        mixed.current_year_earnings,
+        vec![Some(money("50.00")), None]
+    );
+    assert_eq!(
+        mixed.earlier_years_earnings,
+        vec![Some(money("100.00")), None]
+    );
+    assert_eq!(mixed.earnings[1], money("0.00"));
+    println!("PASS report earnings: 50 current + 100 earlier + 30 retained = 180 equity");
+    Ok(())
+}

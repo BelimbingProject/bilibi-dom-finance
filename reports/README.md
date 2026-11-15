@@ -12,7 +12,7 @@ These are management reports, not statutory statements. An issued snapshot freez
 
 The sections below record the module’s detailed contracts, permissions and limits.
 
-Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports from the general ledger and retains source-period conversion schedules. The reports cover profit and loss, the balance sheet, cash position, headline figures against the previous period, and the entries behind any account's figure. It stores immutable issued snapshots; every report figure comes through `finance/ledger`'s facade, and it reads none of the ledger's tables.
+Module ID: `finance/reports`, crate `bilibi-finance-reports`, ported from Bilimbi's `Bilimbi.Finance.Reports`. It reads a company's management reports from the general ledger and retains source-period conversion schedules. The reports cover profit and loss, the balance sheet, cash position, headline figures against a comparison period, and the entries behind any account's figure. It stores immutable issued snapshots; every report figure comes through `finance/ledger`'s facade, and it reads none of the ledger's tables.
 
 Reports (management reports) and account activity are available at `/finance/reports` and `/finance/reports/accounts/{account_id}` (NT2). Bookkeeping controls and Approval exceptions are also available (NT3), alongside auditor-pack generation and downloads (NT4).
 
@@ -20,13 +20,13 @@ Reports (management reports) and account activity are available at `/finance/rep
 
 **Finance home** (`/finance/setup`, menu Finance, Bookkeeping, first) shows daily work after the required setup steps are complete; until then it shows Finance setup. Setup remains available at `/finance/setup/details`. It is described under [Finance setup](#finance-setup) below; the two report routes follow.
 
-Both routes require `finance.ledger.view` and read the session's current company through the facade. Reports has four addressable views (`view=overview`, `profit-and-loss`, `balance-sheet`, `cash-position`), the shared period filter (the latest month with entries by default, see First report and layout), and previous-period comparison, switched with the Compare toggle (`compare=none` turns it off except on Overview). Accounts read name first, code muted. Custom dates stay a draft until Apply range succeeds. The display policy and browser timezone decide the preset's calendar.
+Both routes require `finance.ledger.view` and read the session's current company through the facade. Reports has four addressable views (`view=overview`, `profit-and-loss`, `balance-sheet`, `cash-position`), the shared period filter (the latest month with entries by default, see First report and layout), and comparison with the corresponding dates last year by default (`compare=previous` chooses the preceding period; `compare=none` turns it off except on Overview). Financial-year presets appear when the company has consecutive previous and current years. Accounts read name first, code muted. Custom dates stay a draft until Apply range succeeds. The display policy and browser timezone decide the preset's calendar.
 
-`Freeze these figures` puts the displayed positive entry number in `through`; `Show latest figures` removes it. This is not an issued snapshot. Every account-amount link carries its column's dates and the displayed cutoff, including `closing=excluded` for profit and loss. Account entries show whole-window debit and credit totals and 100 dated entries at a time, each number linking to the ledger entry and naming who posted it; the trial balance's balances open this page too; `Next entries` retains the cutoff and the `(after_date, after_id)` cursor. Activity does not subscribe to postings. Account entries keep that open from/to window: a figure's drill-down is one column's dates, not one of the shared period presets.
+Print opens a PDF, Save a copy downloads it, and Export spreadsheet downloads CSV. Each uses the displayed dates, comparison and entry cutoff; the PDF is a file, not an issued report snapshot. Whole-month columns use headings such as “Nov 2026” on screen and in exports; other ranges show both dates, and balance columns show their as-of date. PDF generation uses Base Artifacts and requires its private storage and retention settings. A bookmarked `through` still pins the entry number and `Show latest figures` removes it. Every account-amount link carries its column's dates and the displayed cutoff, including `closing=excluded` for profit and loss. Account entries show whole-window debit and credit totals and 100 dated entries at a time, each number linking to the ledger entry and naming who posted it; the trial balance's balances open this page too; `Next entries` retains the cutoff and the `(after_date, after_id)` cursor. Activity does not subscribe to postings. Account entries keep that open from/to window: a figure's drill-down is one column's dates, not one of the shared period presets.
 
 Reports subscribe before the mounted read. Commit notices and missed-notice refreshes invalidate unpinned figures; bursts coalesce, and pinned figures ignore them. Custom-range drafts and table arrangement survive a posting refresh. The relay task stops with the page. If the relay cannot start, a visible warning explains periodic-refresh fallback. As in Bilimbi, zero is not a positive URL cutoff, so an empty ledger cannot be pinned.
 
-All tables use shared FlexTable and built-in ListColumns on ListState. There is no new sort/filter/page-size control: Bilimbi fixes statement order and pages activity by cursor. Section headings, subtotals and footers remain ordered rows with the reference IDs; FlexTable's uniform body replaces Bilimbi's grouped statement table. A shared SectionHeading places the statement label above the card, clear of the customization notch. The shared "Pin entry cutoff" button (not the sidebar pin beside the title) raises a read-only page event because the Platform button has no patch-link variant. No domain CSS or JavaScript is added. When figures are available, Generate auditor pack produces an export for the selected period end, followed by Download auditor pack.
+All tables use shared FlexTable and built-in ListColumns on ListState. There is no new sort/filter/page-size control: Bilimbi fixes statement order and pages activity by cursor. Section headings, subtotals and footers remain ordered rows with the reference IDs; FlexTable's uniform body replaces Bilimbi's grouped statement table. A shared SectionHeading places the statement label above the card, clear of the customization notch. No domain CSS or JavaScript is added. When figures are available, Auditor pack produces an export for the selected period end, followed by Download auditor pack.
 
 ## Management reports, not statutory statements
 
@@ -39,16 +39,17 @@ Profit and loss, the balance sheet and the cash position are management reports 
 | Function | Does |
 | --- | --- |
 | `profit_and_loss` | Income and expense for one to four periods, by section, and `net_income` |
-| `balance_sheet` | Assets, liabilities and equity as of one to four dates, with `earnings`, `total_assets`, `total_liabilities_and_equity` |
+| `balance_sheet` | Assets, liabilities and equity as of one to four dates, with `earnings`, `current_year_earnings`, `earlier_years_earnings` ([earnings split](#balance-sheet-earnings)), `total_assets`, `total_liabilities_and_equity` |
 | `cash_position` | The balances of the accounts the cash sections cover, as of one to four dates |
-| `overview` | Headline figures for a period and `previous_period` of it |
+| `overview` | Headline figures for a period and `previous_year` of it |
+| `overview_compared` | Headline figures for a period and an explicit comparison period |
 | `account_activity` | One account's debits and credits over a window, and the entries behind them, paged |
 | `subscribe` | The ledger's posting notices (`Ledger::subscribe_postings`) |
 | `issue_report` | An immutable issued profit and loss, balance sheet, cash position or trial balance |
 | `conversion_report` | A conversion preview with its opening sources, target balances, reconciliations and explicit limits on one database snapshot |
 | `get_issued_report` | The stored copy, never recomputed |
 | `evidence_datasets`, `evidence_page` | Issued reports, immutable conversion sign-offs and retained source-period schedules and their corrections for the auditor's pack |
-| `previous_period` | The comparison period: as many whole months before, or as many days |
+| `previous_year`, `previous_period` | Calendar comparison helpers; see [Comparative periods](#comparative-periods) |
 
 Every amount is a list with one value per column, in the order the periods or dates were given; the first column is the reporting period and the rest its comparatives. Every management report takes `through_entry_number`. A conversion report captures its own ledger-entry boundary and each subledger's opening-batch and settlement boundaries.
 
@@ -84,9 +85,13 @@ Section headings and account choices are a company's own data, never code. They 
 
 A listed account or account group brings everything under it in the chart, unless a row under it is listed itself: the nearest listed account decides, and within one report the first section that lists a code keeps it. Headings (at most 100 characters) and codes (at most 50) are trimmed. The setting's validator refuses any other shape on save; a stored value that is not valid (written before validation, or adopted) groups nothing rather than grouping wrongly. A report names, in `unmatched_codes`, any listed code the chart does not have.
 
+## Balance sheet earnings
+
+`current_year_earnings` and `earlier_years_earnings` split the aggregate `earnings` already included in the equity total; they are not added to that total again. Each column uses the financial year containing its own as-of date; when no year contains that date, both split values are absent and the unsplit amount appears as “Unclosed earnings (financial year not defined)”, rather than attributing it to a guessed year.
+
 ## Comparative periods
 
-`previous_period` gives a period of whole calendar months the same number of whole months before it (a quarter compares with the previous quarter, a year with the previous year) and any other period the same number of days before it.
+`previous_year` compares corresponding dates in the previous calendar year, preserving full calendar months across leap years. `previous_period` gives a period of whole calendar months the same number of whole months before it (a quarter compares with the previous quarter, a year with the previous year) and any other period the same number of days before it.
 
 ## Live updates
 
@@ -98,7 +103,7 @@ A listed account or account group brings everything under it in the chart, unles
 
 ## Performance
 
-Each column is one aggregate query in the ledger: PostgreSQL sums the lines per account and returns one row per account. No report loads lines into memory; the drill-down pages entries 100 at a time (1 to 500). A report reads at most four columns, and the overview four windows.
+Each totals window is one aggregate query in the ledger: PostgreSQL sums the lines per account and returns one row per account. No report loads lines into memory; the drill-down pages entries 100 at a time (1 to 500). A report returns at most four columns. The balance sheet also reads one financial-year-to-date window per covered column for its earnings split, at the same entry cutoff; the overview reads four windows.
 
 ## Proof
 
