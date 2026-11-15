@@ -1,5 +1,17 @@
 # Payables
 
+Manage suppliers, bills, debit notes and payments.
+
+## Start here
+
+Add a supplier, record and approve a bill, then request and approve its payment. Aged payables shows what is still owed.
+
+## Keep in mind
+
+A bill can be held by three-way matching. Order and receipt information comes from Payables’ own event-fed copy.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
 `finance/payables` owns a company's supplier documents. It mirrors Bilimbi.Finance.Payables settings, tax codes, bills, debit notes, document approvals, payment requests and payments, including aging, tax totals, control-account tie-out and the three-way match. It also keeps source-backed opening supplier credits and their applications, refunds and reversals. Reviewed agent operations expose the facade-only workflows. Slice NP4 adds the Bills list and bill detail pages. Slice NP5 adds the pages that record a bill or debit note, request, decide and reverse supplier payments, read aged payables and set payables up, so a person who has no AI agent can do every daily task; each page write is the contract the agent doors call.
 
 ## Vendors

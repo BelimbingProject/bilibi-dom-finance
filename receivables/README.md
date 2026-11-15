@@ -1,5 +1,17 @@
 # Receivables
 
+Manage customers, invoices, credit notes and receipts.
+
+## Start here
+
+Create a customer and an invoice, issue it, then record a receipt and use aging to see what remains due.
+
+## Keep in mind
+
+Ordinary receipts are fully allocated. Opening customer credits and their settlements are supported separately.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
 Company-scoped invoice and credit-note drafts, issuance, fully allocated receipts, opening customer credits and their settlements, corrections and reproducible reports, ported from `Bilimbi.Finance.Receivables` at `4abfaf829321f8540581d833752a086b21b45ba9`. Resolve `Receivables` at `finance/receivables.receivables`. Schema, SQL and validation are private; consumers use this facade.
 
 ## NR1 surface

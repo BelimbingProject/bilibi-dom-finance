@@ -1,13 +1,18 @@
 # Ledger
 
-Module ID: `finance/ledger` (Bilimbi `Bilimbi.Finance.Ledger`). A company's
-general ledger: its book, chart of accounts (accounts, account groups and starter charts), journal entries, posting
-notices, fiscal years with period closing and the year-end close, controlled
-bookkeeping and late-recording reviews, reversals, the separation of duties
-with its approval exceptions and their reviews, manual journals, the trial
-balance and account totals (also by owner) at a pinned entry, and the evidence
-datasets of the auditor's pack. Other Finance modules and other Domains post
-and read through this module's facade; none of them reads its tables.
+Keep the company’s books, accounts and journals in one ledger.
+
+## Start here
+
+Open a book and fiscal year, choose or build a chart, then submit a journal for approval. Its posted entries appear in the trial balance.
+
+## Keep in mind
+
+Posting needs an open period when controlled bookkeeping is on. Account groups total their children and cannot receive postings.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
+Module ID: `finance/ledger` (Bilimbi `Bilimbi.Finance.Ledger`). A company's general ledger: its book, chart of accounts (accounts, account groups and starter charts), journal entries, posting notices, fiscal years with period closing and the year-end close, controlled bookkeeping and late-recording reviews, reversals, the separation of duties with its approval exceptions and their reviews, manual journals, the trial balance and account totals (also by owner) at a pinned entry, and the evidence datasets of the auditor's pack. Other Finance modules and other Domains post and read through this module's facade; none of them reads its tables.
 
 ## Book currency
 
@@ -21,12 +26,7 @@ The currency list, names and decimal places come from Core Currency (`core/curre
 
 ## Public API
 
-Resolve the `Ledger` service (`finance/ledger.ledger`) from the registry and
-call it with a sealed `Scope` and an explicit company id. Results are plain
-records (`Book`, `Account`, `Entry`, `FiscalYear`, `Period`, `ClosingEvent`,
-`ControlledBookkeeping`, `LateRecording`, `DutySeparation`,
-`ApprovalException`, `Journal`, `TrialBalance`, `AccountTotals`,
-`OwnerTotals`, `EvidencePage`, ...); the schema is private.
+Resolve the `Ledger` service (`finance/ledger.ledger`) from the registry and call it with a sealed `Scope` and an explicit company id. Results are plain records (`Book`, `Account`, `Entry`, `FiscalYear`, `Period`, `ClosingEvent`, `ControlledBookkeeping`, `LateRecording`, `DutySeparation`, `ApprovalException`, `Journal`, `TrialBalance`, `AccountTotals`, `OwnerTotals`, `EvidencePage`, ...); the schema is private.
 
 | Function | Capability | Does |
 | --- | --- | --- |
@@ -83,16 +83,7 @@ records (`Book`, `Account`, `Entry`, `FiscalYear`, `Period`, `ClosingEvent`,
 | `Ledger::evidence_datasets` | none | The twenty dataset names, sorted |
 | `Ledger::account_types`, `Ledger::late_recording_thresholds`, `Ledger::journal_statuses` | none | The five account types; the report's 45 and 60 days; `submitted`, `approved`, `rejected`, `withdrawn` |
 
-Every call authorizes the capability for the scope's actor and the target
-company at the moment it runs (Core Company's `authorize_work_target`): a missing
-grant, or a company where the person has no desk, is
-`LedgerError::Unauthorized`; a company the scope cannot see is
-`CompanyNotFound`. A write then holds the company's row lock inside an audited
-`MutationBoundary` transaction, so an archived company is `CompanyArchived`
-and a company's ledger writes run one at a time. Refused values come back as
-`LedgerError::Invalid(Vec<FieldError>)` with Bilimbi's changeset messages
-(`can't be blank`, `has already been taken`, `must be an equity account`,
-`would place the account under itself`, ...).
+Every call authorizes the capability for the scope's actor and the target company at the moment it runs (Core Company's `authorize_work_target`): a missing grant, or a company where the person has no desk, is `LedgerError::Unauthorized`; a company the scope cannot see is `CompanyNotFound`. A write then holds the company's row lock inside an audited `MutationBoundary` transaction, so an archived company is `CompanyArchived` and a company's ledger writes run one at a time. Refused values come back as `LedgerError::Invalid(Vec<FieldError>)` with Bilimbi's changeset messages (`can't be blank`, `has already been taken`, `must be an equity account`, `would place the account under itself`, ...).
 
 ## Agent operations
 
@@ -201,127 +192,41 @@ This is a side-by-side operational comparison. Balances are not summed across co
 
 ## Capabilities
 
-Twelve keys, verbatim from Bilimbi, and one port addition (`.templates.manage`, which publishes
-reusable charts and sets the starter-chart proposal), under the `finance` domain, all granted to
-`tenant_owner`: `finance.ledger.view`, `.accounts.manage`, `.templates.manage`, `.entries.post`,
-`.periods.manage`, `.periods.reopen`, `.periods.lock`,
-`.duty-separation.manage`, `.controlled-bookkeeping.manage`,
-`.late-recordings.review`, `.journals.submit`, `.journals.approve` and
-`.approval-exceptions.review`. The module declares the verbs `post`, `reopen`
-and `lock` as Bilimbi does, and also `submit` and `review`, which no Bilibi
-Platform module declares (Bilibi merges verbs across modules).
+Twelve keys, verbatim from Bilimbi, and one port addition (`.templates.manage`, which publishes reusable charts and sets the starter-chart proposal), under the `finance` domain, all granted to `tenant_owner`: `finance.ledger.view`, `.accounts.manage`, `.templates.manage`, `.entries.post`, `.periods.manage`, `.periods.reopen`, `.periods.lock`, `.duty-separation.manage`, `.controlled-bookkeeping.manage`, `.late-recordings.review`, `.journals.submit`, `.journals.approve` and `.approval-exceptions.review`. The module declares the verbs `post`, `reopen` and `lock` as Bilimbi does, and also `submit` and `review`, which no Bilibi Platform module declares (Bilibi merges verbs across modules).
 
 ## Money
 
-`Money` is a `rust_decimal` amount held to a book's `MinorUnits`:
-`Money::parse("12.50", units)` and `Money::new(decimal, units)` refuse an
-amount with more decimal places than the book's minor units (`has more than N
-decimal places`) and one of sixteen or more digits before the point, the
-`numeric(20,4)` column's range. `shown(units)` writes it with exactly the
-book's decimal places.
+`Money` is a `rust_decimal` amount held to a book's `MinorUnits`: `Money::parse("12.50", units)` and `Money::new(decimal, units)` refuse an amount with more decimal places than the book's minor units (`has more than N decimal places`) and one of sixteen or more digits before the point, the `numeric(20,4)` column's range. `shown(units)` writes it with exactly the book's decimal places.
 
 ## Entries
 
-`post_entry(scope, company_id, &NewEntry, &PostOptions)` posts one entry of
-`entry_date`, `description` (1 to 500 characters), an optional `reference` (at
-most 100) and `lines`: `NewLine::debit(account_id, money)` or
-`NewLine::credit(..)`, each with an optional description. It is refused as
-`LedgerError::Invalid(Vec<FieldError>)`, with every refusal at once, unless
-there are at least two lines (`needs at least two lines`), debits equal
-credits (`debits and credits do not balance`), each line has exactly one
-positive side (`a line has either a debit or a credit`) no finer than the
-book's minor units (`has more than N decimal places`), and each line names an
-active account of the company (`is not an account of this company`,
-`is inactive`). A `FieldError` about a line carries its 1-based `line`.
+`post_entry(scope, company_id, &NewEntry, &PostOptions)` posts one entry of `entry_date`, `description` (1 to 500 characters), an optional `reference` (at most 100) and `lines`: `NewLine::debit(account_id, money)` or `NewLine::credit(..)`, each with an optional description. It is refused as `LedgerError::Invalid(Vec<FieldError>)`, with every refusal at once, unless there are at least two lines (`needs at least two lines`), debits equal credits (`debits and credits do not balance`), each line has exactly one positive side (`a line has either a debit or a credit`) no finer than the book's minor units (`has more than N decimal places`), and each line names an active account of the company (`is not an account of this company`, `is inactive`). A `FieldError` about a line carries its 1-based `line`.
 
 When a Finance owner must record its own posting in the same commit, open `Ledger::write(client, scope, company_id, capabilities, action)` and call `post_entry_in(&mut tx, scope, company_id, new, options)`. Both its capability and Ledger's are checked; the owner returns every changed row as a `Change` and owns commit/rollback. Never call standalone `post_entry` while holding the company lock on another connection: it would wait on itself. `reverse_owned_entry` already joins that same owner transaction.
 
 Agent preview seams accept `OperationClient`, as do `get_book_on` and `list_accounts_on`, so a caller never obtains another connection while holding the company lock. Posting/correction preview requires posting authority, not view, and reuses the actual posting/owner/reversal validation. It tries the writable company lock without waiting, returns deterministic review facts and allocates no identity or number. That lock is the one a write holds (`FOR NO KEY UPDATE`), so a preview inside a write is unaffected and someone reading the company never refuses it; a company another write holds answers `Conflict` (the retryable `record_changed`), never a database error. Only the posting date's period and referenced accounts are frozen, not unrelated fiscal years or chart rows. If the record has no ID yet, preview without an owner and state its symbolic ownership in the caller's review; execution must reserve its ID and supply the real owner to `post_entry_in`. Preview is not a posting capability or reservation; execution still reauthorizes and validates.
 
-`PostOptions` carries Bilimbi's two options. `settlement_account_ids` lists
-accounts that may be inactive in this entry only, for a module settling a
-document it posted earlier; each must still be an account of the company.
-`owner` is the module (its descriptor id, `finance/receivables`) and record
-(`<kind>:<id>`, `payment:17`) that recognise the entry. A record has at most
-one original entry per company (`owner_record already has an entry`), and an
-owned entry is corrected only by its owner. An `owner`, or an id, of another
-shape is `InvalidOption`. A manual entry has no owner.
+`PostOptions` carries Bilimbi's two options. `settlement_account_ids` lists accounts that may be inactive in this entry only, for a module settling a document it posted earlier; each must still be an account of the company. `owner` is the module (its descriptor id, `finance/receivables`) and record (`<kind>:<id>`, `payment:17`) that recognise the entry. A record has at most one original entry per company (`owner_record already has an entry`), and an owned entry is corrected only by its owner. An `owner`, or an id, of another shape is `InvalidOption`. A manual entry has no owner.
 
-The database numbers each company's entries 1, 2, 3, ... without gaps and
-stamps `posted_at`, whatever the writer sent. `Entry` is read back from what
-PostgreSQL stored. Reading an entry authorizes `finance.ledger.view` afresh,
-and an entry id of another company is `EntryNotFound`.
+The database numbers each company's entries 1, 2, 3, ... without gaps and stamps `posted_at`, whatever the writer sent. `Entry` is read back from what PostgreSQL stored. Reading an entry authorizes `finance.ledger.view` afresh, and an entry id of another company is `EntryNotFound`.
 
-An entry's date must fall in an open period: never in a closed or locked one
-(`entry_date falls in a closed period`), never before the company's first
-fiscal year (`is before the first fiscal year`), and, while the company is
-controlled, never where no period exists (`falls in no fiscal period: open the
-fiscal year that covers it first`). The database refuses the same dates on its
-own, and a posting holds a share lock on its period until it commits, so a
-concurrent close waits for it.
+An entry's date must fall in an open period: never in a closed or locked one (`entry_date falls in a closed period`), never before the company's first fiscal year (`is before the first fiscal year`), and, while the company is controlled, never where no period exists (`falls in no fiscal period: open the fiscal year that covers it first`). The database refuses the same dates on its own, and a posting holds a share lock on its period until it commits, so a concurrent close waits for it.
 
 ## Reversals
 
-A posted entry is never edited or deleted. `reverse_entry(scope, company_id,
-entry_id, &Reversal)` posts its mirror image (each debit a credit and the other
-way round, with the lines' descriptions) on `entry_date`, not before the
-original's (`entry_date cannot be before the reversed entry's date`), with its
-own `description` and optional `reference`. An entry is reversed once
-(`AlreadyReversed`), a reversal is never reversed (`ReversalNotReversible`:
-post a new entry), and a year-end closing entry is reversed only by
-`reopen_fiscal_year` (`ClosingEntry`). Accounts deactivated since the original
-still take its reversal, but its date must fall in an open period, as a new
-entry's does. An owned entry is `OwnedBy(owner)`: correct it through its
-owner.
+A posted entry is never edited or deleted. `reverse_entry(scope, company_id, entry_id, &Reversal)` posts its mirror image (each debit a credit and the other way round, with the lines' descriptions) on `entry_date`, not before the original's (`entry_date cannot be before the reversed entry's date`), with its own `description` and optional `reference`. An entry is reversed once (`AlreadyReversed`), a reversal is never reversed (`ReversalNotReversible`: post a new entry), and a year-end closing entry is reversed only by `reopen_fiscal_year` (`ClosingEntry`). Accounts deactivated since the original still take its reversal, but its date must fall in an open period, as a new entry's does. An owned entry is `OwnedBy(owner)`: correct it through its owner.
 
-`reverse_owned_entry(tx, scope, company_id, entry_id, &owner, &Reversal)` is
-the owning module's correction path. The owner calls it on the
-`MutationTransaction` that records its own reversal record (a payment
-reversal, a cancellation); the ledger authorizes and takes the company lock on
-that transaction and leaves the commit to the owner, so both stand or
-neither. The reversal carries the same owner. Another module's or record's
-entry is `NotTheOwner`, a manual entry `NotOwned`, and a malformed owner
-`InvalidOption`. The owner is a seam, not an authorization boundary: the
-ledger cannot tell which module calls, so anyone holding
-`finance.ledger.entries.post` who passes an entry's owner reverses it without
-the owner's record, and the owner's tie-out shows the difference.
+`reverse_owned_entry(tx, scope, company_id, entry_id, &owner, &Reversal)` is the owning module's correction path. The owner calls it on the `MutationTransaction` that records its own reversal record (a payment reversal, a cancellation); the ledger authorizes and takes the company lock on that transaction and leaves the commit to the owner, so both stand or neither. The reversal carries the same owner. Another module's or record's entry is `NotTheOwner`, a manual entry `NotOwned`, and a malformed owner `InvalidOption`. The owner is a seam, not an authorization boundary: the ledger cannot tell which module calls, so anyone holding `finance.ledger.entries.post` who passes an entry's owner reverses it without the owner's record, and the owner's tie-out shows the difference.
 
 ## Separation of duties
 
 This section covers Finance consumers still using `check_approval`; manual journals use the shared case below.
 
-A company requires separation of duties unless it turns it off. The setting
-is the latest of its append-only changes (`DutySeparationChange`); with none,
-separation is required. `set_duty_separation(scope, company_id, required,
-reason)` turns it off only with a reason (`reason is required to turn
-separation off`).
+A company requires separation of duties unless it turns it off. The setting is the latest of its append-only changes (`DutySeparationChange`); with none, separation is required. `set_duty_separation(scope, company_id, required, reason)` turns it off only with a reason (`reason is required to turn separation off`).
 
-`check_approval(tx, scope, company_id, &Approval)` is how every Finance
-approval asks, on the approving module's own `MutationTransaction` (it
-authorizes `finance.ledger.view` and takes the company lock there, so a
-refusal rolls the approval back). `Approval` names the `source` module, an
-`action` and `subject_type` code, the `subject_id`, a `subject` label for the
-reviewer, everyone in `prepared_by` (`Preparer { user_id, impersonator_id }`)
-and, for an approval that overrides a control, its `override_reason`. Two
-people overlap when either one's user or impersonator is the other's user or
-impersonator, so impersonation counts both ways. A preparer who overlaps the
-approver is `SamePerson` while separation is required; while it is off, the
-approval is allowed and recorded as a same-person approval exception with the
-reason separation was turned off, naming that change. An override is always
-recorded with its own reason. Anything else records nothing. The ledger's own
-reopens and turning controlled bookkeeping off are recorded as overrides
-(`period_reopen`, `fiscal_year_reopen`, `controlled_bookkeeping_off`, source
-`finance/ledger`, no preparer).
+`check_approval(tx, scope, company_id, &Approval)` is how every Finance approval asks, on the approving module's own `MutationTransaction` (it authorizes `finance.ledger.view` and takes the company lock there, so a refusal rolls the approval back). `Approval` names the `source` module, an `action` and `subject_type` code, the `subject_id`, a `subject` label for the reviewer, everyone in `prepared_by` (`Preparer { user_id, impersonator_id }`) and, for an approval that overrides a control, its `override_reason`. Two people overlap when either one's user or impersonator is the other's user or impersonator, so impersonation counts both ways. A preparer who overlaps the approver is `SamePerson` while separation is required; while it is off, the approval is allowed and recorded as a same-person approval exception with the reason separation was turned off, naming that change. An override is always recorded with its own reason. Anything else records nothing. The ledger's own reopens and turning controlled bookkeeping off are recorded as overrides (`period_reopen`, `fiscal_year_reopen`, `controlled_bookkeeping_off`, source `finance/ledger`, no preparer).
 
-`list_approval_exceptions` lists the exceptions oldest first, each with its
-review; `ApprovalExceptionQuery` bounds `recorded_from` (inclusive) and
-`recorded_before` (exclusive) instants, filters `reviewed`, and pages by
-`after` (the last exception number) and `limit` (1 to 500, 100 by default;
-`InvalidOption` outside). `review_approval_exception(.., note)` records one
-independent review (`AlreadyReviewed` after), never by whoever approved or
-prepared what it records or anyone overlapping them
-(`ReviewerNotIndependent`), whatever the setting; a note is at most 500
-characters.
+`list_approval_exceptions` lists the exceptions oldest first, each with its review; `ApprovalExceptionQuery` bounds `recorded_from` (inclusive) and `recorded_before` (exclusive) instants, filters `reviewed`, and pages by `after` (the last exception number) and `limit` (1 to 500, 100 by default; `InvalidOption` outside). `review_approval_exception(.., note)` records one independent review (`AlreadyReviewed` after), never by whoever approved or prepared what it records or anyone overlapping them (`ReviewerNotIndependent`), whatever the setting; a note is at most 500 characters.
 
 ## Manual journals
 
@@ -335,23 +240,7 @@ Strict independence is the default. A journal rule can deliberately permit prepa
 
 Rejection needs a trimmed reason of at most 500 characters and never posts. Recall is available to the submitter while the round waits. The existing `withdraw_journal` and `replace_journal` calls coordinate recall through Workflow. Their immutable journal and replacement records remain in Ledger. Read-only previews use Workflow on the handed connection, and keep the rule, request, subject, stage, seat and routing fences in the reviewed contract.
 
-A submitted journal is never edited. Its submitter (the same user; a person
-with `finance.ledger.journals.submit`, else `Unauthorized`; anyone else is
-`NotSubmitter`) may take it back before anyone decides it:
-`withdraw_journal(.., reason)` appends the journal's one decision, `withdrawn`,
-with an optional reason, who and when, and posts nothing; the submission stays
-on record and can no longer be approved. `replace_journal(.., &NewEntry,
-reason)` withdraws it and submits the corrected journal in the same
-transaction, checked and numbered as a submission, and names it in
-`replaces_journal_id` and `replaces_journal_number` (and the old one in
-`replaced_by_journal_id` and `replaced_by_journal_number`). Either
-refusal rolls both back, so a refused correction leaves the journal waiting.
-The correction is a new journal that needs a fresh Workflow round under the current rules. An approval racing a withdrawal or replacement is
-serialized by the company lock and by the one decision per journal: exactly
-one wins, and the loser is `JournalDecided`, so a withdrawn journal's content
-never posts. Posted entries are untouched; they are only reversed. The
-rejection route stays: an approver rejects with a reason, and the submitter
-starts a new journal from the rejected one (`?copy={id}` prefills it).
+A submitted journal is never edited. Its submitter (the same user; a person with `finance.ledger.journals.submit`, else `Unauthorized`; anyone else is `NotSubmitter`) may take it back before anyone decides it: `withdraw_journal(.., reason)` appends the journal's one decision, `withdrawn`, with an optional reason, who and when, and posts nothing; the submission stays on record and can no longer be approved. `replace_journal(.., &NewEntry, reason)` withdraws it and submits the corrected journal in the same transaction, checked and numbered as a submission, and names it in `replaces_journal_id` and `replaces_journal_number` (and the old one in `replaced_by_journal_id` and `replaced_by_journal_number`). Either refusal rolls both back, so a refused correction leaves the journal waiting. The correction is a new journal that needs a fresh Workflow round under the current rules. An approval racing a withdrawal or replacement is serialized by the company lock and by the one decision per journal: exactly one wins, and the loser is `JournalDecided`, so a withdrawn journal's content never posts. Posted entries are untouched; they are only reversed. The rejection route stays: an approver rejects with a reason, and the submitter starts a new journal from the rejected one (`?copy={id}` prefills it).
 
 ## Accounting system conversion
 
@@ -438,292 +327,77 @@ The supported opening path required two explicit UI reviews, or two reviewed MCP
 
 ## Posting notices
 
-`subscribe_postings` returns a `PostingSubscription` once its listening
-connection is up, so it hears every entry committed afterwards.
-`subscription.next().await` yields `PostingEvent::Posted { company_id,
-entry_number }` for each committed entry of the subscribed company, from any
-process, and `PostingEvent::Refresh` when notices may have been missed (the
-connection dropped, or the subscriber lagged): read the ledger again. The
-`finance_ledger_entries_notify` trigger calls `pg_notify` in the posting
-transaction, and PostgreSQL delivers it only at commit, so a refused or
-rolled-back post announces nothing. A notice carries identifiers only; read
-figures through `get_entry`/`list_entries`. The process holds one dedicated
-connection, opened by the first subscription from `DATABASE_URL` (the variable
-the Platform builds its pool from) and re-opened every five seconds after a
-failure; dropping a subscription ends it.
+`subscribe_postings` returns a `PostingSubscription` once its listening connection is up, so it hears every entry committed afterwards. `subscription.next().await` yields `PostingEvent::Posted { company_id, entry_number }` for each committed entry of the subscribed company, from any process, and `PostingEvent::Refresh` when notices may have been missed (the connection dropped, or the subscriber lagged): read the ledger again. The `finance_ledger_entries_notify` trigger calls `pg_notify` in the posting transaction, and PostgreSQL delivers it only at commit, so a refused or rolled-back post announces nothing. A notice carries identifiers only; read figures through `get_entry`/`list_entries`. The process holds one dedicated connection, opened by the first subscription from `DATABASE_URL` (the variable the Platform builds its pool from) and re-opened every five seconds after a failure; dropping a subscription ends it.
 
 ## Fiscal years and periods
 
-`open_fiscal_year(scope, company_id, &NewFiscalYear)` opens the company's next
-year, divided into calendar-month periods. `start_date` is the first day of a
-month (`must be the first day of a month`) and `end_date` the last day of a
-month (`must be the last day of a month`), one to 24 months on (`must end one
-to 24 months after the start`); the end defaults to twelve months on. The
-first year may start on any month; each later year starts the day after the
-previous one ends (`must be <date>, the day after the previous fiscal year
-ends`), which is also its default. `BookNotOpen` before the book is opened.
+`open_fiscal_year(scope, company_id, &NewFiscalYear)` opens the company's next year, divided into calendar-month periods. `start_date` is the first day of a month (`must be the first day of a month`) and `end_date` the last day of a month (`must be the last day of a month`), one to 24 months on (`must end one to 24 months after the start`); the end defaults to twelve months on. The first year may start on any month; each later year starts the day after the previous one ends (`must be <date>, the day after the previous fiscal year ends`), which is also its default. `BookNotOpen` before the book is opened.
 
-A status is never stored: it is the latest closing event's (open with none).
-`close_period` closes in date order (`EarlierPeriodOpen`; `PeriodNotOpen` for a
-closed or locked period), and a year's last period closes only with its year
-(`ClosesWithFiscalYear`). `reopen_period` needs a reason (`reason is required
-to reopen`) and reopens in reverse date order (`LaterPeriodClosed`); a locked
-period never reopens (`PeriodLocked`), an open one is `PeriodNotClosed`, and a
-closed year's periods reopen only after the year (`FiscalYearClosed`).
-`lock_period` locks a closed period in date order (`EarlierPeriodUnlocked`).
-Reasons are trimmed and at most 500 characters. Each call returns the period
-with its new status.
+A status is never stored: it is the latest closing event's (open with none). `close_period` closes in date order (`EarlierPeriodOpen`; `PeriodNotOpen` for a closed or locked period), and a year's last period closes only with its year (`ClosesWithFiscalYear`). `reopen_period` needs a reason (`reason is required to reopen`) and reopens in reverse date order (`LaterPeriodClosed`); a locked period never reopens (`PeriodLocked`), an open one is `PeriodNotClosed`, and a closed year's periods reopen only after the year (`FiscalYearClosed`). `lock_period` locks a closed period in date order (`EarlierPeriodUnlocked`). Reasons are trimmed and at most 500 characters. Each call returns the period with its new status.
 
-`close_fiscal_year(scope, company_id, year_id, &YearClose)` posts one entry,
-dated the year's last day (description `Close fiscal year <start> to <end>`
-unless given, optional reference), that brings each income and expense
-account's balance for the year to zero against the active retained-earnings
-account (`NoRetainedEarningsAccount` without one), then records the year's
-close (naming the entry and the account) and closes every open period of the
-year. A year with no income or expense balance closes with no entry; the
-previous year's periods must be closed first (`EarlierPeriodOpen`); closing a
-closed year returns it unchanged. `reopen_fiscal_year(.., reason)` reopens
-the year and its last period and posts the closing entry's reversal on the
-same day (`Reopen fiscal year <start> to <end>`); the other periods stay
-closed. It is `FiscalYearNotClosed`, `PeriodLocked` when the last period is
-locked, and `LaterPeriodClosed` while the next year has a closed period.
-Closing entries and their reversals may name inactive accounts, are never
-reversed by hand, and are left out of `list_entries` with `exclude_closing`
-and of the late-recording report.
+`close_fiscal_year(scope, company_id, year_id, &YearClose)` posts one entry, dated the year's last day (description `Close fiscal year <start> to <end>` unless given, optional reference), that brings each income and expense account's balance for the year to zero against the active retained-earnings account (`NoRetainedEarningsAccount` without one), then records the year's close (naming the entry and the account) and closes every open period of the year. A year with no income or expense balance closes with no entry; the previous year's periods must be closed first (`EarlierPeriodOpen`); closing a closed year returns it unchanged. `reopen_fiscal_year(.., reason)` reopens the year and its last period and posts the closing entry's reversal on the same day (`Reopen fiscal year <start> to <end>`); the other periods stay closed. It is `FiscalYearNotClosed`, `PeriodLocked` when the last period is locked, and `LaterPeriodClosed` while the next year has a closed period. Closing entries and their reversals may name inactive accounts, are never reversed by hand, and are left out of `list_entries` with `exclude_closing` and of the late-recording report.
 
-A reopen overrides a close and turning controlled bookkeeping off overrides a
-control, so each is recorded in `finance_ledger_approval_exceptions` with its
-reason (`period_reopen`, `fiscal_year_reopen`, `controlled_bookkeeping_off`,
-source `finance/ledger`); see Separation of duties.
+A reopen overrides a close and turning controlled bookkeeping off overrides a control, so each is recorded in `finance_ledger_approval_exceptions` with its reason (`period_reopen`, `fiscal_year_reopen`, `controlled_bookkeeping_off`, source `finance/ledger`); see Separation of duties.
 
 ## Controlled bookkeeping
 
-A company that is controlled posts only into a fiscal period it has opened
-and left open, so its first year is opened explicitly and an entry dated after
-its last year is refused until the next one is opened; an entry is never
-refused for being old. The setting is the latest of the company's append-only
-changes (`BookkeepingChange`: number, setting, reason, actor, impersonator,
-time); `open_book` records the change that turns it on, so a new company is
-controlled from the start. `set_controlled_bookkeeping(scope, company_id,
-controlled, reason)` turns it off only with a reason (`reason is required to
-turn this off`) and returns the new `ControlledBookkeeping`; setting what is
-already set records nothing.
+A company that is controlled posts only into a fiscal period it has opened and left open, so its first year is opened explicitly and an entry dated after its last year is refused until the next one is opened; an entry is never refused for being old. The setting is the latest of the company's append-only changes (`BookkeepingChange`: number, setting, reason, actor, impersonator, time); `open_book` records the change that turns it on, so a new company is controlled from the start. `set_controlled_bookkeeping(scope, company_id, controlled, reason)` turns it off only with a reason (`reason is required to turn this off`) and returns the new `ControlledBookkeeping`; setting what is already set records nothing.
 
 ## Late recordings
 
-An entry's days are whole UTC days from its `entry_date` (its transaction
-date) to `posted_at` (its recording). `list_late_recordings` lists the entries
-of 45 days or more, oldest number first, `Approaching` up to 60 days and `Late`
-past it, each with its review; `LateRecordingQuery` filters by `status` and
-`reviewed` and pages by `after` (the last entry number) and `limit` (1 to 500,
-100 by default; `InvalidOption` outside). `record_late_recording_review` is
-refused for an entry that is not listed (`NotLateRecorded`; `EntryNotFound`
-for another company's or a closing entry), a second time (`AlreadyReviewed`),
-and for a reviewer who posted the entry or impersonated (or was impersonated
-by) its poster (`ReviewerNotIndependent`); its `reason` is required.
+An entry's days are whole UTC days from its `entry_date` (its transaction date) to `posted_at` (its recording). `list_late_recordings` lists the entries of 45 days or more, oldest number first, `Approaching` up to 60 days and `Late` past it, each with its review; `LateRecordingQuery` filters by `status` and `reviewed` and pages by `after` (the last entry number) and `limit` (1 to 500, 100 by default; `InvalidOption` outside). `record_late_recording_review` is refused for an entry that is not listed (`NotLateRecorded`; `EntryNotFound` for another company's or a closing entry), a second time (`AlreadyReviewed`), and for a reviewer who posted the entry or impersonated (or was impersonated by) its poster (`ReviewerNotIndependent`); its `reason` is required.
 
 ## Account groups
 
-The chart is a tree whose leaves are accounts and whose inner rows are account
-groups. An account takes postings and has no children. A group takes none and
-stands for the total of every account under it; it has no balance of its own,
-cannot be deactivated and cannot be the retained-earnings account. `parent_id`
-names the enclosing group: an account or group sits only in a group of its own
-type, in its own company, never in itself or in something it holds. A row is an
-account or a group for good, like its code and type. Posting to a group is
-refused by the facade (`account_id is an account group and takes no postings`)
-and by the database (trigger on entry lines). Version 008 turned any account
-that already had children into a group and stops with the rows named if one
-held postings; the old rule that any account could parent another is gone.
+The chart is a tree whose leaves are accounts and whose inner rows are account groups. An account takes postings and has no children. A group takes none and stands for the total of every account under it; it has no balance of its own, cannot be deactivated and cannot be the retained-earnings account. `parent_id` names the enclosing group: an account or group sits only in a group of its own type, in its own company, never in itself or in something it holds. A row is an account or a group for good, like its code and type. Posting to a group is refused by the facade (`account_id is an account group and takes no postings`) and by the database (trigger on entry lines). Version 008 turned any account that already had children into a group and stops with the rows named if one held postings; the old rule that any account could parent another is gone.
 
-`chart_balances(scope, company_id, as_of, through_entry_number)` reads every row
-by code at one pinned entry number: an account's `balance` and a group's
-`total`, on the type's natural side (debits less credits for asset and expense,
-credits less debits for the others), negative on the other side. PostgreSQL sums
-the lines per account for the trial balance; the group rolls those sums up the
-tree, so no posting is counted twice. The trial balance, account totals and
-every report list posting accounts only, so a group is never a row there.
+`chart_balances(scope, company_id, as_of, through_entry_number)` reads every row by code at one pinned entry number: an account's `balance` and a group's `total`, on the type's natural side (debits less credits for asset and expense, credits less debits for the others), negative on the other side. PostgreSQL sums the lines per account for the trial balance; the group rolls those sums up the tree, so no posting is counted twice. The trial balance, account totals and every report list posting accounts only, so a group is never a row there.
 
-Reports: a section lists account codes, and a listed group gathers every account
-under it unless a nearer listed row claims it (`reports/src/layout.rs`). A group
-is never a report row, and the section's total is the sum of its accounts.
+Reports: a section lists account codes, and a listed group gathers every account under it unless a nearer listed row claims it (`reports/src/layout.rs`). A group is never a report row, and the section's total is the sum of its accounts.
 
 ## Starter charts
 
-A starter chart is data (`templates/*.json`: key, name, review state, notes,
-optional sections and rows of code, name, type, group, retained-earnings mark,
-section), never a code identifier. One ships: `my-small-business`, a Malaysian small business chart
-marked **draft, awaiting accountant review**. A person previews it on the Chart
-of accounts page (or an agent reads `chart_template.get`) and applies it with a
-reviewed write; nothing is created at install, on boot or when a book opens. Saved company charts and setup proposals extend this flow below.
-Rows that only some businesses need belong to an optional **section**, each with a
-one-line description of when to tick it: `Registered for SST` (the sales and service tax
-payable group and its accounts), `Has employees` (net salaries payable, payroll
-deductions and employer contributions payable, the employer EPF, SOCSO and EIS
-expenses), `Holds inventory`, `Has intangible assets` (at cost, accumulated
-amortisation, amortisation expense), `Has tax recoverable or advances`, `Takes
-customer deposits`, `Gives sales returns or allowances` and `Earns finance income`.
-No section is chosen by default: the
-preview shows a tickbox for each, the page and `chart_template.get` / `.apply`
-take the chosen keys as `sections` (the same input for a person and an agent),
-and the review lists exactly the rows that will be created. Rows of a section
-that was not chosen are never created; a section's rows sit only under a group
-of the same section or a core group (the file is refused otherwise). A group
-cannot be deactivated once created, so omitting happens when applying. Which
-tax basis applies to a business needs client-specific advice and is a separate
-note on the chart. Applying creates its core groups and the chosen sections' accounts in one transaction under the company
-lock, each audited, and refuses any chart that already has an account or a
-group: a book that has accounts is never changed, and applying twice is refused
-the second time. The created rows are the company's own with no link back, so
-two companies that start from the same template customise their charts
-independently and a later edit of the template never reaches a book. The
-template carries no opening balance and no rate; conversion work (#57) is
-separate. Corrections from an accounting practitioner are a data edit of the
-JSON file.
+A starter chart is data (`templates/*.json`: key, name, review state, notes, optional sections and rows of code, name, type, group, retained-earnings mark, section), never a code identifier. One ships: `my-small-business`, a Malaysian small business chart marked **draft, awaiting accountant review**. A person previews it on the Chart of accounts page (or an agent reads `chart_template.get`) and applies it with a reviewed write; nothing is created at install, on boot or when a book opens. Saved company charts and setup proposals extend this flow below. Rows that only some businesses need belong to an optional **section**, each with a one-line description of when to tick it: `Registered for SST` (the sales and service tax payable group and its accounts), `Has employees` (net salaries payable, payroll deductions and employer contributions payable, the employer EPF, SOCSO and EIS expenses), `Holds inventory`, `Has intangible assets` (at cost, accumulated amortisation, amortisation expense), `Has tax recoverable or advances`, `Takes customer deposits`, `Gives sales returns or allowances` and `Earns finance income`. No section is chosen by default: the preview shows a tickbox for each, the page and `chart_template.get` / `.apply` take the chosen keys as `sections` (the same input for a person and an agent), and the review lists exactly the rows that will be created. Rows of a section that was not chosen are never created; a section's rows sit only under a group of the same section or a core group (the file is refused otherwise). A group cannot be deactivated once created, so omitting happens when applying. Which tax basis applies to a business needs client-specific advice and is a separate note on the chart. Applying creates its core groups and the chosen sections' accounts in one transaction under the company lock, each audited, and refuses any chart that already has an account or a group: a book that has accounts is never changed, and applying twice is refused the second time. The created rows are the company's own with no link back, so two companies that start from the same template customise their charts independently and a later edit of the template never reaches a book. The template carries no opening balance and no rate; conversion work (#57) is separate. Corrections from an accounting practitioner are a data edit of the JSON file.
 
 ## Trial balance
 
-`trial_balance(scope, company_id, as_of, through_entry_number)` lists every
-account with a posting dated on or before `as_of`, by code, with its `debits`
-and `credits` and its balance on one side (`debit_balance` or
-`credit_balance`, the other zero). Each account reports its own postings
-only, and a group never has a row: its total is `chart_balances`.
-`total_debit` equals `total_credit` because every entry balances. Closing
-entries count, so as of a closed year's last day every income and expense
-account is at zero and the year's result is in retained earnings.
+`trial_balance(scope, company_id, as_of, through_entry_number)` lists every account with a posting dated on or before `as_of`, by code, with its `debits` and `credits` and its balance on one side (`debit_balance` or `credit_balance`, the other zero). Each account reports its own postings only, and a group never has a row: its total is `chart_balances`. `total_debit` equals `total_credit` because every entry balances. Closing entries count, so as of a closed year's last day every income and expense account is at zero and the year's result is in retained earnings.
 
-The result names `through_entry_number`, the last entry it counts: the one
-passed, or the company's last, read in the same statement as the sums. An
-entry posted later with an earlier date changes the figures for that date, so
-passing the same `as_of` and `through_entry_number` reproduces an earlier
-trial balance's figures exactly: entries are numbered in posting order and
-never change. Account names, parents and active flags are read as they are
-now. A negative number is `InvalidOption`, and `BookNotOpen` comes before the
-book is opened.
+The result names `through_entry_number`, the last entry it counts: the one passed, or the company's last, read in the same statement as the sums. An entry posted later with an earlier date changes the figures for that date, so passing the same `as_of` and `through_entry_number` reproduces an earlier trial balance's figures exactly: entries are numbered in posting order and never change. Account names, parents and active flags are read as they are now. A negative number is `InvalidOption`, and `BookNotOpen` comes before the book is opened.
 
 ## Account totals
 
-`account_totals(scope, company_id, &TotalsQuery)` returns, for every account
-with a posting dated from `from` through `to` (both optional and inclusive;
-`from` after `to` is `InvalidOption`), its `debits` and `credits`, by code.
-PostgreSQL sums the lines per account, so a report over any number of
-entries reads one row per account; never add up `list_entries` lines for a
-figure. It names `through_entry_number` like the trial balance, and reading
-several windows at one number gives a report's columns one state of the
-ledger. `exclude_closing` leaves out every year-end closing entry and every
-reversal of one, so income and expense over a closed year show its activity
-(a profit and loss reads this way, a balance sheet counts them); the set is
-the same at any entry number, because a close names its entry in the
-transaction that posts it. `list_entries` with the same `account_id`,
-`from`, `to` and `through_entry_number` lists the entries behind a figure.
+`account_totals(scope, company_id, &TotalsQuery)` returns, for every account with a posting dated from `from` through `to` (both optional and inclusive; `from` after `to` is `InvalidOption`), its `debits` and `credits`, by code. PostgreSQL sums the lines per account, so a report over any number of entries reads one row per account; never add up `list_entries` lines for a figure. It names `through_entry_number` like the trial balance, and reading several windows at one number gives a report's columns one state of the ledger. `exclude_closing` leaves out every year-end closing entry and every reversal of one, so income and expense over a closed year show its activity (a profit and loss reads this way, a balance sheet counts them); the set is the same at any entry number, because a close names its entry in the transaction that posts it. `list_entries` with the same `account_id`, `from`, `to` and `through_entry_number` lists the entries behind a figure.
 
-`account_totals_by_owner` splits the same totals by `owner_module` (the
-owner's descriptor id, `None` for entries with no owner, first): one row per
-account and owner. A module ties its control account out with it: its own
-rows should be the whole account, and any other row is a posting its records
-do not know, shown as a difference with its owner, never netted away.
-Bilimbi's `legacy` flag is not ported, since Bilibi has no adopted entries.
+`account_totals_by_owner` splits the same totals by `owner_module` (the owner's descriptor id, `None` for entries with no owner, first): one row per account and owner. A module ties its control account out with it: its own rows should be the whole account, and any other row is a posting its records do not know, shown as a difference with its owner, never netted away. Bilimbi's `legacy` flag is not ported, since Bilibi has no adopted entries.
 
 ## Evidence
 
-`evidence_page(scope, company_id, dataset, limit, after)` reads one
-ID-ordered page of one dataset with its explicit `fields`, its `rows` (JSON
-objects) and `next`, the last id when the page was full; `limit` is 1 to 500
-(500 when absent) and `after` the previous page's `next`. An unknown dataset
-or an option out of range is `InvalidOption`. The datasets are `account`,
-`approval_exception`, `approval_exception_review`, `book`,
-`bookkeeping_change`, `chart_template`, `closing_event`, `duty_separation_change`, `entry`, `journal_approval`,
-`fiscal_year`, `journal`, `journal_event`, `journal_line`,
-`journal_replacement`, `late_recording_review`, `line`, `opening_balances`, `opening_recognition`, `opening_recognition_replacement` and `period`. Existing datasets mirror Bilimbi's field lists (`src/evidence.rs`), less the entry's `legacy` and plus the account's `is_group`; `opening_balances` exports the retained source reference, CSV and journal link; `opening_recognition` exports each owner's recognition of an opening account; `opening_recognition_replacement` links a recognition to the one it replaces. Dates are `YYYY-MM-DD`,
-instants ISO 8601 UTC with microseconds and amounts the column's exact text
-(`100.0000`). Each page is a live read on its own connection. The field lists
-are an export contract: freeze one once exported and never add a credential.
+`evidence_page(scope, company_id, dataset, limit, after)` reads one ID-ordered page of one dataset with its explicit `fields`, its `rows` (JSON objects) and `next`, the last id when the page was full; `limit` is 1 to 500 (500 when absent) and `after` the previous page's `next`. An unknown dataset or an option out of range is `InvalidOption`. The datasets are `account`, `approval_exception`, `approval_exception_review`, `book`, `bookkeeping_change`, `chart_template`, `closing_event`, `duty_separation_change`, `entry`, `journal_approval`, `fiscal_year`, `journal`, `journal_event`, `journal_line`, `journal_replacement`, `late_recording_review`, `line`, `opening_balances`, `opening_recognition`, `opening_recognition_replacement` and `period`. Existing datasets mirror Bilimbi's field lists (`src/evidence.rs`), less the entry's `legacy` and plus the account's `is_group`; `opening_balances` exports the retained source reference, CSV and journal link; `opening_recognition` exports each owner's recognition of an opening account; `opening_recognition_replacement` links a recognition to the one it replaces. Dates are `YYYY-MM-DD`, instants ISO 8601 UTC with microseconds and amounts the column's exact text (`100.0000`). Each page is a live read on its own connection. The field lists are an export contract: freeze one once exported and never add a credential.
 
 ## Schema (versions 001 to 009)
 
-`finance_ledger_books` (one per company; currency and minor units fixed for
-good), `finance_ledger_accounts` (code and type kept by a trigger, a
-composite `(id, company_id)` parent key so an account is never grouped under
-another company's, one retained-earnings account per company, never deleted)
-and `finance_ledger_bookkeeping_changes` (append-only, numbered and stamped by
-the database, refusing a change that changes nothing). Books and bookkeeping
-changes refuse UPDATE, DELETE and TRUNCATE.
+`finance_ledger_books` (one per company; currency and minor units fixed for good), `finance_ledger_accounts` (code and type kept by a trigger, a composite `(id, company_id)` parent key so an account is never grouped under another company's, one retained-earnings account per company, never deleted) and `finance_ledger_bookkeeping_changes` (append-only, numbered and stamped by the database, refusing a change that changes nothing). Books and bookkeeping changes refuse UPDATE, DELETE and TRUNCATE.
 
-`finance_ledger_entries` and `finance_ledger_entry_lines` (002) are
-append-only the same way. Composite `(id, company_id)` keys keep a line on its
-own company's entry and accounts and a reversal on its own company's entry;
-the entry's `(currency_code, company_id)` names its book. Triggers number
-entries per company without gaps, refuse a line added to an entry whose
-transaction has ended, and, deferred to commit, refuse an entry with no lines
-or whose debits and credits differ. A line has exactly one positive side. An
-owned record has one original entry, and a reversal carries exactly its
-original's owner. 003 adds the notice trigger.
+`finance_ledger_entries` and `finance_ledger_entry_lines` (002) are append-only the same way. Composite `(id, company_id)` keys keep a line on its own company's entry and accounts and a reversal on its own company's entry; the entry's `(currency_code, company_id)` names its book. Triggers number entries per company without gaps, refuse a line added to an entry whose transaction has ended, and, deferred to commit, refuse an entry with no lines or whose debits and credits differ. A line has exactly one positive side. An owned record has one original entry, and a reversal carries exactly its original's owner. 003 adds the notice trigger.
 
-004 adds `finance_ledger_fiscal_years`, `finance_ledger_periods` and
-`finance_ledger_closing_events` (all append-only): a year starts the day after
-the previous one and, deferred to commit, is divided into whole months through
-its end, in the transaction that opens it; the database numbers and stamps
-each event and refuses one that breaks the closing rules above, a reopen with
-no reason, and a closed year with an open period. An entry dated in a closed
-or locked period, before the first year, or (controlled) in no period is
-refused. `finance_ledger_late_recording_reviews` takes one review per entry,
-refusing an entry recorded under 45 days late and a reviewer who overlaps the
-poster. `finance_ledger_duty_separation_changes`,
-`finance_ledger_approval_exceptions` and
-`finance_ledger_approval_exception_reviews` are the end state of Bilimbi's
-separation-of-duties tables, all append-only: the database numbers and stamps
-each row, refuses a change that changes nothing, a same-person exception
-unless the change it names is the latest and turns separation off, and a
-review by anyone overlapping the approver or preparer.
+004 adds `finance_ledger_fiscal_years`, `finance_ledger_periods` and `finance_ledger_closing_events` (all append-only): a year starts the day after the previous one and, deferred to commit, is divided into whole months through its end, in the transaction that opens it; the database numbers and stamps each event and refuses one that breaks the closing rules above, a reopen with no reason, and a closed year with an open period. An entry dated in a closed or locked period, before the first year, or (controlled) in no period is refused. `finance_ledger_late_recording_reviews` takes one review per entry, refusing an entry recorded under 45 days late and a reviewer who overlaps the poster. `finance_ledger_duty_separation_changes`, `finance_ledger_approval_exceptions` and `finance_ledger_approval_exception_reviews` are the end state of Bilimbi's separation-of-duties tables, all append-only: the database numbers and stamps each row, refuses a change that changes nothing, a same-person exception unless the change it names is the latest and turns separation off, and a review by anyone overlapping the approver or preparer.
 
-005 adds `finance_ledger_journals`, `finance_ledger_journal_lines` and
-`finance_ledger_journal_events` (all append-only): the database numbers and
-stamps a journal, refuses a line added after the submitting transaction and,
-deferred to commit, a journal with no lines or out of balance; a journal is
-decided once, and an approval names its entry and a rejection its reason.
-Bilimbi's database guard against approval by the submitter is replaced by 012.
+005 adds `finance_ledger_journals`, `finance_ledger_journal_lines` and `finance_ledger_journal_events` (all append-only): the database numbers and stamps a journal, refuses a line added after the submitting transaction and, deferred to commit, a journal with no lines or out of balance; a journal is decided once, and an approval names its entry and a rejection its reason. Bilimbi's database guard against approval by the submitter is replaced by 012.
 
-006 (a port addition, no Bilimbi counterpart) lets the event be `withdrawn`,
-which the database allows only to whoever submitted the journal, and adds the
-append-only `finance_ledger_journal_replacements`: a correction names the
-journal it replaces, and a deferred trigger refuses the link unless the same
-transaction withdrew that journal for the same submitter. The link is its own
-table because the journal and event evidence field lists are frozen.
+006 (a port addition, no Bilimbi counterpart) lets the event be `withdrawn`, which the database allows only to whoever submitted the journal, and adds the append-only `finance_ledger_journal_replacements`: a correction names the journal it replaces, and a deferred trigger refuses the link unless the same transaction withdrew that journal for the same submitter. The link is its own table because the journal and event evidence field lists are frozen.
 
-007 (a port addition) adds the append-only `finance_ledger_opening_balances`: the
-source reference and exact CSV of an opening-balances submission, linked to its
-ordinary approval journal, one per source reference and one per journal.
+007 (a port addition) adds the append-only `finance_ledger_opening_balances`: the source reference and exact CSV of an opening-balances submission, linked to its ordinary approval journal, one per source reference and one per journal.
 
-008 adds `is_group` to `finance_ledger_accounts`: a group is always active and
-never retained earnings (checks), keeps its group-ness for good (the identity
-trigger), a row sits only in a group of its own type (trigger on `parent_id`),
-and a posting line on a group is refused (trigger on entry lines).
+008 adds `is_group` to `finance_ledger_accounts`: a group is always active and never retained earnings (checks), keeps its group-ness for good (the identity trigger), a row sits only in a group of its own type (trigger on `parent_id`), and a posting line on a group is refused (trigger on entry lines).
 
-009 adds the append-only `finance_ledger_chart_templates`: a saved reusable chart, one
-per tenant and `saved:<key>`, refused any update or delete.
+009 adds the append-only `finance_ledger_chart_templates`: a saved reusable chart, one per tenant and `saved:<key>`, refused any update or delete.
 
-012 (a port addition) adds the append-only `finance_ledger_journal_approvals`, one
-durable reference from a journal to its Workflow request, and replaces the journal
-event trigger: a decision now requires that reference, and no longer refuses the
-submitter by itself. Workflow proves independence and records any permitted
-exception once; the unique journal event stays the fence against posting twice.
+012 (a port addition) adds the append-only `finance_ledger_journal_approvals`, one durable reference from a journal to its Workflow request, and replaces the journal event trigger: a decision now requires that reference, and no longer refuses the submitter by itself. Workflow proves independence and records any permitted exception once; the unique journal event stays the fence against posting twice.
 
 ## Standards addressed
 
-A book is opened once with its currency fixed; an account keeps its code and
-type because entries are posted against them, and is deactivated only once
-its balance is zero (the sum of its lines); a closed period takes no entry
-until it is reopened with a reason that an independent reviewer can read, and
-a locked one never reopens; a late entry is reviewed by someone other than
-its poster; a posted entry is corrected only by a reversal, once, and an owned
-one only through its owner; the person who prepares a record does not
-approve it unless the company has turned separation off, and every such
-approval and every override is listed for an independent reviewer; a manual
-journal posts only when its Workflow round has every required approval, with its saved independence rules and current safety floors; any past trial balance or
-account total reproduces exactly from its `through_entry_number`; every
-table is exported to the auditor field by field; every write is attributed
-to the signed-in actor and any impersonator through the Platform's audit
-capture.
+A book is opened once with its currency fixed; an account keeps its code and type because entries are posted against them, and is deactivated only once its balance is zero (the sum of its lines); a closed period takes no entry until it is reopened with a reason that an independent reviewer can read, and a locked one never reopens; a late entry is reviewed by someone other than its poster; a posted entry is corrected only by a reversal, once, and an owned one only through its owner; the person who prepares a record does not approve it unless the company has turned separation off, and every such approval and every override is listed for an independent reviewer; a manual journal posts only when its Workflow round has every required approval, with its saved independence rules and current safety floors; any past trial balance or account total reproduces exactly from its `through_entry_number`; every table is exported to the auditor field by field; every write is attributed to the signed-in actor and any impersonator through the Platform's audit capture.
 
 `evidence_page_on` is the same authorized evidence contract on a caller-supplied PostgreSQL client or transaction. Use it for every page of one repeatable-read export (Reports auditor pack); the pooled `evidence_page` wrapper is a live read per page. Schema helpers remain private.
 

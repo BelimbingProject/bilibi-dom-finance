@@ -1,21 +1,18 @@
 # E-invoice
 
-Module ID: `finance/einvoice` (Bilimbi `Bilimbi.Finance.Einvoice`). The fiscal
-documents a company issues through a clearance authority. This version holds
-the schema, the company's setup (settings, credentials, signing certificate
-with its facts, and supplier profile), the `Authority` contract with the one
-authority this release clears documents with (MyInvois) and its rules: the
-draft a caller asks to issue and its validation, the UBL 2.1 JSON builder with
-its byte-exact writer, the JSON XAdES signer, and the authority's code lists
-with each company's overrides; and clearance: issuing a document, submitting
-it through the MyInvois client on Base Integration with the submit and poll
-jobs on Base Queue, refreshing its status and cancelling it; and the ledger
-bridge: a validated document's one owned entry and a cancelled one's
-reversal, retried from the reconciliation read, source links to the entry
-Receivables or Payables already posted, the monthly consolidated document,
-the printable PDF with its validation link's QR code, and the auditor's
-evidence datasets. The documents, consolidation, reconciliation and setup pages are available. Other modules and
-Domains never read its tables.
+Prepare and track Malaysian e-invoices through MyInvois.
+
+## Start here
+
+Set up the company’s e-invoice details, start an e-invoice from an eligible invoice and follow its clearance status.
+
+## Keep in mind
+
+A validated document can be posted to the ledger; a failed posting can be retried. Credentials and signing details require setup.
+
+The sections below record the module’s detailed contracts, permissions and limits.
+
+Module ID: `finance/einvoice` (Bilimbi `Bilimbi.Finance.Einvoice`). The fiscal documents a company issues through a clearance authority. This version holds the schema, the company's setup (settings, credentials, signing certificate with its facts, and supplier profile), the `Authority` contract with the one authority this release clears documents with (MyInvois) and its rules: the draft a caller asks to issue and its validation, the UBL 2.1 JSON builder with its byte-exact writer, the JSON XAdES signer, and the authority's code lists with each company's overrides; and clearance: issuing a document, submitting it through the MyInvois client on Base Integration with the submit and poll jobs on Base Queue, refreshing its status and cancelling it; and the ledger bridge: a validated document's one owned entry and a cancelled one's reversal, retried from the reconciliation read, source links to the entry Receivables or Payables already posted, the monthly consolidated document, the printable PDF with its validation link's QR code, and the auditor's evidence datasets. The documents, consolidation, reconciliation and setup pages are available. Other modules and Domains never read its tables.
 
 ## Reviewed operations (H4)
 
@@ -46,8 +43,7 @@ The proof exercises HTTP and MCP, compares review snapshots with persisted docum
 
 ## Public API
 
-Resolve the `Einvoice` service (`finance/einvoice.einvoice`) from the registry
-and call it with a sealed `Scope` and an explicit company id.
+Resolve the `Einvoice` service (`finance/einvoice.einvoice`) from the registry and call it with a sealed `Scope` and an explicit company id.
 
 | Function | Capability | Does |
 | --- | --- | --- |
@@ -76,16 +72,7 @@ and call it with a sealed `Scope` and an explicit company id.
 | `qr_code_svg` | none | The validation link's QR code as an inline SVG |
 | `Einvoice::evidence_datasets`, `evidence_page` | `.view` | The auditor pack's frozen exports of this module's tables (see Evidence) |
 
-Every call authorizes its capability for the scope's actor and the target
-company at the moment it runs (Core Company's `authorize_work_target`): a missing
-grant, or a company where the person has no desk, is
-`EinvoiceError::Unauthorized`; a company the scope cannot see is
-`CompanyNotFound`. A write then holds the company's row lock inside an audited
-`MutationBoundary` transaction, so an archived company is `CompanyArchived`.
-Refused values are `Invalid(Vec<FieldError>)` with Bilimbi's changeset words
-(`must be 1 to 16 letters, digits, dots, or dashes`, `should be at most 500
-character(s)`), each at its field's path (`code`, `buyer.address.state_code`,
-`lines[2].tax_rate`).
+Every call authorizes its capability for the scope's actor and the target company at the moment it runs (Core Company's `authorize_work_target`): a missing grant, or a company where the person has no desk, is `EinvoiceError::Unauthorized`; a company the scope cannot see is `CompanyNotFound`. A write then holds the company's row lock inside an audited `MutationBoundary` transaction, so an archived company is `CompanyArchived`. Refused values are `Invalid(Vec<FieldError>)` with Bilimbi's changeset words (`must be 1 to 16 letters, digits, dots, or dashes`, `should be at most 500 character(s)`), each at its field's path (`code`, `buyer.address.state_code`, `lines[2].tax_rate`).
 
 ## Documents pages
 
@@ -109,42 +96,13 @@ Run the NE5 proof against an empty disposable database with `DATABASE_URL=... BI
 
 ## Drafts
 
-`Draft` is a document a caller asks to issue, as plain attributes, before it
-is recorded: the document's type and code number, its issue instant (now when
-none is given, never in the future), currency and exchange rate, the
-counterparty (`buyer`, or `supplier` on a self-billed document, the company's
-own profile taking the other side and never given), optional payment and
-billing-period details, the original document a note corrects, and one to a
-thousand lines. Amounts are derived, never taken: a line's subtotal is
-quantity times unit price, its amount is the subtotal less its discount plus
-its charge, and its tax is that amount times the rate, each rounded half up
-to two places; the document's totals are the sums. An amount finer than its
-column is refused, not rounded. The one exception is a consolidated
-document's line, which carries its tax, the sum of its sources' tax.
+`Draft` is a document a caller asks to issue, as plain attributes, before it is recorded: the document's type and code number, its issue instant (now when none is given, never in the future), currency and exchange rate, the counterparty (`buyer`, or `supplier` on a self-billed document, the company's own profile taking the other side and never given), optional payment and billing-period details, the original document a note corrects, and one to a thousand lines. Amounts are derived, never taken: a line's subtotal is quantity times unit price, its amount is the subtotal less its discount plus its charge, and its tax is that amount times the rate, each rounded half up to two places; the document's totals are the sums. An amount finer than its column is refused, not rounded. The one exception is a consolidated document's line, which carries its tax, the sum of its sources' tax.
 
-`Draft::validate(now, &authority, &context)` checks the shape every authority
-shares (Bilimbi's `Draft` changeset), then the authority's own rules
-(`Authority::validate`): codes against the company's lists (`list_codes`, one
-list per entry of `context.codes`), the fields its rules require, a company
-profile (`context.supplier`, the setup's) missing what every document carries,
-a note whose original (`context.original`) is not one the authority lets it
-reference, and the consolidated document's own shape (`context.consolidated`).
-It answers the `ValidDraft` with every line's derived amounts, or every
-`FieldError` in Bilimbi's words. The walkthrough prints both for invoices,
-notes, self-billed and consolidated drafts.
+`Draft::validate(now, &authority, &context)` checks the shape every authority shares (Bilimbi's `Draft` changeset), then the authority's own rules (`Authority::validate`): codes against the company's lists (`list_codes`, one list per entry of `context.codes`), the fields its rules require, a company profile (`context.supplier`, the setup's) missing what every document carries, a note whose original (`context.original`) is not one the authority lets it reference, and the consolidated document's own shape (`context.consolidated`). It answers the `ValidDraft` with every line's derived amounts, or every `FieldError` in Bilimbi's words. The walkthrough prints both for invoices, notes, self-billed and consolidated drafts.
 
 ## Clearance
 
-A recorded document is cleared with the authority by the submit and poll jobs
-(`finance/einvoice-submit`, 100 attempts, and `finance/einvoice-poll`, 20
-attempts), Base Queue workers queued with `enqueue_for`, so each runs as the
-person who asked: the queue re-proves that person and their
-`.documents.submit` grant on every attempt, every write of a job opens with
-`Execution::begin` (which fences the job's lease), and the arguments are the
-company and document IDs only. Each outcome is a new status event with the
-authority's answer beside it, and each outcome the authority decides is also
-an audit action; nothing edits a document. No transaction is held across a
-call to the authority.
+A recorded document is cleared with the authority by the submit and poll jobs (`finance/einvoice-submit`, 100 attempts, and `finance/einvoice-poll`, 20 attempts), Base Queue workers queued with `enqueue_for`, so each runs as the person who asked: the queue re-proves that person and their `.documents.submit` grant on every attempt, every write of a job opens with `Execution::begin` (which fences the job's lease), and the arguments are the company and document IDs only. Each outcome is a new status event with the authority's answer beside it, and each outcome the authority decides is also an audit action; nothing edits a document. No transaction is held across a call to the authority.
 
 - **Submitting.** A submission row holding the exact bytes (signed when the
   company's format version is) commits before the HTTP call, so an attempt
@@ -197,132 +155,43 @@ call to the authority.
   as `cancellation_refused`. Each outcome is recorded only while the document,
   read again under the company lock, is still cancellable.
 
-Once a `valid` (or `rejected`) status commits, the bridge posts the
-document's entry; once `cancelled` commits, it reverses it (see Ledger
-bridge). A document's view flags `Overdue`, `RejectionRequested`, `Unposted`,
-`PostingFailed`, `Unreversed` and `ReversalFailed` for an operator.
+Once a `valid` (or `rejected`) status commits, the bridge posts the document's entry; once `cancelled` commits, it reverses it (see Ledger bridge). A document's view flags `Overdue`, `RejectionRequested`, `Unposted`, `PostingFailed`, `Unreversed` and `ReversalFailed` for an operator.
 
 ## Ledger bridge
 
-`posting.rs` (Bilimbi `Posting`). A document the authority validated posts
-one balanced entry through the ledger's `post_entry_in`, as the person the
-work runs for (the poll job's, the refresh's or the cancellation's), dated
-its issue date in UTC (a consolidated document's, the last day of the month
-it reports), described `E-invoice <code> (<type>)`, with its code number and
-authority UUID as the `reference`. The accounts are the company's
-`finance.einvoice.posting.*` codes in its own chart; the authority's
-`posting_rule` says which three a type uses. The counter-account
-(receivable, payable or settlement) takes the rule's side for the payable
-amount; the net (revenue or expense) and tax accounts take the other side,
-and a tax of zero posts no tax line. A sale debits receivable; a credit note
-mirrors it; a refund note credits settlement; a self-billed purchase credits
-payable and debits expense and purchase tax.
+`posting.rs` (Bilimbi `Posting`). A document the authority validated posts one balanced entry through the ledger's `post_entry_in`, as the person the work runs for (the poll job's, the refresh's or the cancellation's), dated its issue date in UTC (a consolidated document's, the last day of the month it reports), described `E-invoice <code> (<type>)`, with its code number and authority UUID as the `reference`. The accounts are the company's `finance.einvoice.posting.*` codes in its own chart; the authority's `posting_rule` says which three a type uses. The counter-account (receivable, payable or settlement) takes the rule's side for the payable amount; the net (revenue or expense) and tax accounts take the other side, and a tax of zero posts no tax line. A sale debits receivable; a credit note mirrors it; a refund note credits settlement; a self-billed purchase credits payable and debits expense and purchase tax.
 
-The entry's owner is `finance/einvoice` `document:<id>`, so the ledger
-refuses a second entry for the document and a reversal by anyone else
-(`OwnedBy`). Its ID is recorded on a `posted` event, and the reversal's on a
-`posting_reversed` event, each in the transaction that posts it, under the
-company lock; the database refuses a second of either. A refusal (book not
-open, the book's currency differs, `Choose the ... account in the e-invoice settings.`,
-`accounts not in the chart: ...`, `These are account groups, not accounts that take postings: ...`, a closed period, a missing ledger grant) is
-recorded afterwards, in its own transaction, as `posting_failed` or
-`reversal_failed` with the reason, and the document waits on
-`reconciliation` until `retry_posting` or `retry_reversal` succeeds. Only a
-database failure that may pass at once (a lost connection, lock contention, a
-deadlock, a serialization failure) is tried a second time, and recorded as
-one failure that says so. A document posts and reverses once: asking again
-is unchanged. A clearance never fails because its follow-up did.
+The entry's owner is `finance/einvoice` `document:<id>`, so the ledger refuses a second entry for the document and a reversal by anyone else (`OwnedBy`). Its ID is recorded on a `posted` event, and the reversal's on a `posting_reversed` event, each in the transaction that posts it, under the company lock; the database refuses a second of either. A refusal (book not open, the book's currency differs, `Choose the ... account in the e-invoice settings.`, `accounts not in the chart: ...`, `These are account groups, not accounts that take postings: ...`, a closed period, a missing ledger grant) is recorded afterwards, in its own transaction, as `posting_failed` or `reversal_failed` with the reason, and the document waits on `reconciliation` until `retry_posting` or `retry_reversal` succeeds. Only a database failure that may pass at once (a lost connection, lock contention, a deadlock, a serialization failure) is tried a second time, and recorded as one failure that says so. A document posts and reverses once: asking again is unchanged. A clearance never fails because its follow-up did.
 
-A document issued with a `source` never posts or reverses (see Source
-links): its accounting and its correction are the source module's.
+A document issued with a `source` never posts or reverses (see Source links): its accounting and its correction are the source module's.
 
 ## Source links
 
-`Draft.source` names the transaction the document is the tax document of,
-when another Finance module already recognised it in the ledger: the
-module's descriptor ID (`finance/receivables`, `finance/payables`), its
-record (`document:17`) and the entry that record posted. `issue_document`
-holds it to the ledger through `get_entry_on` (so the caller needs
-`finance.ledger.view`): the entry exists, that module and record own it, it
-is neither a reversal nor reversed, it is in the document's currency, and its
-debits equal the document's total; and no other document that stands
-(submitted, valid, rejected or consolidated, or with an attempt the authority
-may hold) links the same source, which the database refuses too. Each
-problem is a `source` field error in Bilimbi's words (`ledger entry 12 is
-not owned by finance/receivables document:3`). A note correcting a linked
-original needs its own `source`: the record that module corrected it with.
-The view lists `source_links` and says `recognised_by_source`.
+`Draft.source` names the transaction the document is the tax document of, when another Finance module already recognised it in the ledger: the module's descriptor ID (`finance/receivables`, `finance/payables`), its record (`document:17`) and the entry that record posted. `issue_document` holds it to the ledger through `get_entry_on` (so the caller needs `finance.ledger.view`): the entry exists, that module and record own it, it is neither a reversal nor reversed, it is in the document's currency, and its debits equal the document's total; and no other document that stands (submitted, valid, rejected or consolidated, or with an attempt the authority may hold) links the same source, which the database refuses too. Each problem is a `source` field error in Bilimbi's words (`ledger entry 12 is not owned by finance/receivables document:3`). A note correcting a linked original needs its own `source`: the record that module corrected it with. The view lists `source_links` and says `recognised_by_source`.
 
 ## Consolidation
 
-`consolidation.rs` (Bilimbi `Consolidation`). The sources of a month's
-consolidated document are the company's documents issued in the month (the
-authority's calendar: MyInvois' UTC+8 month) in the current environment,
-never submitted on their own, not held by another consolidated document, not
-waiting in a submit job, and within the authority's limits (an invoice, in
-ringgit, at most RM10,000). It is issued from the month's end for seven days
-(`PeriodNotEnded`, `ConsolidationWindowClosed`) at the `now` the caller
-passes (the database still stamps `recorded_at`), with a line per source and
-tax whose amount and tax are that source's exact sums, to the general public
-buyer with classification `004` and the month as its billing period. It
-records which source each line carries and a `consolidated` event on each
-source, which then cannot be submitted alone; a refused, invalid or
-cancelled consolidated document releases them (`released`) and is never sent
-again. Linked sources pass their links on, and linked and unlinked sources do
-not mix (`MixedSourceLinks`). The view of a consolidated document lists its
-`sources` with their line numbers; a source names its `consolidated_by`.
+`consolidation.rs` (Bilimbi `Consolidation`). The sources of a month's consolidated document are the company's documents issued in the month (the authority's calendar: MyInvois' UTC+8 month) in the current environment, never submitted on their own, not held by another consolidated document, not waiting in a submit job, and within the authority's limits (an invoice, in ringgit, at most RM10,000). It is issued from the month's end for seven days (`PeriodNotEnded`, `ConsolidationWindowClosed`) at the `now` the caller passes (the database still stamps `recorded_at`), with a line per source and tax whose amount and tax are that source's exact sums, to the general public buyer with classification `004` and the month as its billing period. It records which source each line carries and a `consolidated` event on each source, which then cannot be submitted alone; a refused, invalid or cancelled consolidated document releases them (`released`) and is never sent again. Linked sources pass their links on, and linked and unlinked sources do not mix (`MixedSourceLinks`). The view of a consolidated document lists its `sources` with their line numbers; a source names its `consolidated_by`.
 
 ## Printable document
 
-`pdf.rs` (Bilimbi `ArtifactOwner` and `QrCode`). `generate_pdf` renders the
-document with Base Artifacts' deterministic serializer (parties, lines,
-totals, status, identifiers and the validation link; characters outside
-Latin-1 print as `?`) and stores it under owner `finance/einvoice`, kind
-`document-pdf`, subject `document-<id>`. The adapter re-asks
-`finance.einvoice.view` on every create, read and delete and never retains.
-A `pdf_generated` event keeps the artifact and the last event it was
-rendered from, so asking again before the document changes answers the same
-artifact. Base Artifacts needs its storage root and retention period first.
-`qr_code_svg` draws the validation link's QR code (black on white, no
-script) for the document page.
+`pdf.rs` (Bilimbi `ArtifactOwner` and `QrCode`). `generate_pdf` renders the document with Base Artifacts' deterministic serializer (parties, lines, totals, status, identifiers and the validation link; characters outside Latin-1 print as `?`) and stores it under owner `finance/einvoice`, kind `document-pdf`, subject `document-<id>`. The adapter re-asks `finance.einvoice.view` on every create, read and delete and never retains. A `pdf_generated` event keeps the artifact and the last event it was rendered from, so asking again before the document changes answers the same artifact. Base Artifacts needs its storage root and retention period first. `qr_code_svg` draws the validation link's QR code (black on white, no script) for the document page.
 
 ## Evidence
 
-`evidence.rs`: one dataset per table (`code_override`,
-`consolidated_source`, `document`, `line`, `source_link`, `status_event`,
-`submission`) with a frozen field list, ID-ordered pages of 1 to 500. The
-submission's payload is exported as the text it is; credentials live in Base
-Settings and are never exported.
+`evidence.rs`: one dataset per table (`code_override`, `consolidated_source`, `document`, `line`, `source_link`, `status_event`, `submission`) with a frozen field list, ID-ordered pages of 1 to 500. The submission's payload is exported as the text it is; credentials live in Base Settings and are never exported.
 
 ### The MyInvois client
 
-`myinvois/client.rs` calls the API only through Base Integration's `send`, as
-the person the call acts for, so each exchange is recorded under them without
-bodies or headers (system `myinvois`, owner `finance/einvoice` and the
-company). Logging in (`POST /connect/token`, client credentials, scope
-`InvoicingAPI`) yields a token that lives an hour; it is cached in process
-memory per company, environment and client ID until two minutes before it
-lapses, and a 401 drops it, so the authority's 12 logins a minute are never
-spent per call. A token never reaches the database, a log or an exchange
-record. The request envelopes are written by the module's ordered JSON
-writer, like the documents. `myinvois/api.rs` turns each answer into the
-`Authority` callbacks' meta-term outcomes (`SubmitOutcome`, `Progress`,
-`Search`, `StatusRead`, `CancelOutcome`, `LoginOutcome`), keeping the
-authority's answer intact. Nothing in the client retries.
+`myinvois/client.rs` calls the API only through Base Integration's `send`, as the person the call acts for, so each exchange is recorded under them without bodies or headers (system `myinvois`, owner `finance/einvoice` and the company). Logging in (`POST /connect/token`, client credentials, scope `InvoicingAPI`) yields a token that lives an hour; it is cached in process memory per company, environment and client ID until two minutes before it lapses, and a 401 drops it, so the authority's 12 logins a minute are never spent per call. A token never reaches the database, a log or an exchange record. The request envelopes are written by the module's ordered JSON writer, like the documents. `myinvois/api.rs` turns each answer into the `Authority` callbacks' meta-term outcomes (`SubmitOutcome`, `Progress`, `Search`, `StatusRead`, `CancelOutcome`, `LoginOutcome`), keeping the authority's answer intact. Nothing in the client retries.
 
 ## Capabilities
 
-Five keys, verbatim from Bilimbi, under the `finance` domain, all granted to
-`tenant_owner`: `finance.einvoice.view`, `.documents.issue`,
-`.documents.submit`, `.documents.cancel` and `.settings.manage`. The module
-declares the verbs `issue`, `submit` and `cancel` (Bilibi merges verbs across
-modules). It contributes queue workers, pages, menu items and reviewed agent operations. It depends on `finance/ledger` (posting, reversal, source entries) and `base/artifacts` (the PDF), where Bilimbi has the same edges.
+Five keys, verbatim from Bilimbi, under the `finance` domain, all granted to `tenant_owner`: `finance.einvoice.view`, `.documents.issue`, `.documents.submit`, `.documents.cancel` and `.settings.manage`. The module declares the verbs `issue`, `submit` and `cancel` (Bilibi merges verbs across modules). It contributes queue workers, pages, menu items and reviewed agent operations. It depends on `finance/ledger` (posting, reversal, source entries) and `base/artifacts` (the PDF), where Bilimbi has the same edges.
 
 ## Settings
 
-Company-scoped Base Settings, edited on the Settings screen under the group
-`E-invoice` and guarded by `finance.einvoice.settings.manage`. No value has a
-default that names a country, a tax number or a credential.
+Company-scoped Base Settings, edited on the Settings screen under the group `E-invoice` and guarded by `finance.einvoice.settings.manage`. No value has a default that names a country, a tax number or a credential.
 
 - `finance.einvoice.environment` (`sandbox` by default, or `production`),
   `.document_version` (`1.1`, signed, or `1.0`, unsigned, for sandbox testing
@@ -349,31 +218,11 @@ default that names a country, a tax number or a credential.
   `[::1]` or `localhost`, with a port), where a stand-in answers sandbox calls;
   production is https only.
 
-Encrypted values use Base Settings' envelope (`BILIBI_SETTINGS_KEY`), are masked
-on screen and revealed only through its password-checked reveal. `setup`
-reports whether a client secret, certificate and private key are set, and the
-certificate's facts (`CertificateSetup::Facts`: issuer and subject names as
-the authority writes them, serial number, the tax ID and registration number
-its subject carries, validity, days until expiry, and whether the stored
-private key belongs to it), what expires within the alert window
-(`expiring`), and whether the supplier profile's TIN is the certificate's. It
-reads the PEMs inside the facade and returns no byte of them; `Unreadable`
-means a stored certificate does not parse or the settings key is unavailable.
+Encrypted values use Base Settings' envelope (`BILIBI_SETTINGS_KEY`), are masked on screen and revealed only through its password-checked reveal. `setup` reports whether a client secret, certificate and private key are set, and the certificate's facts (`CertificateSetup::Facts`: issuer and subject names as the authority writes them, serial number, the tax ID and registration number its subject carries, validity, days until expiry, and whether the stored private key belongs to it), what expires within the alert window (`expiring`), and whether the supplier profile's TIN is the certificate's. It reads the PEMs inside the facade and returns no byte of them; `Unreadable` means a stored certificate does not parse or the settings key is unavailable.
 
 ## Authority
 
-`Authority` is everything one clearance authority defines that needs no
-network: its document types, posting rules, format shapes, versions, the
-consolidation window, the validation link, its rules over a draft
-(`validate`) and the payload a recorded `Document` becomes (`payload`: the
-format, version and exact bytes to submit, signed at the given time when the
-version is signed, `SigningKeyRequired` without a key, `UnsupportedVersion`
-for a version it lacks). MyInvois is the only implementation (Guideline v4.8
-and the SDK as read on 12 October 2026). Its API callbacks (`login`, `submit`,
-`submission_progress`, `find_submission`, `document_status`, `cancel`) take a
-`Connection` (the outgoing edge, the person, the company, its credentials and
-the environment's base URL) and answer in meta-terms. The consolidated
-document's shape and refusal join the trait with consolidation.
+`Authority` is everything one clearance authority defines that needs no network: its document types, posting rules, format shapes, versions, the consolidation window, the validation link, its rules over a draft (`validate`) and the payload a recorded `Document` becomes (`payload`: the format, version and exact bytes to submit, signed at the given time when the version is signed, `SigningKeyRequired` without a key, `UnsupportedVersion` for a version it lacks). MyInvois is the only implementation (Guideline v4.8 and the SDK as read on 12 October 2026). Its API callbacks (`login`, `submit`, `submission_progress`, `find_submission`, `document_status`, `cancel`) take a `Connection` (the outgoing edge, the person, the company, its credentials and the environment's base URL) and answer in meta-terms. The consolidated document's shape and refusal join the trait with consolidation.
 
 Everything MyInvois defines sits in `src/myinvois.rs` and its submodules:
 
@@ -418,26 +267,15 @@ Everything MyInvois defines sits in `src/myinvois.rs` and its submodules:
   subject attributes (`organizationIdentifier`, `serialNumber`) that carry the
   company's tax and registration numbers.
 
-Foreign-currency documents are refused for now: the SDK's sample writes tax
-amounts in ringgit beside document-currency totals without saying how they
-convert, so the rule is confirmed against the sandbox first. The builder
-already writes `TaxExchangeRate`.
+Foreign-currency documents are refused for now: the SDK's sample writes tax amounts in ringgit beside document-currency totals without saying how they convert, so the rule is confirmed against the sandbox first. The builder already writes `TaxExchangeRate`.
 
 ## Code lists
 
-`code_lists/myinvois.json` holds the authority's nine lists (classification,
-country, currency, document type, industry, payment means, state, tax type and
-unit) as read from the SDK on 12 October 2026, with each list's source URL. They
-are compiled into the crate as the reference data every company starts from, so
-a refreshed list is a new file in a release, reviewed like code. A company's
-override (`override_code`, stored in `finance_einvoice_code_overrides`) renames a
-code, retires it or adds one the file lacks, for that company only.
+`code_lists/myinvois.json` holds the authority's nine lists (classification, country, currency, document type, industry, payment means, state, tax type and unit) as read from the SDK on 12 October 2026, with each list's source URL. They are compiled into the crate as the reference data every company starts from, so a refreshed list is a new file in a release, reviewed like code. A company's override (`override_code`, stored in `finance_einvoice_code_overrides`) renames a code, retires it or adds one the file lacks, for that company only.
 
 ## Database
 
-Migrations `finance-einvoice-001-documents`, `-002-consolidation` and
-`-003-source-links` build the end state of Bilimbi's schema (b-dom-finance
-`4abfaf8`), 26 triggers and 11 functions on seven tables:
+Migrations `finance-einvoice-001-documents`, `-002-consolidation` and `-003-source-links` build the end state of Bilimbi's schema (b-dom-finance `4abfaf8`), 26 triggers and 11 functions on seven tables:
 
 - `finance_einvoice_documents`, `_document_lines`, `_submissions`,
   `_status_events`, `_consolidated_sources` and `_source_links` are
@@ -456,24 +294,7 @@ Migrations `finance-einvoice-001-documents`, `-002-consolidation` and
   `(id, company_id)` foreign keys.
 - `finance_einvoice_code_overrides` is the one editable table.
 
-Prove it with `fixtures/walkthrough` on a disposable database (see the
-repository README); its ledger bridge section (inside the clearance section)
-opens Company 002's book, retries the postings its earlier validations could
-not make, posts and reverses on validation and cancellation, consolidates
-September 2026 (refused, released, consolidated again), generates and reads a
-PDF, links Company 001's documents to Receivables' and Payables' entries, and
-pages the evidence. Its e-invoice section prints the facade's answers, the
-drafts accepted and refused, the payload a recorded document becomes (unsigned
-and signed, verified, and tampered) and each database refusal. Its clearance
-section serves a stand-in for the MyInvois API on the loopback for the
-run, which checks each submission's hash and verifies its signature and
-answers by the code number, then clears Company 002's documents through the
-facade and the real submit and poll jobs: valid, refused, invalid, rate
-limited, a duplicate found and one not found, a lost answer found again, the
-72-hour overdue notice and recovery, an expired token, a rejection request, a
-portal cancellation, and cancellations accepted and refused; then the stored
-submissions, the database's refusals, the exchanges Base Integration recorded
-(without bodies or the secret) and the audit actions.
+Prove it with `fixtures/walkthrough` on a disposable database (see the repository README); its ledger bridge section (inside the clearance section) opens Company 002's book, retries the postings its earlier validations could not make, posts and reverses on validation and cancellation, consolidates September 2026 (refused, released, consolidated again), generates and reads a PDF, links Company 001's documents to Receivables' and Payables' entries, and pages the evidence. Its e-invoice section prints the facade's answers, the drafts accepted and refused, the payload a recorded document becomes (unsigned and signed, verified, and tampered) and each database refusal. Its clearance section serves a stand-in for the MyInvois API on the loopback for the run, which checks each submission's hash and verifies its signature and answers by the code number, then clears Company 002's documents through the facade and the real submit and poll jobs: valid, refused, invalid, rate limited, a duplicate found and one not found, a lost answer found again, the 72-hour overdue notice and recovery, an expired token, a rejection request, a portal cancellation, and cancellations accepted and refused; then the stored submissions, the database's refusals, the exchanges Base Integration recorded (without bodies or the secret) and the audit actions.
 
 ## Consolidation, reconciliation and setup pages (NE6)
 
