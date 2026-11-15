@@ -486,7 +486,9 @@ impl State {
         } else {
             "Times someone approved their own work or turned a control off. Someone else should review each one."
         };
-        let subtitle = if self.company_name.is_empty() {
+        let subtitle = if subtitle.is_empty() {
+            self.company_name.clone()
+        } else if self.company_name.is_empty() {
             subtitle.to_owned()
         } else {
             format!("{} · {subtitle}", self.company_name)
