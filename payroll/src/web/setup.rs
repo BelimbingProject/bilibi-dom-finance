@@ -404,7 +404,14 @@ impl State {
             }),
             false,
         )?;
-        parts.push(section("payroll-mappings", "payroll-mappings-heading", "Account mappings", "Give each pay item and claim type an account.", Some(mappings.len()), table)?);
+        parts.push(section(
+            "payroll-mappings",
+            "payroll-mappings-heading",
+            "Account mappings",
+            "Give each pay item and claim type an account.",
+            Some(mappings.len()),
+            table,
+        )?);
         if can_manage && self.adding {
             parts.push(self.mapping_dialog(&expense, &liability)?);
         }
