@@ -42,7 +42,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             services
                 .get::<Grants>("base/authz.grants")?
-                .set_direct(&admin, 1, cap, Some(action == "allow"))
+                .set_direct(
+                    &admin,
+                    1,
+                    cap,
+                    Some(if action == "allow" {
+                        bilibi_authz::grants::Direct::Allow(bilibi_authz::Reach::All)
+                    } else {
+                        bilibi_authz::grants::Direct::Deny
+                    }),
+                )
                 .await?;
         }
         [action, company] if action == "archive" && matches!(company.as_str(), "1" | "2") => {

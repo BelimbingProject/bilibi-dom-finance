@@ -1568,7 +1568,14 @@ async fn main() -> Outcome<()> {
         .services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     grants
-        .set_direct(&admin, 1, "admin.company.tenant-wide.manage", Some(true))
+        .set_direct(
+            &admin,
+            1,
+            "admin.company.tenant-wide.manage",
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     if std::env::args().any(|s| s == "launcher-asset-credentials") {
         let operator = sign_in(&db, &app.services, 1, 6).await?;

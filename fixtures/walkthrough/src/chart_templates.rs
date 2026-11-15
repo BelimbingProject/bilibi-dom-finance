@@ -188,7 +188,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &admin,
             1,
             bilibi_finance_ledger::MANAGE_TEMPLATES,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     ensure(

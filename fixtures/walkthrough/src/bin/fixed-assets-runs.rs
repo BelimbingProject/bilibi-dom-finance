@@ -257,7 +257,12 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .await?
         .through_entry_number;
     grants
-        .set_direct(&admin, 1, bilibi_finance_ledger::POST_ENTRIES, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            bilibi_finance_ledger::POST_ENTRIES,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     refused(f.depreciate(&s, COMPANY, date(2026, 1, 1)).await, |e| {
         matches!(

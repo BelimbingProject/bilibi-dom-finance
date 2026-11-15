@@ -711,7 +711,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         );
     }
     grants
-        .set_direct(&admin, 3, POST_STATEMENT_LINES, Some(true))
+        .set_direct(
+            &admin,
+            3,
+            POST_STATEMENT_LINES,
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     let before: i64 = raw_client
         .query_one("SELECT count(*) FROM finance_reconciliation_matches", &[])

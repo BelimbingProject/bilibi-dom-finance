@@ -261,7 +261,12 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     // view: without it, or with a fact restricted for them, the issue is
     // refused with what to do.
     grants
-        .set_direct(&admin, admin.user(), bilibi_company::VIEW, Some(false))
+        .set_direct(
+            &admin,
+            admin.user(),
+            bilibi_company::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert!(matches!(
         einvoice.prefill_party(&admin, 1, party.id).await,
@@ -308,7 +313,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             &admin,
             admin.user(),
             bilibi_finance_receivables::ISSUE,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let denied = ar.issue_document(&admin, 1, draft.id).await;
@@ -416,7 +421,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             &admin,
             admin.user(),
             bilibi_finance_receivables::VIEW,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let hidden = attachments.get_attachment(&admin, 1, scan.id).await;
@@ -620,7 +625,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             &admin,
             admin.user(),
             bilibi_finance_receivables::VIEW,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let narrow_issue = ar.issue_document(&admin, 1, closed.id).await;

@@ -280,7 +280,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         .await?,
         "einvoice-document-cancel-confirmation",
     );
-    grants.set_direct(&admin, 1, CANCEL, Some(false)).await?;
+    grants
+        .set_direct(&admin, 1, CANCEL, Some(bilibi_authz::grants::Direct::Deny))
+        .await?;
     has(
         &event(&mut detail, &manager, json!({"type":"cancel"})).await?,
         "You do not have permission to cancel documents.",
@@ -307,7 +309,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         .events
         .iter()
         .any(|e| e.event == "cancelled" && e.reason.as_deref() == Some(reason)));
-    grants.set_direct(&admin, 1, VIEW, Some(false)).await?;
+    grants
+        .set_direct(&admin, 1, VIEW, Some(bilibi_authz::grants::Direct::Deny))
+        .await?;
     assert!(matches!(
         downloads
             .0
@@ -321,7 +325,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         Err(Error::Forbidden)
     ));
     grants.set_direct(&admin, 1, VIEW, None).await?;
-    grants.set_direct(&admin, 1, SUBMIT, Some(false)).await?;
+    grants
+        .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
+        .await?;
     has(
         &event(&mut detail, &manager, json!({"type":"submit"})).await?,
         "You do not have permission to submit documents.",

@@ -151,7 +151,8 @@ async fn main() -> Outcome<()> {
                 } else {
                     bilibi_finance_einvoice::VIEW
                 },
-                mode.starts_with("deny-").then_some(false),
+                mode.starts_with("deny-")
+                    .then_some(bilibi_authz::grants::Direct::Deny),
             )
             .await?;
         println!("Browser source-grant steering applied: {mode}");
@@ -375,7 +376,9 @@ async fn main() -> Outcome<()> {
         bilibi_finance_ledger::POST_ENTRIES,
         bilibi_finance_attachments::CREATE,
     ] {
-        grants.set_direct(&admin, 1, cap, Some(false)).await?;
+        grants
+            .set_direct(&admin, 1, cap, Some(bilibi_authz::grants::Direct::Deny))
+            .await?;
     }
     let artifact = reports
         .export_auditor_pack(&manager, COMPANY, date(2026, 3, 31))
@@ -540,7 +543,9 @@ async fn main() -> Outcome<()> {
         bilibi_finance_sst::VIEW,
         bilibi_finance_fixed_assets::VIEW,
     ] {
-        grants.set_direct(&admin, 1, cap, Some(false)).await?;
+        grants
+            .set_direct(&admin, 1, cap, Some(bilibi_authz::grants::Direct::Deny))
+            .await?;
         assert!(
             matches!(
                 reports

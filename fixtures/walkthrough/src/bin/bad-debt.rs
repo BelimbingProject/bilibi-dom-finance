@@ -70,7 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .chain(bilibi_finance_sst::CAPABILITIES)
             .chain(bilibi_finance_payables::CAPABILITIES)
         {
-            grants.set_direct(&admin, user, cap, Some(true)).await?;
+            grants
+                .set_direct(
+                    &admin,
+                    user,
+                    cap,
+                    Some(bilibi_authz::grants::Direct::Allow(
+                        bilibi_authz::Reach::All,
+                    )),
+                )
+                .await?;
         }
     }
     let manager = sign_in(&db, services, 1, 1).await?;

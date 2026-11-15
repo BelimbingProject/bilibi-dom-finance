@@ -153,7 +153,16 @@ async fn main() -> Outcome<()> {
             {
                 services
                     .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
-                    .set_direct(&admin, 1, key, Some(enabled.parse()?))
+                    .set_direct(
+                        &admin,
+                        1,
+                        key,
+                        Some(if enabled.parse()? {
+                            bilibi_authz::grants::Direct::Allow(bilibi_authz::Reach::All)
+                        } else {
+                            bilibi_authz::grants::Direct::Deny
+                        }),
+                    )
                     .await?;
             }
             ["archive"] => {

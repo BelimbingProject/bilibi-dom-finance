@@ -152,14 +152,28 @@ async fn main() -> Outcome<()> {
     let admin = sign_in(&db, services, 1, 4).await?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     for key in VIEWER_GRANTS {
-        grants.set_direct(&admin, 2, key, Some(true)).await?;
+        grants
+            .set_direct(
+                &admin,
+                2,
+                key,
+                Some(bilibi_authz::grants::Direct::Allow(
+                    bilibi_authz::Reach::All,
+                )),
+            )
+            .await?;
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("deny") | Some("restore") => {
             let key = args.get(1).ok_or(Error::Invalid)?;
             grants
-                .set_direct(&admin, 1, key, (args[0] == "deny").then_some(false))
+                .set_direct(
+                    &admin,
+                    1,
+                    key,
+                    (args[0] == "deny").then_some(bilibi_authz::grants::Direct::Deny),
+                )
                 .await?;
             println!("{} {key}", args[0]);
             return Ok(());

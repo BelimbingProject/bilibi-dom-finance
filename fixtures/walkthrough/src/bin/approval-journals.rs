@@ -168,7 +168,14 @@ async fn main() -> Outcome<()> {
         .services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     grants
-        .set_direct(&reviewer, 2, "workflow.approvals.view", Some(true))
+        .set_direct(
+            &reviewer,
+            2,
+            "workflow.approvals.view",
+            Some(bilibi_authz::grants::Direct::Allow(
+                bilibi_authz::Reach::All,
+            )),
+        )
         .await?;
     let reader = sign_in(&db, &app.services, 1, 2).await?;
     let auth = app

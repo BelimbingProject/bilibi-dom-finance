@@ -234,7 +234,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.get().await?.execute("UPDATE companies SET status='active',tax_id='CORE-TAX',registration_number='CORE-REG' WHERE id=$1",&[&v.party.id]).await?;
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     grants
-        .set_direct(&reviewer, manager.user(), bilibi_company::VIEW, Some(false))
+        .set_direct(
+            &reviewer,
+            manager.user(),
+            bilibi_company::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     refused(
         p.create_bill(&manager, 1, &draft("NO-COMPANY-VIEW")).await,

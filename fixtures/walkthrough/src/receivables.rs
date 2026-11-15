@@ -55,7 +55,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             &admin,
             manager.user(),
             bilibi_finance_receivables::MANAGE_CUSTOMERS,
-            Some(false),
+            Some(bilibi_authz::grants::Direct::Deny),
         )
         .await?;
     let stale_scope = ar.create_customer(&manager, 1, &json!({})).await;

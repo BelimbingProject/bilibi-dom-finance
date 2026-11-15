@@ -330,7 +330,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     };
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     grants
-        .set_direct(&admin, 1, bilibi_finance_ledger::VIEW, Some(false))
+        .set_direct(
+            &admin,
+            1,
+            bilibi_finance_ledger::VIEW,
+            Some(bilibi_authz::grants::Direct::Deny),
+        )
         .await?;
     assert!(matches!(
         ledger.get_book(&manager, 1).await,
