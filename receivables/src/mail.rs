@@ -97,13 +97,6 @@ impl Receivables {
             .ok_or(ReceivableError::InvalidOption)?;
         self.authorize_on(client, scope, company, crate::VIEW)
             .await?;
-        let system =
-            bilibi_authz::SystemScope::rehydrate(client, scope.tenant(), Some(PRINCIPAL)).await?;
-        for capability in [MANAGE_DOCUMENTS, crate::VIEW] {
-            bilibi_authz::authorize_system(client, &system, capability)
-                .await
-                .map_err(|_| invalid("base", "Ask an administrator to enable invoice email."))?;
-        }
         let document = documents::read(client, scope.tenant(), company, id).await?;
         if document.status != "issued" || document.kind != "invoice" || document.opening.is_some() {
             return Err(ReceivableError::NotIssued);
@@ -140,6 +133,13 @@ impl Receivables {
             .await?;
         let review = self.review_mail(tx.sql(), scope, company, input).await?;
         let tenant = scope.tenant();
+        let system =
+            bilibi_authz::SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
+        for capability in [MANAGE_DOCUMENTS, crate::VIEW] {
+            bilibi_authz::authorize_system(tx.sql(), &system, capability)
+                .await
+                .map_err(|_| invalid("base", "Ask an administrator to enable invoice email."))?;
+        }
         let data = json!({"document_id":review["document_id"],"recipient":review["recipient"],"subject":review["subject"],"body":review["body"],"status":"queued"});
         let row = tx
             .mutate(move |sql| {
@@ -151,8 +151,6 @@ impl Receivables {
                 })
             })
             .await?;
-        let system =
-            bilibi_authz::SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
         self.queue
             .enqueue_system_within(
                 tx,
