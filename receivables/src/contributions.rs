@@ -27,10 +27,10 @@ pub const CAPABILITIES: [&str; 8] = [
 ];
 
 inventory::submit! { Contribution::new(VOCABULARY, MODULE, Provenance { module: MODULE, source: file!(), line: line!() }, &VocabularyContribution {
-    domains: &["finance"], verbs: &["issue"],
-    capabilities: &[C::company(VIEW), C::tenant(MANAGE_SETUP), C::company(MANAGE_CUSTOMERS), C::company(MANAGE_DOCUMENTS), C::tenant(ISSUE), C::tenant(POST_PAYMENTS), C::tenant(SUBMIT_WRITE_OFFS), C::tenant(APPROVE_WRITE_OFFS)],
+    domains: &["finance"], verbs: &["issue", "record-failure"],
+    capabilities: &[C::company(VIEW), C::tenant(crate::mail::MONITOR_CAPABILITY), C::tenant(MANAGE_SETUP), C::company(MANAGE_CUSTOMERS), C::company(MANAGE_DOCUMENTS), C::tenant(ISSUE), C::tenant(POST_PAYMENTS), C::tenant(SUBMIT_WRITE_OFFS), C::tenant(APPROVE_WRITE_OFFS)],
     roles: &[RoleDefinition { code: "tenant_owner", name: "Tenant Owner", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &CAPABILITIES },
         RoleDefinition { code: "appointed_auditor", name: "Appointed auditor", description: "Read-only access to one company's ledger, reports and source evidence for a named audit engagement.", grant_all: false, capabilities: &[VIEW] },
         RoleDefinition { code: SALES_WORKFLOW, name: "Sales workflow", description: "Customers and draft invoices only: no ledger, reports, receipts, issuing, payables or payroll. A workflow boundary, not strict data segregation.", grant_all: false, capabilities: &[VIEW, MANAGE_CUSTOMERS, MANAGE_DOCUMENTS] }],
-    system_principals: &[bilibi_authz::SystemPrincipalDefinition {name:crate::orders::PRINCIPAL,capabilities:&[MANAGE_DOCUMENTS,MANAGE_CUSTOMERS,bilibi_company::VIEW,bilibi_company::UPDATE,"admin.person.view"]}],
+    system_principals: &[bilibi_authz::SystemPrincipalDefinition {name:crate::orders::PRINCIPAL,capabilities:&[MANAGE_DOCUMENTS,MANAGE_CUSTOMERS,bilibi_company::VIEW,bilibi_company::UPDATE,"admin.person.view"]}, bilibi_authz::SystemPrincipalDefinition {name:crate::mail::PRINCIPAL,capabilities:&[MANAGE_DOCUMENTS,VIEW]}, bilibi_authz::SystemPrincipalDefinition {name:crate::mail::MONITOR,capabilities:&[crate::mail::MONITOR_CAPABILITY]}],
 }) }

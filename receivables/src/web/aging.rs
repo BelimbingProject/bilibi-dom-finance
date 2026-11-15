@@ -2,14 +2,15 @@
 //! prices every issued invoice at one posting number so the columns agree.
 use super::{
     format::{self as f},
-    render, Flash, Pages, AGING, CUSTOMERS, INVOICES,
+    render, Flash, Pages, Written, AGING, CUSTOMERS, INVOICES,
 };
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Button, Card, Cell, EmptyState, FilterToolbar, FlexRow, Header, Html, ListColumns,
-    PageVariant, SectionHeading, StatusKind, ToolbarControl,
+    params, Button, ButtonVariant, Card, Cell, EmptyState, Field, FilterToolbar, FlexRow,
+    FlexTable, Form, Header, Html, InputKind, ListColumns, ModalWidth, PageVariant, SectionHeading,
+    StatusKind, ToolbarControl,
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -43,6 +44,7 @@ struct Customer {
     credit_total: Decimal,
     bucket_totals: Vec<Decimal>,
     total: Decimal,
+    statement_status: Option<String>,
 }
 #[derive(Deserialize)]
 struct Invoice {
@@ -65,6 +67,14 @@ fn bucket_label(b: &Bucket) -> String {
     }
 }
 
+struct StatementDraft {
+    customer_id: i64,
+    name: String,
+    as_of: String,
+    values: HashMap<String, String>,
+    errors: f::Errors,
+}
+
 pub(super) struct Aging {
     pages: Pages,
     as_of: String,
@@ -75,6 +85,8 @@ pub(super) struct Aging {
     report: Option<Report>,
     figures: f::Figures,
     flash: Flash,
+    statement: Option<StatementDraft>,
+    can_send: bool,
     customers: ListColumns,
     invoices: ListColumns,
     credits: ListColumns,
@@ -98,6 +110,7 @@ impl Aging {
             ("b4", "Over 90 days late"),
             ("credits", "Unapplied credits"),
             ("total", "Net owed"),
+            ("statement", "Last statement"),
         ]);
         let (customer, bucket) = narrow(query);
         Ok(Self {
@@ -109,6 +122,8 @@ impl Aging {
             report: None,
             figures: f::Figures::default(),
             flash: Flash::default(),
+            statement: None,
+            can_send: false,
             customers: f::columns(
                 "receivables-aging-customers-table",
                 &columns,
@@ -150,6 +165,7 @@ impl Aging {
             self.as_of = today(&display.timezone);
         }
         self.error = None;
+        self.can_send = self.pages.allowed(scope, crate::MANAGE_DOCUMENTS).await?;
         self.report = match self
             .pages
             .read(
@@ -257,6 +273,21 @@ impl Aging {
             credit_total += c.credit_total;
             let mut row = FlexRow::new(c.customer_id.to_string());
             row.dom_id = Some(format!("receivables-aging-customer-{}", c.customer_id));
+            if self.can_send {
+                let label = if c.documents.iter().any(|d| d.days_overdue > 0) {
+                    "Chase"
+                } else {
+                    "Send statement"
+                };
+                row.actions = render(Button {
+                    button_type: "button",
+                    event: "ask_statement",
+                    name: "customer_id",
+                    value: &c.customer_id.to_string(),
+                    body: Html::text(label),
+                    ..Button::default()
+                })?;
+            }
             row = row.slot(
                 "customer",
                 f::link(&format!("{CUSTOMERS}/{}", c.customer_id), &c.name)?,
@@ -269,7 +300,17 @@ impl Aging {
             }
             rows.push(
                 row.slot("credits", self.bucket_cell(c.credit_total, None)?)
-                    .slot("total", f::tabular(&self.figures.decimal(c.total))?),
+                    .slot("total", f::tabular(&self.figures.decimal(c.total))?)
+                    .cell(
+                        "statement",
+                        Cell::text(match c.statement_status.as_deref() {
+                            Some("queued") => "Queued",
+                            Some("sent") => "Sent",
+                            Some("failed") => "Could not send",
+                            Some(_) => "Delivery unconfirmed",
+                            None => "—",
+                        }),
+                    ),
             );
         }
         if !r.customers.is_empty() {
@@ -303,13 +344,19 @@ impl Aging {
                     class: "p-5 pb-0",
                     ..SectionHeading::default()
                 })?;
-                b.push(&f::table(
-                    &self.customers,
-                    "customers_grid",
-                    "Receivables aging by customer",
-                    rows,
+                let mut table =
+                    FlexTable::new(&self.customers.id, self.customers.flex_columns(), rows);
+                table.event = "customers_grid";
+                table.caption = "Receivables aging by customer";
+                table.framed = false;
+                table.zoom = self.customers.zoom;
+                table.suggestions = self.customers.flex_suggestions();
+                table.add_query = &self.customers.add_query;
+                table.actions = self.can_send;
+                table.empty = Some(bilibi_ui::TableEmpty::Content(Html::text(
                     "Nobody owes anything on this date.",
-                )?);
+                )));
+                b.push(&render(table)?);
                 b
             },
             ..Card::default()
@@ -476,7 +523,80 @@ impl Aging {
                 body.push(&render(Stack { parts: cards })?);
                 body
             },
-            None,
+            self.statement
+                .as_ref()
+                .map(|draft| self.statement_dialog(draft))
+                .transpose()?,
+        )
+    }
+
+    fn statement_dialog(&self, d: &StatementDraft) -> Result<Html> {
+        let labels = [
+            ("recipient", "Email address"),
+            ("subject", "Subject"),
+            ("body", "Message"),
+        ]
+        .into_iter()
+        .map(|(key, label)| {
+            (
+                key.to_owned(),
+                format!("statement-mail-{key}"),
+                label.to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+        let mut body = render(d.errors.summary("statement-mail-errors", &labels))?;
+        for (key, label) in [
+            ("recipient", "Email address"),
+            ("subject", "Subject"),
+            ("body", "Message"),
+        ] {
+            let mut field = Field::in_form("statement", key)
+                .id(format!("statement-mail-{key}"))
+                .label(label)
+                .value(d.values.get(key).cloned().unwrap_or_default())
+                .errors(d.errors.under(key, label))
+                .required();
+            if key == "body" {
+                field = field.kind(InputKind::Textarea);
+            }
+            body.push(&render(field)?);
+        }
+        let mut actions = render(Button {
+            id: "statement-mail-cancel",
+            button_type: "button",
+            event: "cancel_statement",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        actions.push(&render(Button {
+            id: "statement-mail-send",
+            button_type: "submit",
+            variant: ButtonVariant::Primary,
+            working: "Sending…",
+            body: Html::text("Send statement"),
+            ..Button::default()
+        })?);
+        let form = render(Form {
+            id: "statement-mail-form",
+            event: "send_statement",
+            change: false,
+            class: "mt-4",
+            body,
+            actions: f::actions(actions)?,
+        })?;
+        f::modal(
+            "statement-mail-modal",
+            "Send statement",
+            &format!(
+                "{} · {}. A statement will be attached.",
+                d.name,
+                bilibi_finance_ledger::dates::display_text(&d.as_of)
+            ),
+            "cancel_statement",
+            ModalWidth::Narrow,
+            &self.flash,
+            form,
         )
     }
 }
@@ -525,6 +645,66 @@ impl LiveState<Scope, Error> for Aging {
                 }
                 LiveInput::Event(v) => match v["type"].as_str().ok_or(Error::Invalid)? {
                     "clear-flash" => self.flash.dismiss(v),
+                    "cancel_statement" => {
+                        self.statement = None;
+                        self.flash.0 = None;
+                    }
+                    "ask_statement" => {
+                        self.flash.0 = None;
+                        let customer_id =
+                            params::positive_id(v["customer_id"].as_str()).ok_or(Error::Invalid)?;
+                        if self.can_send
+                            && self.report.as_ref().is_some_and(|r| {
+                                r.customers.iter().any(|c| c.customer_id == customer_id)
+                            })
+                        {
+                            let data = self
+                                .pages
+                                .read(
+                                    r.scope,
+                                    "finance.receivables.customer.get",
+                                    json!({"customer_id":customer_id}),
+                                )
+                                .await?;
+                            let customer: crate::Customer =
+                                serde_json::from_value(data).map_err(|_| Error::Internal)?;
+                            let overdue = self
+                                .report
+                                .as_ref()
+                                .and_then(|r| {
+                                    r.customers.iter().find(|c| c.customer_id == customer_id)
+                                })
+                                .is_some_and(|c| c.documents.iter().any(|d| d.days_overdue > 0));
+                            self.statement = Some(StatementDraft { customer_id, name: customer.name, as_of:self.as_of.clone(), values:[("recipient".into(),customer.party.email.unwrap_or_default()), ("subject".into(),"Your statement".into()), ("body".into(),if overdue { "Please find your statement attached. We would appreciate payment of any overdue amounts.".into() } else { "Please find your statement attached.".into() })].into(),errors:f::Errors::default() });
+                        }
+                    }
+                    "send_statement" => {
+                        if let Some(draft) = &mut self.statement {
+                            draft.values.extend(params::form_values(v, "statement"));
+                            let input = json!({"customer_id":draft.customer_id,"as_of":draft.as_of,"recipient":draft.values.get("recipient"),"subject":draft.values.get("subject"),"body":draft.values.get("body")});
+                            match self
+                                .pages
+                                .write(
+                                    r.scope,
+                                    r.credential,
+                                    "send_statement",
+                                    "finance.receivables.statement.send",
+                                    input,
+                                )
+                                .await?
+                            {
+                                Written::Done(_) => {
+                                    self.statement = None;
+                                    self.flash
+                                        .set(StatusKind::Success, "Statement queued for sending.");
+                                }
+                                Written::Invalid(fields) => draft.errors = f::Errors(fields),
+                                Written::Refused(message) => {
+                                    self.flash.set(StatusKind::Error, message)
+                                }
+                            }
+                        }
+                    }
                     "customers_grid" => {
                         self.customers.handle(&params::string_values(v));
                     }

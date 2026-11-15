@@ -28,6 +28,31 @@ fn handler<'a>(registry: &'a Registry, key: &str) -> &'a dyn WriteHandler {
     };
     handler
 }
+// The plan engine hands previews this transaction-backed operation client.
+struct PlanPreview<'a, 'b>(&'a tokio_postgres::Transaction<'b>);
+impl bilibi_tenancy::ProofClient for PlanPreview<'_, '_> {
+    fn query_opt<'a>(
+        &'a self,
+        sql: &'a str,
+        args: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Option<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query_opt(sql, args).await?) })
+    }
+}
+impl bilibi_tenancy::ReadClient for PlanPreview<'_, '_> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        args: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Vec<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query(sql, args).await?) })
+    }
+}
+impl bilibi_agent_api::OperationClient for PlanPreview<'_, '_> {
+    fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
+        Some(self.0)
+    }
+}
 fn day(s: &str) -> CalendarDate {
     s.to_owned().try_into().expect("fixture date")
 }
@@ -62,6 +87,42 @@ async fn main() -> Outcome<()> {
     let installed = install(&db, &app.services).await?;
     let manager = sign_in(&db, &app.services, 1, 1).await?;
     let admin = sign_in(&db, &app.services, 1, 4).await?;
+    if let (Ok(binary), Ok(root)) = (
+        std::env::var("BILIBI_PDF_CHROMIUM"),
+        std::env::var("BILIBI_ATTACHMENTS_DEMO_ROOT"),
+    ) {
+        std::fs::create_dir_all(&root)?;
+        bilibi_finance_walkthrough_fixture::attachments::configure_storage(
+            &db,
+            &app.services,
+            &admin,
+            &root,
+        )
+        .await?;
+        let boundary = app
+            .services
+            .get::<MutationBoundary>("base/database.mutations")?;
+        let settings = app
+            .services
+            .get::<bilibi_settings::Settings>("base/settings.store")?;
+        let mut client = db.get().await?;
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.mutation_context("walkthrough.pdf_settings"),
+            )
+            .await?;
+        settings
+            .put(
+                &mut tx,
+                &admin,
+                bilibi_settings::Target::Global,
+                "pdf.chromium.binary",
+                json!(binary),
+            )
+            .await?;
+        tx.commit().await?;
+    }
     let ar = app
         .services
         .get::<Receivables>(bilibi_finance_receivables::SERVICE)?;
@@ -78,6 +139,19 @@ async fn main() -> Outcome<()> {
     let grants = app
         .services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
+    for capability in [
+        bilibi_finance_receivables::VIEW,
+        bilibi_finance_receivables::MANAGE_DOCUMENTS,
+    ] {
+        grants
+            .set_system(
+                &admin,
+                "finance-receivables-send-invoice",
+                capability,
+                Some(true),
+            )
+            .await?;
+    }
     let ledger = app.services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let account = |code: &str| {
         installed
@@ -313,6 +387,131 @@ async fn main() -> Outcome<()> {
         assert_eq!(party[&key], committed["result"]["record"][&key]);
     }
     tx.commit().await?;
+    // A send preview and a rolled-back commit must not leave a delivery job.
+    let send_key = "finance.receivables.document.send";
+    let send = handler(&registry, send_key);
+    let mail = json!({"company_id":1,"document_id":draft.id,"recipient":"finance@orchid.example.test","subject":"Invoice","body":"Please find your invoice attached."});
+    let mut tx = mutations
+        .begin(
+            &mut raw,
+            manager.mutation_context("walkthrough.send_invoice"),
+        )
+        .await?;
+    let preview = send
+        .preview(tx.sql(), &manager, &mail)
+        .await?
+        .envelope(send_key);
+    assert_eq!(
+        preview["result"]["changes"]["recipient"],
+        "finance@orchid.example.test"
+    );
+    send.commit(&mut tx, &manager, &mail).await?;
+    tx.rollback().await?;
+    let count: i64 = raw
+        .query_one("SELECT count(*) FROM finance_receivables_mail", &[])
+        .await?
+        .get(0);
+    assert_eq!(count, 0, "rolled-back send must leave no email or job");
+    println!("PASS: invoice send reviews the recipient and rolls back with its plan");
+    // Sales workflow (staff@example.test, Company 001 only) prepares drafts but
+    // never issues, so it is refused sending the issued invoice outside the company.
+    raw.batch_execute(
+        "INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(7,1,'person_7','Sam Sales','human','staff@example.test') ON CONFLICT DO NOTHING;
+         INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(7,1,7,1,'Sales') ON CONFLICT DO NOTHING;
+         UPDATE users SET person_id=7 WHERE tenant_id=1 AND id=3 AND person_id IS NULL;
+         INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT tenant_id,person_id,1 FROM users WHERE tenant_id=1 AND id=3 AND person_id IS NOT NULL ON CONFLICT DO NOTHING;
+         SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));
+         SELECT setval(pg_get_serial_sequence('person_affiliations','id'),(SELECT max(id) FROM person_affiliations))",
+    )
+    .await?;
+    let roles: Vec<i64> = raw
+        .query(
+            "SELECT role_id FROM principal_roles WHERE tenant_id=1 AND user_id=3",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    for role in roles {
+        grants.assign_role(&admin, 3, role, false).await?;
+    }
+    let sales_role: i64 = raw
+        .query_one(
+            "SELECT id FROM roles WHERE tenant_id=1 AND code='sales_workflow'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let mut tx = mutations
+        .begin(&mut raw, admin.mutation_context("walkthrough.sales_role"))
+        .await?;
+    grants
+        .assign_role_with_in(
+            &mut tx,
+            &admin,
+            3,
+            sales_role,
+            true,
+            &bilibi_authz::grants::Assignment {
+                company_id: Some(1),
+                purpose: "Sales team".into(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    tx.commit().await?;
+    let sales = sign_in(&db, &app.services, 1, 3).await?;
+    assert_eq!(ar.get_document(&sales, 1, draft.id).await?.status, "issued");
+    let mut tx = mutations
+        .begin(&mut raw, sales.mutation_context("walkthrough.sales_send"))
+        .await?;
+    assert!(matches!(
+        send.preview(tx.sql(), &sales, &mail).await,
+        Err(bilibi_agent_api::Error::Forbidden)
+    ));
+    assert!(matches!(
+        send.commit(&mut tx, &sales, &mail).await,
+        Err(bilibi_agent_api::Error::Forbidden)
+    ));
+    tx.rollback().await?;
+    println!("PASS: sales workflow reads the issued invoice but its send is refused");
+    let key = "finance.receivables.statement.send";
+    let statement = handler(&registry, key);
+    let input = json!({"company_id":1,"customer_id":customer.id,"as_of":"2026-11-15","recipient":"finance@orchid.example.test","subject":"Your statement","body":"Please see the attached statement."});
+    let mut tx = mutations
+        .begin(&mut raw, manager.mutation_context("walkthrough.statement"))
+        .await?;
+    let preview = statement
+        .preview(&PlanPreview(tx.sql()), &manager, &input)
+        .await?
+        .envelope(key);
+    assert_eq!(
+        preview["result"]["statement"]["customer"]["documents"][0]["document_id"],
+        draft.id
+    );
+    let total = &preview["result"]["statement"]["customer"]["total"];
+    let total: rust_decimal::Decimal = total
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| total.to_string())
+        .parse()?;
+    assert_eq!(total, rust_decimal::Decimal::from(100));
+    statement.commit(&mut tx, &manager, &input).await?;
+    tx.rollback().await?;
+    let count: i64 = raw
+        .query_one("SELECT count(*) FROM finance_receivables_mail", &[])
+        .await?
+        .get(0);
+    assert_eq!(count, 0, "rolled-back statement must leave no email or job");
+    println!(
+        "PASS: statement review names the open invoice and its balance; rollback leaves no email"
+    );
+    if std::env::var_os("BILIBI_PDF_CHROMIUM").is_some() {
+        let pdf = ar.print_document(&manager, 1, draft.id).await?;
+        assert!(pdf.bytes.starts_with(b"%PDF-"));
+        println!("PASS: the issued invoice renders as a PDF");
+    }
     let frozen = ar.get_document(&manager, 1, draft.id).await?;
     assert_eq!(frozen.party_line1.as_deref(), Some(long_line.as_str()));
     println!(
@@ -423,6 +622,11 @@ async fn main() -> Outcome<()> {
     );
     drop(raw);
     if std::env::var("CUSTOMERS_BROWSER").as_deref() == Ok("1") {
+        bilibi_walkthrough_fixture::set_instance_role(&db, "development").await?;
+        let executor =
+            bilibi_queue::Executor::from_services(&app.services, bilibi_queue::Config::default())?;
+        let (_stop, stopped) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move { executor.run(stopped).await });
         let listener = tokio::net::TcpListener::bind(
             std::env::var("BIND_ADDR").unwrap_or("127.0.0.1:43999".into()),
         )

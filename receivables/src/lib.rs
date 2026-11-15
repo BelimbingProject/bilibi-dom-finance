@@ -9,6 +9,7 @@ mod document_page;
 mod documents;
 mod evidence;
 mod fiscal;
+mod mail;
 mod opening;
 mod opening_csv;
 mod opening_lifecycle;
@@ -21,6 +22,7 @@ mod records;
 mod reports;
 mod settlements;
 mod sources;
+mod statement_mail;
 mod store;
 mod validation;
 mod web;
@@ -59,13 +61,15 @@ pub const SERVICE: &str = "finance/receivables.receivables";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/artifacts", "base/media", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
+        dependencies: &["base/artifacts", "base/media", "base/mail", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
         migrations: &[("finance-receivables-001-receivables", include_str!("../migrations/001-receivables.sql")), ("finance-receivables-002-write-offs", include_str!("../migrations/002-write-offs.sql")), ("finance-receivables-003-core-company", include_str!("../migrations/003-core-company.sql")), ("finance-receivables-004-opening-items", include_str!("../migrations/004-opening-items.sql")),
             ("finance-receivables-005-opening-lifecycle", include_str!("../migrations/005-opening-lifecycle.sql")), ("finance-receivables-006-party-facts", include_str!("../migrations/006-party-facts.sql")), ("finance-receivables-007-core-party-code", include_str!("../migrations/007-core-party-code.sql")),
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
             ("finance-receivables-009-credit-settlements", include_str!("../migrations/009-credit-settlements.sql")),
             ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql")),
-            ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql"))],
+            ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql")),
+            ("finance-receivables-012-mail", include_str!("../migrations/012-mail.sql")),
+            ("finance-receivables-013-statement-mail", include_str!("../migrations/013-statement-mail.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -76,12 +80,13 @@ inventory::submit! {
                 artifacts: services.get("base/artifacts.store")?,
                 media: services.get(bilibi_media::SERVICE)?,
                 settings: services.get("base/settings.store")?,
+                queue: services.get(bilibi_queue::SERVICE)?,
             });
             agent_operations::bind(receivables.clone())?;
             order_operations::bind(receivables.clone())?;
             opening_operations::bind(receivables.clone())?;
             Ok(receivables)
-        }}, Service { id: orders::SWEEP_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
+        }}, Service { id: mail::ENDING_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::EndingService(Arc::new(mail::MailEnded { receivables: services.get(SERVICE)? })))) }, Service { id: mail::SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(mail::SendInvoice { receivables: services.get(SERVICE)?, mailer: services.get(bilibi_mail::SERVICE)? })))) }, Service { id: orders::SWEEP_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrders {
             receivables: services.get(SERVICE)?, schedule: services.get("base/schedule.store")?, queue: services.get(bilibi_queue::SERVICE)?,
         })))) }, Service { id: orders::JOB_SERVICE, factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(orders::InvoiceOrder { receivables: services.get(SERVICE)? })))) }, Service { id: pdf::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(pdf::Downloads { receivables: services.get(SERVICE)? })))) }, Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -186,6 +191,7 @@ pub struct Receivables {
     attachments: Arc<Attachments>,
     parties: Arc<bilibi_tenancy::PartyProofs>,
     records: Arc<bilibi_records::Records>,
+    queue: Arc<bilibi_queue::Queue>,
 }
 
 impl Receivables {
@@ -210,9 +216,38 @@ impl Receivables {
         company: i64,
         capability: &str,
     ) -> Result<()> {
+        self.lock(client, scope, company, capability, true).await
+    }
+
+    async fn join_waiting(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company: i64,
+        capability: &str,
+    ) -> Result<()> {
+        self.lock(client, scope, company, capability, false).await
+    }
+
+    async fn lock(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company: i64,
+        capability: &str,
+        nowait: bool,
+    ) -> Result<()> {
         self.authorize_on(client, scope, company, capability)
             .await?;
-        let row = client.query_opt("SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT", &[&scope.tenant(), &company]).await?.ok_or(ReceivableError::CompanyNotFound)?;
+        let sql = if nowait {
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT"
+        } else {
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE"
+        };
+        let row = client
+            .query_opt(sql, &[&scope.tenant(), &company])
+            .await?
+            .ok_or(ReceivableError::CompanyNotFound)?;
         if row.get::<_, String>(0) == "archived" {
             return Err(ReceivableError::CompanyArchived);
         }
