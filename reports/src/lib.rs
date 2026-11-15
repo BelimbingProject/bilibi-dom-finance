@@ -1,8 +1,8 @@
 //! Management reports, module `finance/reports` (Bilimbi
 //! `Bilimbi.Finance.Reports`): a company's figures read live from its general
 //! ledger: profit and loss for date ranges, the balance sheet and the cash
-//! position as of dates, headline figures for a period against the one before
-//! it, and the entries behind any account's figure. They are management
+//! position as of dates, comparative headline figures (see the module README),
+//! and the entries behind any account's figure. They are management
 //! reports for the company's own use, not statutory financial statements. The
 //! module also retains source-period conversion schedules as evidence without
 //! turning them into postings, tax returns, payroll runs or remittances.

@@ -553,7 +553,7 @@ fn statement(
                 .enumerate()
                 .map(|(i, c)| (format!("v{i}"), column_label(c, display))),
         );
-        body.push(&table(id, &labels, rows, &title, None, columns, list)?);
+        body.push(&table(id, &labels, rows, title, None, columns, list)?);
     }
     // The unframed FlexTable notch rises above its card. Keep the label
     // outside that card so the shared component can reserve the notch's gap.
