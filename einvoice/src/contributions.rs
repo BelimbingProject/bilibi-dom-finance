@@ -84,7 +84,7 @@ page!(
 page!(
     "setup",
     "/finance/einvoice/setup",
-    "E-invoice setup",
+    "E-invoice settings",
     SETTINGS,
     "vaadin-invoice",
     4

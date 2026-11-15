@@ -1,4 +1,4 @@
-//! The Posting accounts section of the E-invoice setup page: each ledger
+//! The Posting accounts section of the E-invoice settings page: each ledger
 //! account a valid e-invoice posts to, chosen in place from the company's
 //! chart with the searchable combobox and saved on its own. A posting
 //! refused for a missing account links here ("Choose accounts").

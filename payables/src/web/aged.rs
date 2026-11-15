@@ -261,7 +261,7 @@ impl Aged {
         let mut cards = Vec::new();
         let Some(aged) = &self.aged else {
             let mut empty = EmptyState::missing(
-                "Aged payables unavailable",
+                "Aging unavailable",
                 "What is owed to suppliers cannot be read with your current access.",
             );
             empty.id = "payables-aged-unavailable".into();

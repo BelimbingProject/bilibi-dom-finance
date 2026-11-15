@@ -72,7 +72,7 @@ bilibi_menu::contribute!(
 );
 bilibi_menu::contribute!(
     "finance/sst",
-    bilibi_menu::MenuItem::page("finance.sst.setup", "SST setup", SETUP)
+    bilibi_menu::MenuItem::page("finance.sst.setup", "SST settings", SETUP)
         .company_scoped()
         .icon("tabler-receipt-tax")
         .under("finance.group.tax")
@@ -143,7 +143,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "returns" => Some("SST returns"),
-            "setup" => Some("SST setup"),
+            "setup" => Some("SST settings"),
             "return" => Some("SST return"),
             _ => None,
         }
