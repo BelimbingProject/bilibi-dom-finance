@@ -32,7 +32,7 @@ pub(crate) async fn list(
     let rows = client.query(
         &format!("WITH items AS (\
          SELECT e.id, 'entry'::text AS kind, e.posted_at AS stamp, e.entry_number AS number, \
-          e.entry_date, e.description, CASE WHEN EXISTS (SELECT 1 FROM finance_ledger_opening_balances o JOIN finance_ledger_journal_events v ON v.journal_id=o.journal_id AND v.tenant_id=o.tenant_id AND v.company_id=o.company_id WHERE o.tenant_id=e.tenant_id AND o.company_id=e.company_id AND v.entry_id=e.id) THEN 'opening' ELSE COALESCE(e.owner_module,'manual') END AS source, \
+          e.entry_date, e.description, e.reference, CASE WHEN EXISTS (SELECT 1 FROM finance_ledger_opening_balances o JOIN finance_ledger_journal_events v ON v.journal_id=o.journal_id AND v.tenant_id=o.tenant_id AND v.company_id=o.company_id WHERE o.tenant_id=e.tenant_id AND o.company_id=e.company_id AND v.entry_id=e.id) THEN 'opening' ELSE COALESCE(e.owner_module,'manual') END AS source, \
           CASE WHEN EXISTS (SELECT 1 FROM finance_ledger_entries r WHERE r.tenant_id=e.tenant_id AND r.company_id=e.company_id AND r.reverses_entry_id=e.id) THEN 'reversed' \
                WHEN e.reverses_entry_id IS NOT NULL THEN 'reversal' ELSE 'posted' END AS status, \
           (SELECT COALESCE(sum(l.debit),0) FROM finance_ledger_entry_lines l WHERE l.tenant_id=e.tenant_id AND l.company_id=e.company_id AND l.entry_id=e.id) AS amount, \
@@ -43,7 +43,7 @@ pub(crate) async fn list(
           AND ($10::bigint IS NULL OR e.entry_number <= $10) \
           AND ($9::bigint IS NULL OR EXISTS (SELECT 1 FROM finance_ledger_entry_lines l WHERE l.tenant_id=e.tenant_id AND l.company_id=e.company_id AND l.entry_id=e.id AND l.account_id=$9)) \
          UNION ALL \
-         SELECT j.id, 'journal', j.submitted_at, NULL::bigint, j.entry_date, j.description, CASE WHEN EXISTS (SELECT 1 FROM finance_ledger_opening_balances o WHERE o.tenant_id=j.tenant_id AND o.company_id=j.company_id AND o.journal_id=j.id) THEN 'opening' ELSE 'manual' END, \
+         SELECT j.id, 'journal', j.submitted_at, NULL::bigint, j.entry_date, j.description, j.reference, CASE WHEN EXISTS (SELECT 1 FROM finance_ledger_opening_balances o WHERE o.tenant_id=j.tenant_id AND o.company_id=j.company_id AND o.journal_id=j.id) THEN 'opening' ELSE 'manual' END, \
           COALESCE(ev.event,'submitted'), \
           (SELECT COALESCE(sum(l.debit),0) FROM finance_ledger_journal_lines l WHERE l.tenant_id=j.tenant_id AND l.company_id=j.company_id AND l.journal_id=j.id), \
           j.journal_number, NULL::integer, NULL::boolean \
@@ -54,11 +54,11 @@ pub(crate) async fn list(
          ) SELECT id,kind,to_char(stamp,'YYYY-MM-DD\"T\"HH24:MI:SS.US'),number,entry_date::text,description,source,status,amount,request,recorded_days,reviewed \
          FROM items WHERE ($3::text IS NULL OR entry_date >= $3::text::date) AND ($4::text IS NULL OR entry_date <= $4::text::date) \
           AND ($5::text IS NULL OR status=$5) AND ($6::text IS NULL OR source=$6) \
-          AND ($13::text IS NULL OR number::text=$13 OR request::text=$13) \
-          AND ($7::text IS NULL OR (stamp,id,kind) > ($7::text::timestamp,$8::bigint,$11::text)) \
+          AND ($13::text IS NULL OR number::text=$13 OR request::text=$13 OR position(lower($13) in lower(description)) > 0 OR position(lower($13) in lower(COALESCE(reference,''))) > 0) \
+          AND ($7::text IS NULL OR (stamp,id,kind) < ($7::text::timestamp,$8::bigint,$11::text)) \
           AND ($14::text IS NULL OR CASE WHEN recorded_days > $17 THEN 'late' WHEN recorded_days >= $16 THEN 'approaching' WHEN recorded_days IS NOT NULL THEN 'on_time' WHEN kind='journal' THEN 'unposted' ELSE 'excluded' END = $14) \
           AND ($15::text IS NULL OR (recorded_days >= $16 AND reviewed = ($15='reviewed'))) \
-         ORDER BY stamp,id,kind LIMIT $12", NOT_CLOSING=crate::periods::NOT_CLOSING),
+         ORDER BY stamp DESC,id DESC,kind DESC LIMIT $12", NOT_CLOSING=crate::periods::NOT_CLOSING),
         &[&tenant,&company,&from,&to,&status,&source,&after_time,&after_id,&account,&through,&after_kind,&((limit + 1) as i64),&search,&recording,&review,&approaching,&late]
     ).await?;
     let more = rows.len() > limit;

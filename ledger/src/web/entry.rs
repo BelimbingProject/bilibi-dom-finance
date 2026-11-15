@@ -354,13 +354,8 @@ impl Entry {
                 ..SectionHeading::default()
             })?;
             body.push(&Html::text(&format!(
-                "Recorded {} days after its transaction date ({}). ",
-                recording.days,
-                if recording.status == "late" {
-                    "late"
-                } else {
-                    "approaching late"
-                }
+                "Entered {} days after the transaction date. ",
+                recording.days
             )));
             if let Some(review) = &recording.review {
                 body.push(&render(Facts {
@@ -391,7 +386,7 @@ impl Entry {
                     ],
                 })?);
             } else {
-                body.push(&Html::text("Pending independent review."));
+                body.push(&Html::text("Someone else should review why."));
                 if self
                     .pages
                     .allowed(scope, crate::REVIEW_LATE_RECORDINGS)
@@ -401,7 +396,7 @@ impl Entry {
                         id: "ledger-entry-review",
                         event: "open_late_review",
                         button_type: "button",
-                        body: Html::text("Review late recording"),
+                        body: Html::text("Review late entry"),
                         ..Button::default()
                     })?);
                 }
@@ -521,7 +516,7 @@ impl Entry {
                 working: "Recording…",
                 ..Button::default()
             })?);
-            page.push(&render(Modal { id: "ledger-entry-review-modal", title: "Review late recording", description: "Your reason, name and review time are permanent. Someone who recorded the entry, or acted as that person, cannot review it.", cancel_event: "close_late_review", body: render(Form { id: "ledger-entry-review-form", event: "record_late_review", class: "mt-4", body, actions: dialog_actions(actions)?, ..Form::default() })?, ..Modal::default() })?);
+            page.push(&render(Modal { id: "ledger-entry-review-modal", title: "Review late entry", description: "Your reason, name and review time are permanent. Someone who recorded the entry, or acted as that person, cannot review it.", cancel_event: "close_late_review", body: render(Form { id: "ledger-entry-review-form", event: "record_late_review", class: "mt-4", body, actions: dialog_actions(actions)?, ..Form::default() })?, ..Modal::default() })?);
         }
         Ok(LiveBody {
             html: shell("ledger-entry-page", PageVariant::Detail, &self.flash, page)?,
@@ -580,7 +575,7 @@ impl Entry {
                 working: "Recording…",
                 ..Button::default()
             })?);
-            page.push(&render(Modal { id: "ledger-entry-review-modal", title: "Review late recording", description: "Your reason, name and review time are permanent. Someone who recorded the entry, or acted as that person, cannot review it.", cancel_event: "close_late_review", body: render(Form { id: "ledger-entry-review-form", event: "record_late_review", class: "mt-4", body, actions: dialog_actions(actions)?, ..Form::default() })?, ..Modal::default() })?);
+            page.push(&render(Modal { id: "ledger-entry-review-modal", title: "Review late entry", description: "Your reason, name and review time are permanent. Someone who recorded the entry, or acted as that person, cannot review it.", cancel_event: "close_late_review", body: render(Form { id: "ledger-entry-review-form", event: "record_late_review", class: "mt-4", body, actions: dialog_actions(actions)?, ..Form::default() })?, ..Modal::default() })?);
         }
         Ok(LiveBody {
             html: shell("ledger-entry-page", PageVariant::Detail, &self.flash, page)?,

@@ -61,15 +61,8 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
                 ),
             ),
             (
-                "recording".into(),
-                Filter::one_of(
-                    &["all", "on_time", "approaching", "late", "unposted"],
-                    "all",
-                ),
-            ),
-            (
-                "review".into(),
-                Filter::one_of(&["all", "pending", "reviewed"], "all"),
+                "entered_late".into(),
+                Filter::one_of(&["all", "late", "pending", "reviewed"], "all"),
             ),
             ("after".into(), Filter::string("")),
             ("source".into(), Filter::string("")),
@@ -547,8 +540,6 @@ impl Journals {
             BuiltinColumn::new("description", "Description"),
             BuiltinColumn::new("source", "Source"),
             BuiltinColumn::new("status", "Status"),
-            BuiltinColumn::new("recording", "Recording"),
-            BuiltinColumn::new("review", "Late review"),
             BuiltinColumn::new("amount", "Amount").right(),
         ];
         let window = Window::parse(query);
@@ -567,11 +558,23 @@ impl Journals {
             // offered in the column picker rather than shown on every row.
             columns: ListColumns::mount("ledger-journals-table", columns)
                 .map_err(|_| Error::Internal)?
-                .with_record_fields([bilibi_ui::RecordField::new(
-                    "request",
-                    "Request",
-                    bilibi_ui::RecordFieldType::String,
-                )]),
+                .with_record_fields([
+                    bilibi_ui::RecordField::new(
+                        "request",
+                        "Request",
+                        bilibi_ui::RecordFieldType::String,
+                    ),
+                    bilibi_ui::RecordField::new(
+                        "recording",
+                        "Recording",
+                        bilibi_ui::RecordFieldType::String,
+                    ),
+                    bilibi_ui::RecordField::new(
+                        "review",
+                        "Late review",
+                        bilibi_ui::RecordFieldType::String,
+                    ),
+                ]),
             flash: Flash::default(),
             loaded_keys: None,
             draft: None,
@@ -609,12 +612,19 @@ impl Journals {
                     )?),
                     Some(book) => {
                         if can_submit {
-                            actions.push(&render(Button {
-                                id: "ledger-opening-new",
-                                href: super::opening::PATH,
-                                body: Html::text("Opening balances"),
-                                ..Button::default()
-                            })?);
+                            let opening = self
+                                .pages
+                                .read(scope, "finance.ledger.opening_balances.get", json!({}))
+                                .await?;
+                            if !matches!(opening, Read::Found(ref value) if value["opening"]["status"] == "approved")
+                            {
+                                actions.push(&render(Button {
+                                    id: "ledger-opening-new",
+                                    href: super::opening::PATH,
+                                    body: Html::text("Opening balances"),
+                                    ..Button::default()
+                                })?);
+                            }
                             actions.push(&render(CreateButton {
                                 noun: "Journal",
                                 id: "ledger-journal-new",
@@ -640,7 +650,7 @@ impl Journals {
             let accounts = self.pages.chart(scope).await?.unwrap_or_default();
             let form = self.form(&accounts)?;
             // The line rule.
-            let lines = "Each line takes an account and one amount, a debit or a credit. Debits and credits must balance.";
+            let lines = "Total debits must equal total credits.";
             let (title, description) = match self.draft.as_ref().and_then(|d| d.replaces.as_ref()) {
                 Some(replaces) => (
                     format!("Correct journal {}", replaces.number),
@@ -708,10 +718,10 @@ impl Journals {
         if self.filter("status") != "all" {
             input["status"] = json!(self.filter("status"));
         }
-        for key in ["recording", "review"] {
-            if self.filter(key) != "all" {
-                input[key] = json!(self.filter(key));
-            }
+        match self.filter("entered_late") {
+            "late" => input["recording"] = json!("late"),
+            "pending" | "reviewed" => input["review"] = json!(self.filter("entered_late")),
+            _ => {}
         }
         if !self.filter("source").is_empty() {
             input["source"] = json!(self.filter("source"));
@@ -719,7 +729,7 @@ impl Journals {
         if let Ok(id) = self.filter("account").parse::<i64>() {
             input["account_id"] = json!(id);
         }
-        let search: String = self.list.search.trim().chars().take(20).collect();
+        let search: String = self.list.search.trim().chars().take(100).collect();
         if !search.is_empty() {
             input["search"] = json!(search);
         }
@@ -771,7 +781,7 @@ impl Journals {
                     "search",
                     "Search",
                     &form["search"],
-                    "Entry or request number",
+                    "Search by number, description or reference…",
                 ),
                 ToolbarControl::select(
                     "ledger-journals-status",
@@ -790,25 +800,13 @@ impl Journals {
                 ),
                 ToolbarControl::select(
                     "ledger-journals-recording",
-                    "recording",
-                    "Recording",
-                    &form["recording"],
+                    "entered_late",
+                    "Entered late",
+                    &form["entered_late"],
                     vec![
-                        Choice::new("All recordings", "all"),
-                        Choice::new("On time", "on_time"),
-                        Choice::new("Approaching late", "approaching"),
-                        Choice::new("Late", "late"),
-                        Choice::new("Unposted", "unposted"),
-                    ],
-                ),
-                ToolbarControl::select(
-                    "ledger-journals-review",
-                    "review",
-                    "Late review",
-                    &form["review"],
-                    vec![
-                        Choice::new("All reviews", "all"),
-                        Choice::new("Pending review", "pending"),
+                        Choice::new("All entries", "all"),
+                        Choice::new("Entered late", "late"),
+                        Choice::new("Not reviewed", "pending"),
                         Choice::new("Reviewed", "reviewed"),
                     ],
                 ),
@@ -938,6 +936,29 @@ impl Journals {
                     .cell("number", Cell::text(""))
                     .slot("description", link(Html::text(&record.description))?),
             };
+            let recording = match record.recording.as_str() {
+                "late" => format!(
+                    "Entered {} days late",
+                    record.recorded_days.unwrap_or_default()
+                ),
+                "approaching" => format!(
+                    "Approaching late · {} days",
+                    record.recorded_days.unwrap_or_default()
+                ),
+                "on_time" => "On time".into(),
+                _ => "—".into(),
+            };
+            let review = match record.review.as_str() {
+                "pending" => Some("Not reviewed"),
+                "reviewed" => Some("Reviewed"),
+                _ => None,
+            };
+            let mut status = render(status)?;
+            if let Some(review) = review {
+                status.push(&render(LateNote {
+                    text: format!("{recording} · {review}"),
+                })?);
+            }
             row = row
                 .cell(
                     "source",
@@ -947,29 +968,9 @@ impl Journals {
                         source_label(&record.source)
                     }),
                 )
-                .slot("status", render(status)?)
-                .cell(
-                    "recording",
-                    Cell::text(match record.recording.as_str() {
-                        "late" => {
-                            format!("Late · {} days", record.recorded_days.unwrap_or_default())
-                        }
-                        "approaching" => format!(
-                            "Approaching late · {} days",
-                            record.recorded_days.unwrap_or_default()
-                        ),
-                        "on_time" => "On time".into(),
-                        _ => "—".into(),
-                    }),
-                )
-                .cell(
-                    "review",
-                    Cell::text(match record.review.as_str() {
-                        "pending" => "Pending review",
-                        "reviewed" => "Reviewed",
-                        _ => "—",
-                    }),
-                )
+                .slot("status", status)
+                .cell("recording", Cell::text(&recording))
+                .cell("review", Cell::text(review.unwrap_or("—")))
                 .slot(
                     "amount",
                     figure(&crate::Money::display_decimal(
@@ -1222,21 +1223,23 @@ impl Journals {
         let (debits, credits) = draft.totals();
         let difference = debits - credits;
         let units = draft.units.get();
-        body.push(&render(Totals {
-            text: format!(
-                "Debits {}. Credits {}. {}",
-                view::amount(&debits.to_string(), units),
-                view::amount(&credits.to_string(), units),
-                if difference.is_zero() {
-                    "They match.".to_owned()
-                } else {
-                    format!(
-                        "The difference is {}.",
-                        view::amount(&difference.abs().to_string(), units)
-                    )
-                }
-            ),
-        })?);
+        if draft.lines.iter().any(|line| !line.no_amount()) {
+            body.push(&render(Totals {
+                text: format!(
+                    "Debits {}. Credits {}. {}",
+                    view::amount(&debits.to_string(), units),
+                    view::amount(&credits.to_string(), units),
+                    if difference.is_zero() {
+                        "They match.".to_owned()
+                    } else {
+                        format!(
+                            "The difference is {}.",
+                            view::amount(&difference.abs().to_string(), units)
+                        )
+                    }
+                ),
+            })?);
+        }
         let mut actions = render(Button {
             id: "ledger-journal-add-line",
             button_type: "button",
@@ -1516,7 +1519,16 @@ struct Totals {
 
 #[derive(Template)]
 #[template(
-    source = r#"<div class="p-3 text-sm"><a id="ledger-journals-later" href="{{ href }}" data-patch>Later journals</a></div>"#,
+    source = r#"<span class="ml-2 text-xs text-ink-muted">{{ text }}</span>"#,
+    ext = "html"
+)]
+struct LateNote {
+    text: String,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<div class="p-3 text-sm"><a id="ledger-journals-later" href="{{ href }}" data-patch>Older journals</a></div>"#,
     ext = "html"
 )]
 struct LaterLink {
