@@ -34,11 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     bilibi_extensions::link();
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     let modules = bilibi_module_registry::discover()?;
-    bilibi_module_registry::verify_composition(
-        &modules,
-        bilibi_domains::MODULES,
-        bilibi_extensions::MODULES,
-    )?;
+    bilibi_web::verify_composition(&db).await?;
     bilibi_database::migrate(&db, &modules).await?;
     let services = bilibi_finance_walkthrough_fixture::services(&db, &modules)?;
     if std::env::args().nth(1).as_deref() == Some("payables-control") {
