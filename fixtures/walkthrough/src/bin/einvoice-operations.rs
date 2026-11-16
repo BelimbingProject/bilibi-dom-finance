@@ -66,11 +66,7 @@ async fn main() -> Outcome<()> {
     bilibi_extensions::link();
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     let modules = bilibi_module_registry::discover()?;
-    bilibi_module_registry::verify_composition(
-        &modules,
-        bilibi_domains::MODULES,
-        bilibi_extensions::MODULES,
-    )?;
+    bilibi_web::verify_composition(&db).await?;
     let services = bilibi_finance_walkthrough_fixture::services(&db, &modules)?;
     let c = db.get().await?;
     if c.query_opt(

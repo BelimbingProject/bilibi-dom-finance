@@ -13,7 +13,6 @@ use bilibi_finance_ledger::{
 use bilibi_finance_walkthrough_fixture::{install, sign_in, COMPANY};
 
 mod einvoice;
-use bilibi_module_registry::verify_composition;
 use jiff::civil::date;
 use std::{fmt::Debug, time::Duration};
 
@@ -96,11 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     bilibi_extensions::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
     let modules = bilibi_module_registry::discover()?;
-    verify_composition(
-        &modules,
-        bilibi_domains::MODULES,
-        bilibi_extensions::MODULES,
-    )?;
+    bilibi_web::verify_composition(&db).await?;
     let migrated = bilibi_database::migrate(&db, &modules).await?;
     println!("mounted Domain modules: {:?}", bilibi_domains::MODULES);
     println!("migrations applied: {:?}", migrated.applied);
