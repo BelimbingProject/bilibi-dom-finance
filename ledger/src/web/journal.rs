@@ -755,10 +755,12 @@ impl LiveState<Scope, Error> for Journal {
                     "close_withdraw" => self.withdrawing = None,
                     "validate_withdraw" => {
                         if let Some(withdrawing) = &mut self.withdrawing {
-                            withdrawing.reason = params::form_values(value, "withdraw")
-                                .get("reason")
-                                .cloned()
-                                .unwrap_or_default();
+                            withdrawing.reason =
+                                params::form_values_checked(value, "withdraw", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?
+                                    .get("reason")
+                                    .cloned()
+                                    .unwrap_or_default();
                             withdrawing.refusal = Refusal::default();
                             withdrawing.notice.clear();
                         }
@@ -766,10 +768,12 @@ impl LiveState<Scope, Error> for Journal {
                     "withdraw" => self.withdraw(&r).await?,
                     "validate" => {
                         if let Some(rejecting) = &mut self.rejecting {
-                            rejecting.reason = params::form_values(value, "reject")
-                                .get("reason")
-                                .cloned()
-                                .unwrap_or_default();
+                            rejecting.reason =
+                                params::form_values_checked(value, "reject", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?
+                                    .get("reason")
+                                    .cloned()
+                                    .unwrap_or_default();
                             rejecting.refusal = Refusal::default();
                             rejecting.notice.clear();
                         }

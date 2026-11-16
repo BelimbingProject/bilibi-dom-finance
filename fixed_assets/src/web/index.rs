@@ -677,7 +677,13 @@ impl Index {
     async fn event(&mut self, s: &Scope, credential: &str, v: &serde_json::Value) -> Result<()> {
         let event = v["type"].as_str().unwrap_or("");
         let clock = self.clock(s).await?;
-        if let Some(outcome) = self.period.as_mut().and_then(|p| p.event(event, v, &clock)) {
+        let applied = match self.period.as_mut() {
+            Some(p) => p
+                .event_checked(event, v, &clock)
+                .map_err(bilibi_database::Error::refused)?,
+            None => None,
+        };
+        if let Some(outcome) = applied {
             if let Outcome::Applied(p) = outcome {
                 self.clear_pins();
                 self.period
@@ -695,20 +701,32 @@ impl Index {
             }
             "filter" => {
                 self.clear_pins();
-                self.list.apply_filters(&params::form_values(v, "filters"));
+                self.list.apply_filters(
+                    &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "page" => {
                 self.clear_pins();
                 self.list.put_page(v["page"].as_str());
             }
             "grid" => {
-                self.columns.handle(&params::string_values(v));
+                self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "history_grid" => {
-                self.history.handle(&params::string_values(v));
+                self.history.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "check_grid" => {
-                self.check.handle(&params::string_values(v));
+                self.check.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "browser_timezone" => {
                 self.browser_zone = v["timezone"].as_str().map(str::to_owned);

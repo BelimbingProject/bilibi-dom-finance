@@ -1213,7 +1213,8 @@ impl Years {
     /// The form changed: a company, a first day or a last day.
     async fn validate(&mut self, scope: &Scope, value: &serde_json::Value) -> Result<()> {
         if let Some(mut opening) = self.opening.take() {
-            let fields = params::form_values(value, "year");
+            let fields = params::form_values_checked(value, "year", params::FIELD_LIMIT)
+                .map_err(bilibi_database::Error::refused)?;
             let start = fields.get("start_date").cloned().unwrap_or_default();
             let end = fields.get("end_date").cloned().unwrap_or_default();
             let company = fields
@@ -1242,7 +1243,8 @@ impl Years {
             opening.notice.clear();
             self.opening = Some(opening);
         } else if let Some(choice) = &mut self.choice {
-            choice.reason = params::form_values(value, "reopen")
+            choice.reason = params::form_values_checked(value, "reopen", params::FIELD_LIMIT)
+                .map_err(bilibi_database::Error::refused)?
                 .get("reason")
                 .cloned()
                 .unwrap_or_default();
@@ -1407,7 +1409,9 @@ impl LiveState<Scope, Error> for Years {
                     }
                     "close_dialog" => self.opening = None,
                     "company_filter" => {
-                        let fields = params::form_values(value, FILTER_FORM);
+                        let fields =
+                            params::form_values_checked(value, FILTER_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?;
                         self.list.apply_filters(&fields);
                         let picked = fields.get("company").cloned().unwrap_or_default();
                         self.pick = match picked.parse::<i64>() {
@@ -1439,7 +1443,10 @@ impl LiveState<Scope, Error> for Years {
                     "do_reopen" => self.reopen(&r).await?,
                     "grid" => {
                         if let Some(columns) = &mut self.columns {
-                            columns.handle(&params::string_values(value));
+                            columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                         }
                     }
                     "clear-flash" => self.flash.dismiss(value),

@@ -79,7 +79,6 @@ impl Ledger {
 
     /// Transfer recognition to a reconciled replacement without altering the
     /// journal or removing prior recognition. Only the current owner can transfer.
-    #[allow(clippy::too_many_arguments)]
     pub async fn replace_opening_recognition_on(
         &self,
         tx: &mut MutationTransaction<'_>,

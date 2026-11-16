@@ -328,8 +328,9 @@ impl Index {
     }
 
     /// Keeps what the person typed in the open dialog.
-    fn keep(&mut self, value: &serde_json::Value) {
-        let form = params::form_values(value, "bank_account");
+    fn keep(&mut self, value: &serde_json::Value) -> bilibi_database::Result<()> {
+        let form = params::form_values_checked(value, "bank_account", params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         let get = |key: &str| form.get(key).cloned().unwrap_or_default();
         match &mut self.dialog {
             Some(Dialog::New { name, ledger, .. }) => {
@@ -352,6 +353,7 @@ impl Index {
             }
             None => {}
         }
+        Ok(())
     }
 
     async fn create(&mut self, scope: &Scope) -> Result<()> {
@@ -472,10 +474,13 @@ impl Index {
         match event {
             "clear-flash" => clear_flash(&mut self.flash, value),
             "accounts_grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "close_dialog" => self.dialog = None,
-            "new_change" | "edit_change" => self.keep(value),
+            "new_change" | "edit_change" => self.keep(value)?,
             "new" => {
                 self.dialog = Some(Dialog::New {
                     name: String::new(),
@@ -484,11 +489,11 @@ impl Index {
                 })
             }
             "create" => {
-                self.keep(value);
+                self.keep(value)?;
                 self.create(scope).await?;
             }
             "save" => {
-                self.keep(value);
+                self.keep(value)?;
                 self.save(scope).await?;
             }
             "edit" => {

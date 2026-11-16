@@ -556,7 +556,10 @@ impl Request {
                 return Ok(false);
             }
             "allocations_grid" => {
-                self.allocations.handle(&params::string_values(v));
+                self.allocations.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(false);
             }
             "close_dialog" => {
@@ -564,7 +567,8 @@ impl Request {
                 return Ok(false);
             }
             "dialog_edit" => {
-                let values = params::form_values(v, "dialog");
+                let values = params::form_values_checked(v, "dialog", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 if let Some(text) = values.get("reason") {
                     self.reason = text.clone();
                 }
@@ -604,7 +608,8 @@ impl Request {
                 "The approval",
             ),
             "reject_payment" => {
-                let values = params::form_values(v, "dialog");
+                let values = params::form_values_checked(v, "dialog", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.reason = values.get("reason").cloned().unwrap_or_default();
                 (
                     "finance.payables.payment.reject",
@@ -613,7 +618,8 @@ impl Request {
                 )
             }
             _ => {
-                let values = params::form_values(v, "dialog");
+                let values = params::form_values_checked(v, "dialog", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.date = values.get("date").cloned().unwrap_or_default();
                 self.description = values.get("description").cloned().unwrap_or_default();
                 let Some(payment) = self.payment.as_ref().map(|p| p.id) else {

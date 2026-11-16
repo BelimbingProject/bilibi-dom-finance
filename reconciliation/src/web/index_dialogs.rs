@@ -138,7 +138,6 @@ pub(super) fn new_dialog(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn edit_dialog(
     chart: &[Account],
     account: &BankAccount,

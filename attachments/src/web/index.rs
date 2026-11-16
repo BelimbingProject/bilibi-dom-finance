@@ -503,8 +503,10 @@ impl Index {
         let get = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "filter" => {
-                self.list
-                    .apply_filters(&params::form_values(value, "filters"));
+                self.list.apply_filters(
+                    &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 self.pages_loaded = 1;
                 Ok(true)
             }
@@ -513,7 +515,8 @@ impl Index {
                 Ok(false)
             }
             "retention_change" => {
-                let posted = params::form_values(value, "retention");
+                let posted = params::form_values_checked(value, "retention", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.draft_years = posted.get("years").cloned().unwrap_or_default();
                 self.draft_reason = posted.get("reason").cloned().unwrap_or_default();
                 Ok(false)
@@ -532,7 +535,8 @@ impl Index {
                 Ok(false)
             }
             "set_retention" => {
-                let posted = params::form_values(value, "retention");
+                let posted = params::form_values_checked(value, "retention", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.draft_years = posted.get("years").cloned().unwrap_or_default();
                 self.draft_reason = posted.get("reason").cloned().unwrap_or_default();
                 self.set_retention(scope).await?;
@@ -550,12 +554,14 @@ impl Index {
                 Ok(false)
             }
             "attachments_grid" => {
-                let posted = params::string_values(value);
+                let posted = params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.columns.handle(&posted);
                 Ok(false)
             }
             "retention_grid" => {
-                let posted = params::string_values(value);
+                let posted = params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 self.change_columns.handle(&posted);
                 Ok(false)
             }

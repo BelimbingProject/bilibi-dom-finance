@@ -112,7 +112,6 @@ pub(crate) async fn insert(
 }
 
 /// Appends the journal's one decision; the database stamps it.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn decide(
     client: &(impl GenericClient + Sync),
     tenant: i64,

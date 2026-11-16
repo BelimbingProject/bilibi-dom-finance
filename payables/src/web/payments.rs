@@ -331,7 +331,10 @@ impl LiveState<Scope, Error> for Payments {
                 }
                 LiveInput::Event(v) => match v["type"].as_str() {
                     Some("filter") => {
-                        self.list.apply_filters(&params::form_values(v, "filters"));
+                        self.list.apply_filters(
+                            &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                         true
                     }
                     Some("page") => {
@@ -339,7 +342,10 @@ impl LiveState<Scope, Error> for Payments {
                         true
                     }
                     Some("payments_grid") => {
-                        self.columns.handle(&params::string_values(v));
+                        self.columns.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                         false
                     }
                     _ => return Err(Error::Invalid),

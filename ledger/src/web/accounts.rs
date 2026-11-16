@@ -84,13 +84,15 @@ impl Draft {
             ..Self::default()
         }
     }
-    fn read(&mut self, value: &Value) {
-        let fields = params::form_values(value, "account");
+    fn read(&mut self, value: &Value) -> bilibi_database::Result<()> {
+        let fields = params::form_values_checked(value, "account", params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         self.code = fields.get("code").cloned().unwrap_or_default();
         self.name = fields.get("name").cloned().unwrap_or_default();
         self.account_type = fields.get("account_type").cloned().unwrap_or_default();
         self.parent = fields.get("parent").cloned().unwrap_or_default();
         self.retained = fields.get("retained").map(String::as_str) == Some("true");
+        Ok(())
     }
     fn equity(&self) -> bool {
         self.account_type == "equity"
@@ -870,10 +872,15 @@ impl LiveState<Scope, Error> for Accounts {
                     | "close_publication"
                     | "publication_grid") => self.publication_event(&r, value, event).await?,
                     "company_filter" => {
-                        let company = params::form_values(value, "company_filter")
-                            .get("company")
-                            .cloned()
-                            .unwrap_or_default();
+                        let company = params::form_values_checked(
+                            value,
+                            "company_filter",
+                            params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?
+                        .get("company")
+                        .cloned()
+                        .unwrap_or_default();
                         let mut filters = self.list.filters_form();
                         filters.insert("company".into(), company);
                         self.list.apply_filters(&filters);
@@ -881,7 +888,9 @@ impl LiveState<Scope, Error> for Accounts {
                         self.preview = None;
                     }
                     "filters" => {
-                        let mut filters = params::form_values(value, FILTERS_FORM);
+                        let mut filters =
+                            params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?;
                         filters.insert("company".into(), self.list.filters["company"].clone());
                         self.list.apply_filters(&filters);
                     }
@@ -895,9 +904,10 @@ impl LiveState<Scope, Error> for Accounts {
                         } else {
                             &mut self.columns
                         };
-                        if let ColumnsOutcome::Sort(key) =
-                            columns.handle(&params::string_values(value))
-                        {
+                        if let ColumnsOutcome::Sort(key) = columns.handle(
+                            &params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        ) {
                             self.list.next_sort(&key);
                         }
                     }
@@ -935,7 +945,7 @@ impl LiveState<Scope, Error> for Accounts {
                     "cancel_template" => self.preview = None,
                     "validate" => {
                         if let Some(draft) = &mut self.draft {
-                            draft.read(value);
+                            draft.read(value)?;
                             draft.refusal = Refusal::default();
                             draft.notice.clear();
                         }

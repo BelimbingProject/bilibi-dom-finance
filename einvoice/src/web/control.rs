@@ -185,7 +185,10 @@ impl State {
             .and_then(|s| s.parse::<usize>().ok())
         {
             if let Some(columns) = self.columns.get_mut(index) {
-                columns.handle(&params::string_values(value));
+                columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             return Ok(());
         }

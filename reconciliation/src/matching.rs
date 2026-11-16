@@ -574,7 +574,6 @@ pub(crate) fn optional_text(
 /// Records the match with its lines, its entries (copied as the ledger shows
 /// them) and its `matched` event, in one audited write; the database numbers
 /// the match and the event. Returns the match id.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert(
     tx: &mut MutationTransaction<'_>,
     tenant: i64,

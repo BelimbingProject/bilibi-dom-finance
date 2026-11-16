@@ -708,15 +708,24 @@ impl Setup {
                 Ok(false)
             }
             "history_grid" => {
-                self.history.handle(&params::string_values(v));
+                self.history.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "codes_grid" => {
-                self.codes.handle(&params::string_values(v));
+                self.codes.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "mapping_history_grid" => {
-                self.mapping_history.handle(&params::string_values(v));
+                self.mapping_history.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "registration_change" => {

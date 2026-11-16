@@ -68,12 +68,14 @@ impl Draft {
             ..Self::default()
         }
     }
-    fn read(&mut self, value: &Value) {
-        let fields = params::form_values(value, "group");
+    fn read(&mut self, value: &Value) -> bilibi_database::Result<()> {
+        let fields = params::form_values_checked(value, "group", params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         self.code = fields.get("code").cloned().unwrap_or_default();
         self.name = fields.get("name").cloned().unwrap_or_default();
         self.account_type = fields.get("account_type").cloned().unwrap_or_default();
         self.parent = fields.get("parent").cloned().unwrap_or_default();
+        Ok(())
     }
     /// Drops a group of another type once the type changes; the ledger's own
     /// check still decides.
@@ -563,17 +565,19 @@ impl LiveState<Scope, Error> for Groups {
                     }
                 }
                 LiveInput::Event(value) => match event_type(value)? {
-                    "filters" => self
-                        .list
-                        .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                    "filters" => self.list.apply_filters(
+                        &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    ),
                     "page" => self.list.put_page(value["page"].as_str()),
                     "sort" => {
                         self.list.next_sort(value["sort"].as_str().unwrap_or(""));
                     }
                     "grid" => {
-                        if let ColumnsOutcome::Sort(key) =
-                            self.columns.handle(&params::string_values(value))
-                        {
+                        if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                            &params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        ) {
                             self.list.next_sort(&key);
                         }
                     }
@@ -589,7 +593,7 @@ impl LiveState<Scope, Error> for Groups {
                     "close_modal" => self.draft = None,
                     "validate" => {
                         if let Some(draft) = &mut self.draft {
-                            draft.read(value);
+                            draft.read(value)?;
                             draft.refusal = Refusal::default();
                             draft.notice.clear();
                         }

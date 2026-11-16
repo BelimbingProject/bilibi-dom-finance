@@ -500,7 +500,6 @@ impl Attachments {
         Ok(self.present(attachment))
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn insert(
         &self,
         tx: &mut MutationTransaction<'_>,

@@ -170,7 +170,8 @@ impl Vendors {
         )
     }
     pub(super) async fn take(&mut self, _s: &Scope, v: &Value) -> Result<()> {
-        let form = params::form_values(v, FORM);
+        let form = params::form_values_checked(v, FORM, params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         if let Some(c) = &mut self.create {
             c.values.extend(form.clone());
             c.chooser.read(&form);

@@ -1151,7 +1151,6 @@ pub(crate) async fn store_submission(
 
 /// Records an issued document, its lines and its `issued` event: the
 /// company's profile is the supplier, or the buyer of a self-billed document.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_document(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,

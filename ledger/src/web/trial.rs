@@ -294,7 +294,9 @@ impl LiveState<Scope, Error> for Trial {
                 }
                 LiveInput::Event(value) => match event_type(value)? {
                     "filters" => {
-                        let posted = params::form_values(value, FILTERS_FORM);
+                        let posted =
+                            params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?;
                         self.as_of = posted.get("as_of").filter(|d| d.len() == 10).cloned();
                         // A new date reads the ledger as it is now.
                         self.pin = None;
@@ -302,7 +304,10 @@ impl LiveState<Scope, Error> for Trial {
                     "latest" => self.pin = None,
                     "grid" => {
                         if let Some(columns) = &mut self.columns {
-                            columns.handle(&params::string_values(value));
+                            columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                         }
                     }
                     "clear-flash" => self.flash.dismiss(value),

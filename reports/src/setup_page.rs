@@ -583,7 +583,10 @@ impl LiveState<Scope, Error> for Setup {
                 match value.get("type").and_then(Value::as_str) {
                     Some("grid") => {
                         for columns in self.columns.values_mut() {
-                            columns.handle(&params::string_values(value));
+                            columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                         }
                     }
                     Some("clear-flash") => {}

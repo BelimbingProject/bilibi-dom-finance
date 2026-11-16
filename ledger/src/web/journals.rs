@@ -402,8 +402,9 @@ impl Draft {
             .is_some_and(|fill| fill.line == line && fill.side == side)
     }
 
-    fn read(&mut self, value: &Value) {
-        let fields = params::form_values(value, "journal");
+    fn read(&mut self, value: &Value) -> bilibi_database::Result<()> {
+        let fields = params::form_values_checked(value, "journal", params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         let get = |key: &str| fields.get(key).cloned().unwrap_or_default();
         self.date = get("entry_date");
         self.description = get("description");
@@ -418,6 +419,7 @@ impl Draft {
         self.refusal = Refusal::default();
         self.notice.clear();
         self.replacing = None;
+        Ok(())
     }
 
     fn input(&mut self) -> Value {
@@ -1555,7 +1557,11 @@ impl LiveState<Scope, Error> for Journals {
                     if kind == clear_event() {
                         self.window.clear();
                         self.list.filters.insert("after".into(), String::new());
-                    } else if let Some(outcome) = self.period.event(kind, value, &clock) {
+                    } else if let Some(outcome) = self
+                        .period
+                        .event_checked(kind, value, &clock)
+                        .map_err(Error::refused)?
+                    {
                         if let Outcome::Applied(period) = outcome {
                             self.window.apply(period);
                             self.period.set(period, &clock);
@@ -1564,22 +1570,27 @@ impl LiveState<Scope, Error> for Journals {
                     } else {
                         match kind {
                             "filters" => {
-                                let mut posted = params::form_values(value, FILTERS_FORM);
+                                let mut posted = params::form_values_checked(
+                                    value,
+                                    FILTERS_FORM,
+                                    params::FIELD_LIMIT,
+                                )
+                                .map_err(bilibi_database::Error::refused)?;
                                 posted.insert("after".into(), String::new());
                                 self.list.apply_filters(&posted);
                             }
                             "grid" => {
-                                if let ColumnsOutcome::Sort(_) =
-                                    self.columns.handle(&params::string_values(value))
-                                {
-                                }
+                                if let ColumnsOutcome::Sort(_) = self.columns.handle(
+                                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                                        .map_err(bilibi_database::Error::refused)?,
+                                ) {}
                             }
                             "new" => self.open_new(r.scope).await?,
                             "close_modal" => self.draft = None,
                             "validate" => {
                                 if let Some(draft) = &mut self.draft {
                                     let before = draft.lines.clone();
-                                    draft.read(value);
+                                    draft.read(value)?;
                                     draft.suggest(&before);
                                 }
                             }

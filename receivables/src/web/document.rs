@@ -575,18 +575,30 @@ impl Document {
             }
             "clear-flash" => self.flash.dismiss(v),
             "lines_grid" => {
-                self.lines_cols.handle(&params::string_values(v));
+                self.lines_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "tax_grid" => {
-                self.tax_cols.handle(&params::string_values(v));
+                self.tax_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "applied_grid" => {
-                self.applied_cols.handle(&params::string_values(v));
+                self.applied_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "save_draft" => self.save_field(scope, credential, v).await?,
             "send_invoice" => {
                 if let Some(d) = &mut self.mailing {
-                    d.values.extend(params::form_values(v, "mail"));
+                    d.values.extend(
+                        params::form_values_checked(v, "mail", params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                     let input = json!({"document_id":self.id, "recipient":d.values.get("recipient"), "subject":d.values.get("subject"), "body":d.values.get("body")});
                     match self
                         .pages

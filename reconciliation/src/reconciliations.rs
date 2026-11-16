@@ -34,7 +34,6 @@ const TEXT_LIMIT: usize = 500;
 /// (`timing`). `difference` is the statement balance less the book balance,
 /// less the unmatched statement lines, plus the unmatched entries and opening
 /// items, plus the timing items; zero means the two balances are explained.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn compute(
     ledger: &Ledger,
     client: &(impl GenericClient + Sync),
@@ -492,7 +491,6 @@ pub(crate) async fn record_abandoned(
         .await?)
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn event(
     sql: &tokio_postgres::Transaction<'_>,
     tenant: i64,

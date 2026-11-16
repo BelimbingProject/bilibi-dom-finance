@@ -40,10 +40,16 @@ impl Vendors {
             });
         }
         match event {
-            "filters" => self.list.apply_filters(&params::form_values(v, "filters")),
+            "filters" => self.list.apply_filters(
+                &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            ),
             "page" => self.list.put_page(v["page"].as_str()),
             "grid" => {
-                self.columns.handle(&params::string_values(v));
+                self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "show_vendor" => {
                 if self.pages.allowed(s, MANAGE_SETTINGS).await? {

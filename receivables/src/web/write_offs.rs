@@ -351,7 +351,10 @@ impl Journals {
     ) -> Result<()> {
         let event = v["type"].as_str().ok_or(Error::Invalid)?;
         if event == "write_off_grid" {
-            self.cols.handle(&params::string_values(v));
+            self.cols.handle(
+                &params::string_values_checked(v, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            );
             return Ok(());
         }
         if event == "cancel_write_off" {
@@ -408,7 +411,10 @@ impl Journals {
         let Some(d) = &mut self.draft else {
             return Ok(());
         };
-        d.values.extend(params::form_values(v, "bad_debt"));
+        d.values.extend(
+            params::form_values_checked(v, "bad_debt", params::FIELD_LIMIT)
+                .map_err(bilibi_database::Error::refused)?,
+        );
         let mut input = json!({});
         for (key, value) in &d.values {
             input[key] = json!(value.trim());
