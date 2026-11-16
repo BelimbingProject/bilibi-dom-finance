@@ -191,7 +191,6 @@ async fn approve_record(
 
 /// An owner's correction: its own reversal record and the ledger's reversal
 /// in one transaction, committed or rolled back together.
-#[allow(clippy::too_many_arguments)]
 async fn owner_reverses(
     db: &Db,
     mutations: &MutationBoundary,

@@ -403,7 +403,11 @@ impl Detail {
         let event = v["type"].as_str().unwrap_or("");
         match event {
             event if event.starts_with("source_evidence_grid:") => {
-                self.evidence.handle(event, &params::string_values(v));
+                self.evidence.handle(
+                    event,
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(());
             }
             "clear-flash" => {
@@ -411,15 +415,24 @@ impl Detail {
                 return Ok(());
             }
             "schedule_grid" => {
-                self.schedule.handle(&params::string_values(v));
+                self.schedule.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(());
             }
             "charges_grid" => {
-                self.charges.handle(&params::string_values(v));
+                self.charges.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(());
             }
             "events_grid" => {
-                self.events.handle(&params::string_values(v));
+                self.events.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(());
             }
             "close_dialog" => {

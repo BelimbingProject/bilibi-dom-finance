@@ -530,12 +530,17 @@ impl LiveState<Scope, Error> for Books {
             if let LiveInput::Event(value) = r.input {
                 match event_type(value)? {
                     "filters" => {
-                        self.list
-                            .apply_filters(&params::form_values(value, FILTERS_FORM));
+                        self.list.apply_filters(
+                            &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     "grid" => {
                         if let Some(columns) = &mut self.columns {
-                            columns.handle(&params::string_values(value));
+                            columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                         }
                     }
                     "clear-flash" => self.flash.dismiss(value),

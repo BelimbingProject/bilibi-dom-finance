@@ -525,15 +525,24 @@ impl LiveState<Scope, Error> for Returns {
                     self.live(false, r.scope).await
                 }
                 Some("periods_grid") => {
-                    self.period_columns.handle(&params::string_values(v));
+                    self.period_columns.handle(
+                        &params::string_values_checked(v, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                     self.live(false, r.scope).await
                 }
                 Some("returns_grid") => {
-                    self.list_columns.handle(&params::string_values(v));
+                    self.list_columns.handle(
+                        &params::string_values_checked(v, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                     self.live(false, r.scope).await
                 }
                 Some("prepare_change") => {
-                    self.form.extend(params::form_values(v, "prepare"));
+                    self.form.extend(
+                        params::form_values_checked(v, "prepare", params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                     self.live(false, r.scope).await
                 }
                 Some("new_return") => {
@@ -556,7 +565,10 @@ impl LiveState<Scope, Error> for Returns {
                             (t.to_owned(), s.to_owned(), false)
                         }
                         None => {
-                            self.form.extend(params::form_values(v, "prepare"));
+                            self.form.extend(
+                                params::form_values_checked(v, "prepare", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                             let get = |k: &str| self.form.get(k).cloned().unwrap_or_default();
                             (get("tax_type"), get("period_start"), true)
                         }

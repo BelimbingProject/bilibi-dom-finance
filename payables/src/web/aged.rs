@@ -483,7 +483,8 @@ impl LiveState<Scope, Error> for Aged {
                 }
                 LiveInput::Event(v) => match v["type"].as_str() {
                     Some("filters") => {
-                        let form = params::form_values(v, "filters");
+                        let form = params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?;
                         if let Some(date) = form.get("as_of").and_then(|d| d.parse().ok()) {
                             self.as_of = Some(date);
                         }
@@ -501,7 +502,10 @@ impl LiveState<Scope, Error> for Aged {
                             "opening_credits_grid" => &mut self.opening_credits,
                             _ => &mut self.credits,
                         };
-                        columns.handle(&params::string_values(v));
+                        columns.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                         false
                     }
                     _ => return Err(Error::Invalid),

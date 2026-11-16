@@ -50,7 +50,6 @@ impl FixedAssets {
         tx.commit().await?;
         Ok(asset)
     }
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn prepare_acquisition(
         &self,
         c: &dyn OperationClient,
@@ -145,7 +144,6 @@ impl FixedAssets {
         let values = json!({"category_revision_id":revision.id,"description":description,"acquisition_date":entry.entry_date.to_string(),"in_service_date":input.in_service_date.to_string(),"cost":cost,"residual_value":residual,"method":a.method,"life_months":a.life_months,"annual_rate":a.annual_rate,"entry_id":entry.id,"entry_number":entry.entry_number,"entry_line_number":line_number,"bill_id":bill.then_some(source_id),"bill_line_number":bill.then_some(line_number)});
         Ok(values)
     }
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn acquire_on(
         &self,
         tx: &mut MutationTransaction<'_>,

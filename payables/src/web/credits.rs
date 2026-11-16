@@ -432,7 +432,10 @@ impl Credits {
     ) -> Result<()> {
         let event = v["type"].as_str().ok_or(Error::Invalid)?;
         if event == "credit_grid" {
-            self.columns.handle(&bilibi_ui::params::string_values(v));
+            self.columns.handle(
+                &bilibi_ui::params::string_values_checked(v, bilibi_ui::params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            );
             return Ok(());
         }
         if event == "cancel_credit" {
@@ -463,7 +466,10 @@ impl Credits {
                 return Ok(());
             };
             let before = d.values.get("search").cloned().unwrap_or_default();
-            d.values.extend(bilibi_ui::params::form_values(v, "credit"));
+            d.values.extend(
+                bilibi_ui::params::form_values_checked(v, "credit", bilibi_ui::params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            );
             d.review = None;
             let search = d.values.get("search").cloned().unwrap_or_default();
             if before != search {
@@ -476,7 +482,10 @@ impl Credits {
             let Some(d) = &mut self.draft else {
                 return Ok(());
             };
-            d.values.extend(bilibi_ui::params::form_values(v, "credit"));
+            d.values.extend(
+                bilibi_ui::params::form_values_checked(v, "credit", bilibi_ui::params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            );
             let mut input = json!({"company_id":s.current_company().ok_or(Error::Unauthorized)?.get(),"credit_document_id":record});
             for (k, value) in &d.values {
                 if ["search", "settlement_id"].contains(&k.as_str()) {

@@ -386,17 +386,23 @@ impl LiveState<Scope, Error> for Index {
                             }
                         }
                         Some("filter") => {
-                            self.list
-                                .apply_filters(&params::form_values(value, "filters"));
+                            self.list.apply_filters(
+                                &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                             true
                         }
                         Some("page") => {
-                            let p = params::string_values(value);
+                            let p = params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?;
                             self.list.put_page(p.get("page").map(String::as_str));
                             true
                         }
                         Some("grid") => {
-                            self.columns.handle(&params::string_values(value));
+                            self.columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                             false
                         }
                         _ => return Err(Error::Invalid),

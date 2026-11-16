@@ -299,7 +299,10 @@ impl State {
         }
         if let Some(id) = kind.strip_prefix("grid:") {
             if let Some(columns) = self.columns.get_mut(id) {
-                columns.handle(&params::string_values(value));
+                columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             return Ok(());
         }
@@ -357,7 +360,11 @@ impl State {
         if period_event(kind) || matches!(kind, "compare" | "pin" | "unpin" | "browser_timezone") {
             self.reclock(scope).await?;
         }
-        match self.filter.event(kind, value, &self.clock) {
+        match self
+            .filter
+            .event_checked(kind, value, &self.clock)
+            .map_err(Error::refused)?
+        {
             Some(Outcome::Applied(period)) => {
                 self.auditor_pack = None;
                 self.filter.set(period, &self.clock);
@@ -372,7 +379,8 @@ impl State {
         }
         match kind {
             "compare" => {
-                let values = params::string_values(value);
+                let values = params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 match values.get("filters[compare]").map(String::as_str) {
                     Some("previous") => {
                         self.query.insert("compare".into(), "previous".into());

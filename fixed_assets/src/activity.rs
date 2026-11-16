@@ -843,7 +843,6 @@ impl FixedAssets {
             )
             .await?)
     }
-    #[allow(clippy::too_many_arguments)]
     async fn prepare_event(
         &self,
         c: &dyn OperationClient,
@@ -948,7 +947,6 @@ impl FixedAssets {
         let entry = self.ledger.get_entry_on(c, s, company, id).await?;
         Ok(entry.reversed_by_entry_id.is_none() && entry.reverses_entry_id.is_none())
     }
-    #[allow(clippy::too_many_arguments)]
     async fn post(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -983,7 +981,6 @@ impl FixedAssets {
                 .await?,
         ))
     }
-    #[allow(clippy::too_many_arguments)]
     async fn record_event(
         &self,
         tx: &mut MutationTransaction<'_>,

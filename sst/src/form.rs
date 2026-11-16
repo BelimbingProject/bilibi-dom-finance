@@ -60,7 +60,6 @@ const P: &[TaxSource] = &[TaxSource::Payables];
 const RP: &[TaxSource] = &[TaxSource::Receivables, TaxSource::Payables];
 const NONE: &[TaxSource] = &[];
 
-#[allow(clippy::too_many_arguments)]
 const fn b(
     key: &'static str,
     item: &'static str,

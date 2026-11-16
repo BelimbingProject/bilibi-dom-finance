@@ -814,19 +814,35 @@ impl Opening {
                 }
                 "cancel_opening" => self.review = None,
                 event if event.starts_with("source_evidence_grid:") => {
-                    self.evidence.handle(event, &params::string_values(value));
+                    self.evidence.handle(
+                        event,
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "class_grid" => {
-                    self.class_columns.handle(&params::string_values(value));
+                    self.class_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "stage_grid" => {
-                    self.stage_columns.handle(&params::string_values(value));
+                    self.stage_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "balance_grid" => {
-                    self.balance_columns.handle(&params::string_values(value));
+                    self.balance_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "opening_grid" => {
-                    self.columns.handle(&params::string_values(value));
+                    self.columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "clear-flash" => {
                     if self

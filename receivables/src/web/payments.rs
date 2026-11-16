@@ -792,11 +792,16 @@ impl Payments {
         let mut redirect = None;
         match v["type"].as_str().ok_or(Error::Invalid)? {
             "clear-flash" => self.flash.dismiss(v),
-            "filter" => self.list.apply_filters(&params::form_values(v, "filters")),
+            "filter" => self.list.apply_filters(
+                &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            ),
             "page" => self.list.put_page(v["page"].as_str()),
             "grid" => {
-                if let ColumnsOutcome::Sort(column) = self.columns.handle(&params::string_values(v))
-                {
+                if let ColumnsOutcome::Sort(column) = self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                ) {
                     self.list.next_sort(&column);
                 }
             }
@@ -807,7 +812,8 @@ impl Payments {
                 redirect = self.seen.take().and_then(|seen| seen.back(None));
             }
             "receipt_change" => {
-                let form = params::form_values(v, "receipt");
+                let form = params::form_values_checked(v, "receipt", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 let after = form.get("customer_id").cloned().unwrap_or_default();
                 let changed = self.draft.as_ref().is_some_and(|d| {
                     d.values.get("customer_id").cloned().unwrap_or_default() != after

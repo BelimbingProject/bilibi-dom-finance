@@ -494,7 +494,9 @@ impl LiveState<Scope, Error> for Book {
             if let LiveInput::Event(value) = r.input {
                 match event_type(value)? {
                     "validate" => {
-                        let fields = params::form_values(value, "book");
+                        let fields =
+                            params::form_values_checked(value, "book", params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?;
                         let before = self.currency.trim().to_uppercase();
                         self.currency = fields.get("currency_code").cloned().unwrap_or_default();
                         self.units = fields

@@ -337,18 +337,23 @@ impl State {
             .and_then(|s| s.parse::<usize>().ok())
         {
             if let Some(columns) = self.columns.get_mut(index) {
-                columns.handle(&params::string_values(payload));
+                columns.handle(
+                    &params::string_values_checked(payload, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             return Ok(());
         }
         if !self.bookkeeping {
             let display = self.display(scope).await?;
             let clock = self.sync_period(&display);
-            if let Some(outcome) = self
-                .period
-                .as_mut()
-                .and_then(|filter| filter.event(event, payload, &clock))
-            {
+            let applied = match self.period.as_mut() {
+                Some(filter) => filter
+                    .event_checked(event, payload, &clock)
+                    .map_err(Error::refused)?,
+                None => None,
+            };
+            if let Some(outcome) = applied {
                 if let bilibi_datetime::filter::Outcome::Applied(period) = outcome {
                     self.list
                         .filters
@@ -1350,7 +1355,6 @@ fn row(id: &str, cells: &[(&str, String)]) -> FlexRow {
     }
     row
 }
-#[allow(clippy::too_many_arguments)]
 fn history_row(
     prefix: &str,
     number: i64,

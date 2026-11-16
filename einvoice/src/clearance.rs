@@ -948,7 +948,6 @@ impl Einvoice {
         Self::authority().find_submission(connection, &lookup).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn record_outcome(
         &self,
         scope: &Scope,

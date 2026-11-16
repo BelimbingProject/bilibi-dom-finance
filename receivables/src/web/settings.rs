@@ -1190,7 +1190,12 @@ impl Settings {
         series: bool,
         v: &Value,
     ) -> Result<()> {
-        let form = params::form_values(v, if series { "series" } else { "tax" });
+        let form = params::form_values_checked(
+            v,
+            if series { "series" } else { "tax" },
+            params::FIELD_LIMIT,
+        )
+        .map_err(bilibi_database::Error::refused)?;
         let (keys, contract): (&[&str], _) = match &self.dialog {
             Some(Dialog::Series { .. }) if series => (
                 &["code", "name", "kind", "prefix"][..],
@@ -1288,13 +1293,22 @@ impl Settings {
         match v["type"].as_str().ok_or(Error::Invalid)? {
             "clear-flash" => self.flash.dismiss(v),
             "series_grid" => {
-                self.series_cols.handle(&params::string_values(v));
+                self.series_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "tax_grid" => {
-                self.tax_cols.handle(&params::string_values(v));
+                self.tax_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "changes_grid" => {
-                self.change_cols.handle(&params::string_values(v));
+                self.change_cols.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "save_layout" => {
                 let key = v["field"].as_str().ok_or(Error::Invalid)?;

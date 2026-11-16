@@ -408,7 +408,10 @@ impl Matching {
                     "entries_grid" => &mut self.entries_columns,
                     _ => &mut self.matches_columns,
                 };
-                columns.handle(&params::string_values(v));
+                columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "select" => {
                 self.selected_lines = ids(v, "lines[]");
