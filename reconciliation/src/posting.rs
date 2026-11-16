@@ -31,7 +31,6 @@ pub(crate) fn owner(line: &StatementLine) -> EntryOwner {
 
 /// Posts `line`, an unmatched statement line of the bank account, as `kind`
 /// and matches the line to the new entry, on `tx`.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn post(
     tx: &mut MutationTransaction<'_>,
     ledger: &Ledger,
@@ -132,7 +131,6 @@ pub(crate) async fn post(
 /// alone, to that entry. The match is unmatched with `reason` (so never once
 /// a finalised reconciliation counted it) and the entry reversed as its
 /// owner, dated `entry_date` (today, UTC, when absent).
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn reverse(
     tx: &mut MutationTransaction<'_>,
     ledger: &Ledger,

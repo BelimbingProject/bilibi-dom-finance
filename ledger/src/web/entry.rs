@@ -790,7 +790,9 @@ impl LiveState<Scope, Error> for Entry {
                     "close_reverse" => self.reverse = None,
                     "validate" => {
                         if let Some(reverse) = &mut self.reverse {
-                            let fields = params::form_values(value, "reverse");
+                            let fields =
+                                params::form_values_checked(value, "reverse", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?;
                             reverse.date = fields.get("entry_date").cloned().unwrap_or_default();
                             reverse.description =
                                 fields.get("description").cloned().unwrap_or_default();

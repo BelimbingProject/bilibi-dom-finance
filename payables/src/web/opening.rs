@@ -969,17 +969,28 @@ impl Opening {
                 }
                 "cancel_opening" => self.review = None,
                 "stage_grid" => {
-                    self.stage_columns.handle(&params::string_values(value));
+                    self.stage_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "classification_grid" => {
-                    self.classification_columns
-                        .handle(&params::string_values(value));
+                    self.classification_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "balance_grid" => {
-                    self.balance_columns.handle(&params::string_values(value));
+                    self.balance_columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "opening_grid" => {
-                    self.columns.handle(&params::string_values(value));
+                    self.columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
                 "clear-flash" => {
                     if self

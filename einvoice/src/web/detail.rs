@@ -491,7 +491,10 @@ impl Detail {
                     "sources_grid" => &mut self.sources,
                     _ => &mut self.events,
                 };
-                c.handle(&params::string_values(value));
+                c.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(false);
             }
             "link-copied" => {

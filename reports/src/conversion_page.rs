@@ -796,7 +796,8 @@ impl LiveState<Scope, Error> for State {
                     "previous" => self.offset = self.offset.saturating_sub(100),
                     "next" => self.offset = self.offset.saturating_add(100),
                     "grid" => {
-                        let values = params::string_values(v);
+                        let values = params::string_values_checked(v, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?;
                         self.columns.handle(&values);
                         self.list_columns.handle(&values);
                         self.account_columns.handle(&values);

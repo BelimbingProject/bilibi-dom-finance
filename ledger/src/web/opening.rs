@@ -439,7 +439,10 @@ impl Opening {
             }
             "paste_columns" => {
                 if let Some(paste) = &mut self.paste {
-                    paste.choose(&params::form_values(value, paste::FORM));
+                    paste.choose(
+                        &params::form_values_checked(value, paste::FORM, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
             }
             "discard_paste" => {
@@ -530,7 +533,8 @@ impl Opening {
             }
             "cancel_opening" => self.review = None,
             "grid" => {
-                let posted = params::string_values(value);
+                let posted = params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 for columns in [&mut self.grid, &mut self.steps, &mut self.reviewed] {
                     if let ColumnsOutcome::Sort(_) = columns.handle(&posted) {}
                 }

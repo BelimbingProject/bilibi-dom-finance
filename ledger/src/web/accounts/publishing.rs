@@ -317,7 +317,8 @@ impl Accounts {
         }
         match event {
             "validate_publication" if draft.review.is_none() => {
-                let fields = params::form_values(value, "publish");
+                let fields = params::form_values_checked(value, "publish", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 draft.key = fields.get("key").cloned().unwrap_or_default();
                 draft.name = fields.get("name").cloned().unwrap_or_default();
                 draft.description = fields.get("description").cloned().unwrap_or_default();
@@ -374,7 +375,10 @@ impl Accounts {
             }
             "publication_grid" => {
                 if let Some(draft) = &mut self.publication {
-                    draft.columns.handle(&params::string_values(value));
+                    draft.columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?,
+                    );
                 }
             }
             _ => {}

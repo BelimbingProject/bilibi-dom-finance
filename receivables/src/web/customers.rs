@@ -506,7 +506,8 @@ impl Customers {
 
     /// The dialog's own values and the company chooser's, from a posted form.
     async fn take_form(&mut self, _scope: &Scope, v: &serde_json::Value) -> Result<()> {
-        let form = params::form_values(v, FORM);
+        let form = params::form_values_checked(v, FORM, params::FIELD_LIMIT)
+            .map_err(bilibi_database::Error::refused)?;
         if form.is_empty() {
             return Ok(());
         }
@@ -654,11 +655,16 @@ impl Customers {
         let pages = self.pages.clone();
         match v["type"].as_str().ok_or(Error::Invalid)? {
             "clear-flash" => self.flash.dismiss(v),
-            "filter" => self.list.apply_filters(&params::form_values(v, "filters")),
+            "filter" => self.list.apply_filters(
+                &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            ),
             "page" => self.list.put_page(v["page"].as_str()),
             "grid" => {
-                if let ColumnsOutcome::Sort(column) = self.columns.handle(&params::string_values(v))
-                {
+                if let ColumnsOutcome::Sort(column) = self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                ) {
                     self.list.next_sort(&column);
                 }
             }

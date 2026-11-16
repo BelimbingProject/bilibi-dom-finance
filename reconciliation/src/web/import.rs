@@ -122,7 +122,8 @@ impl Import {
                 self.refusal = None;
             }
             "import_columns" => {
-                let posted = params::form_values(value, FORM);
+                let posted = params::form_values_checked(value, FORM, params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 // A changed separator or header row changes the columns:
                 // drop the choices the file no longer has.
                 let reshaped = ["delimiter", "header_rows"]

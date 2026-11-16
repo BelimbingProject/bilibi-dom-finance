@@ -193,7 +193,9 @@ impl OpeningMatch {
         let (items, lines) = available;
         match event {
             "opening_match_change" => {
-                let values = params::form_values(value, "opening_match");
+                let values =
+                    params::form_values_checked(value, "opening_match", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?;
                 self.item = values.get("item").and_then(|s| s.parse().ok());
                 self.line = values.get("line").and_then(|s| s.parse().ok());
                 if !lines.iter().any(|line| {

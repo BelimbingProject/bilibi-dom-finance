@@ -480,12 +480,16 @@ impl LiveState<Scope, Error> for Payment {
                 match v["type"].as_str().ok_or(Error::Invalid)? {
                     "clear-flash" => self.flash.dismiss(v),
                     "allocations_grid" => {
-                        self.allocations.handle(&params::string_values(v));
+                        self.allocations.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     "ask_reverse" => self.ask_reverse(r.scope).await,
                     "cancel_reverse" => self.reversing = None,
                     "reverse" => {
-                        let form = params::form_values(v, "reverse");
+                        let form = params::form_values_checked(v, "reverse", params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?;
                         let input = json!({
                             "payment_id": self.id,
                             "reversal_date": f::posted(&form, "reversal_date"),

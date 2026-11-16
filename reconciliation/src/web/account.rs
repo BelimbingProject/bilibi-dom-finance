@@ -610,10 +610,16 @@ impl Account {
             }
             "clear-flash" => clear_flash(&mut self.flash, value),
             "statements_grid" => {
-                self.statements.handle(&params::string_values(value));
+                self.statements.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "reconciliations_grid" => {
-                self.reconciliations.handle(&params::string_values(value));
+                self.reconciliations.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "open_import" => {
                 if self.pages.allowed(scope, IMPORT_STATEMENTS).await? {
@@ -694,9 +700,15 @@ impl Account {
                 }
             }
             "close_reconcile" => self.reconciling = false,
-            "reconciliation_change" => self.draft = params::form_values(value, "reconciliation"),
+            "reconciliation_change" => {
+                self.draft =
+                    params::form_values_checked(value, "reconciliation", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?
+            }
             "open_reconciliation" => {
-                self.draft = params::form_values(value, "reconciliation");
+                self.draft =
+                    params::form_values_checked(value, "reconciliation", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?;
                 if !self.pages.allowed(scope, MANAGE_RECONCILIATIONS).await? {
                     self.reconcile_errors = vec![DENIED.into()];
                     return Ok(None);

@@ -1471,7 +1471,6 @@ async fn overlapping(
 
 /// Records a return with its `opened` event and any adjustment `copies`,
 /// in one audited write; returns its id.
-#[allow(clippy::too_many_arguments)]
 async fn insert_return(
     tx: &mut MutationTransaction<'_>,
     s: &Scope,

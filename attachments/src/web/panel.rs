@@ -427,13 +427,15 @@ impl Panel {
                 Ok(())
             }
             "reason" => {
-                self.reason = params::form_values(value, "removal")
+                self.reason = params::form_values_checked(value, "removal", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?
                     .remove("reason")
                     .unwrap_or_default();
                 Ok(())
             }
             "remove" => {
-                self.reason = params::form_values(value, "removal")
+                self.reason = params::form_values_checked(value, "removal", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?
                     .remove("reason")
                     .unwrap_or_default();
                 self.remove(scope).await

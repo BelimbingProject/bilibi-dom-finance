@@ -690,13 +690,15 @@ impl Documents {
         }
         match kind {
             "invoice_order" => {
-                let form = params::form_values(v, "order");
+                let form = params::form_values_checked(v, "order", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 let order = form
                     .get("sales_order_id")
                     .and_then(|s| s.parse::<i64>().ok())
                     .ok_or(Error::Invalid)?;
                 let mut input = json!({"sales_order_id":order});
-                if let Some(series) = params::form_values(v, "order")
+                if let Some(series) = params::form_values_checked(v, "order", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?
                     .get("series_id")
                     .and_then(|s| s.parse::<i64>().ok())
                 {
@@ -735,13 +737,18 @@ impl Documents {
                 self.load_orders(scope).await?;
             }
             "order_filter" => {
-                self.order_list
-                    .apply_filters(&params::form_values(v, "filters"));
+                self.order_list.apply_filters(
+                    &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 self.load_orders(scope).await?;
             }
             "clear-flash" => self.flash.dismiss(v),
             "filter" => {
-                self.list.apply_filters(&params::form_values(v, "filters"));
+                self.list.apply_filters(
+                    &params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 self.load_page(scope).await?;
             }
             "page" => {
@@ -749,11 +756,16 @@ impl Documents {
                 self.load_page(scope).await?;
             }
             "order_grid" => {
-                self.order_columns.handle(&params::string_values(v));
+                self.order_columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "grid" => {
-                if let ColumnsOutcome::Sort(column) = self.columns.handle(&params::string_values(v))
-                {
+                if let ColumnsOutcome::Sort(column) = self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                ) {
                     self.list.next_sort(&column);
                     self.load_page(scope).await?;
                 }

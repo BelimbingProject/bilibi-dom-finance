@@ -680,7 +680,10 @@ impl LiveState<Scope, Error> for Aging {
                     }
                     "send_statement" => {
                         if let Some(draft) = &mut self.statement {
-                            draft.values.extend(params::form_values(v, "statement"));
+                            draft.values.extend(
+                                params::form_values_checked(v, "statement", params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            );
                             let input = json!({"customer_id":draft.customer_id,"as_of":draft.as_of,"recipient":draft.values.get("recipient"),"subject":draft.values.get("subject"),"body":draft.values.get("body")});
                             match self
                                 .pages
@@ -706,16 +709,26 @@ impl LiveState<Scope, Error> for Aging {
                         }
                     }
                     "customers_grid" => {
-                        self.customers.handle(&params::string_values(v));
+                        self.customers.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     "credits_grid" => {
-                        self.credits.handle(&params::string_values(v));
+                        self.credits.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     "invoices_grid" => {
-                        self.invoices.handle(&params::string_values(v));
+                        self.invoices.handle(
+                            &params::string_values_checked(v, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     "filters" => {
-                        let form = params::form_values(v, "filters");
+                        let form = params::form_values_checked(v, "filters", params::FIELD_LIMIT)
+                            .map_err(bilibi_database::Error::refused)?;
                         let date = f::posted(&form, "as_of");
                         if date.parse::<jiff::civil::Date>().is_ok() {
                             self.as_of = date.into();

@@ -496,7 +496,10 @@ impl LiveState<Scope, Error> for State {
                         self.dialog_message = None;
                     }
                     "grid" => {
-                        self.columns.handle(&params::string_values(value));
+                        self.columns.handle(
+                            &params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        );
                     }
                     _ => return Err(Error::Invalid),
                 }

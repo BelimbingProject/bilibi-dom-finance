@@ -838,11 +838,17 @@ impl Setup {
                 Ok(false)
             }
             "tax_codes_grid" => {
-                self.columns.handle(&params::string_values(v));
+                self.columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "history_grid" => {
-                self.history.handle(&params::string_values(v));
+                self.history.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "save_settings" => {
@@ -869,7 +875,8 @@ impl Setup {
                 Ok(false)
             }
             "tax_edit" | "save_tax_code_new" => {
-                let values = params::form_values(v, "tax");
+                let values = params::form_values_checked(v, "tax", params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?;
                 if let Some(t) = &mut self.tax {
                     for (key, into) in [
                         ("code", &mut t.code),

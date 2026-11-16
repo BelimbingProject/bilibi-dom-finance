@@ -643,10 +643,16 @@ impl Customer {
         match v["type"].as_str().ok_or(Error::Invalid)? {
             "clear-flash" => self.flash.dismiss(v),
             "invoices_grid" => {
-                self.invoices.handle(&params::string_values(v));
+                self.invoices.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "receipts_grid" => {
-                self.receipts.handle(&params::string_values(v));
+                self.receipts.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "save_customer" => self.save_field(scope, credential, v).await?,
             "record_relationship" => {

@@ -282,7 +282,10 @@ impl Detail {
                 } else {
                     &mut self.events
                 };
-                columns.handle(&params::string_values(v));
+                columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 Ok(false)
             }
             "finalising" => {

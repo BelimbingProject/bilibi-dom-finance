@@ -217,7 +217,10 @@ impl Bill {
                     "matches_grid" => &mut self.matches,
                     _ => &mut self.events,
                 };
-                columns.handle(&params::string_values(v));
+                columns.handle(
+                    &params::string_values_checked(v, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 return Ok(false);
             }
             "close_dialog" => {

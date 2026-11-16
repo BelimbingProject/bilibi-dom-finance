@@ -399,7 +399,10 @@ impl Opening {
                 self.review = None;
             }
             "opening_grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(bilibi_database::Error::refused)?,
+                );
             }
             "preview_opening" => {
                 self.fields.clear();
