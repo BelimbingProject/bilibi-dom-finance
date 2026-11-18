@@ -141,7 +141,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let viewer = sign_in(db, services, 1, 2).await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let contractor = sign_in(db, services, 1, 7).await?;
-    let client = db.get().await?;
+    let mut client = db.get().await?;
     let book = ledger.get_book(&manager, COMPANY).await?;
     let money = |text: &str| Money::parse(text, book.minor_units).expect("fixture amount");
 
@@ -616,7 +616,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
     let default_month = registry
         .call(
-            &**client,
+            &mut **client,
             &manager,
             "finance.ledger.book.get",
             &serde_json::json!({"company_id":COMPANY}),

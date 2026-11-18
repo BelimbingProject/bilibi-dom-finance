@@ -414,10 +414,10 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
             }),
         )
         .await?;
-    let client = db.get().await?;
+    let mut client = db.get().await?;
     let page = registry
         .call(
-            &**client,
+            &mut **client,
             &admin,
             "finance.receivables.document.page",
             &json!({"company_id":company,"source":"opening","search":"SCALE-ROW","sort":"total","direction":"asc","page":999,"page_size":25}),
@@ -434,7 +434,7 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
     assert_eq!(documents[0]["total"], "900");
     let snapshot_page = registry
         .call(
-            &**client,
+            &mut **client,
             &admin,
             "finance.receivables.document.page",
             &json!({"company_id":company,"source":"opening","search":"company_010","page":1,"page_size":25}),
@@ -446,7 +446,7 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
         .is_some_and(|rows| rows.iter().all(|row| row["party_code"] == "company_010")));
     let current_page = registry
         .call(
-            &**client,
+            &mut **client,
             &admin,
             "finance.receivables.document.page",
             &json!({"company_id":company,"source":"ordinary","status":"draft","search":"company_010","page":1,"page_size":25}),
@@ -470,7 +470,7 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
         pages.push(
             registry
                 .call(
-                    &**client,
+                    &mut **client,
                     &admin,
                     "finance.receivables.document.page",
                     &json!({"company_id":company,"status":status,"as_of":as_of,"page":1,"page_size":25}),
@@ -503,7 +503,7 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
             .all(|row| row["payment_status"] == "paid" && row["days_overdue"].is_null())));
     let summary = registry
         .call(
-            &**client,
+            &mut **client,
             &admin,
             "finance.receivables.document.summary",
             &json!({"company_id":company,"as_of":"2999-01-01"}),
@@ -520,7 +520,7 @@ async fn prove_opening_invoice_page_scale(db: &Db, services: &Services) -> Outco
         .is_some_and(|days| days > 0));
     let early = registry
         .call(
-            &**client,
+            &mut **client,
             &admin,
             "finance.receivables.document.summary",
             &json!({"company_id":company,"as_of":"1900-01-01"}),
@@ -1335,10 +1335,10 @@ async fn prove(db: &Db, services: &Services) -> Outcome<()> {
     conversion_lifecycle::prove(db, services, &config, [a, b, asset_batch], run.id).await?;
     conversion_report::after(db, services, report).await?;
     prove_opening_invoice_page_scale(db, services).await?;
-    let client = db.get().await?;
+    let mut client = db.get().await?;
     let bills = registry
         .call(
-            &**client,
+            &mut **client,
             &s,
             "finance.payables.document.page",
             &json!({"company_id":company,"source":"opening","page":1,"page_size":25}),

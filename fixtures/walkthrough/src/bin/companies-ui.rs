@@ -188,11 +188,11 @@ async fn prove_setup(
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let reports = services.get::<Reports>(bilibi_finance_reports::SERVICE)?;
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
-    let client = db.get().await?;
+    let mut client = db.get().await?;
     for (company, code, origin) in [(3, "MYR", "tenant"), (4, "SGD", "company")] {
         let read = registry
             .call(
-                &**client,
+                &mut **client,
                 &manager,
                 "finance.ledger.book.currencies",
                 &json!({"company_id":company}),
@@ -222,7 +222,7 @@ async fn prove_setup(
     assert_eq!(
         registry
             .call(
-                &**client,
+                &mut **client,
                 &manager,
                 "finance.ledger.book.currencies",
                 &json!({"company_id":5})
@@ -233,7 +233,7 @@ async fn prove_setup(
     assert_eq!(
         registry
             .call(
-                &**client,
+                &mut **client,
                 &manager,
                 "finance.ledger.book.currencies",
                 &json!({"company_id":4})
@@ -248,7 +248,7 @@ async fn prove_setup(
             "finance.reports.setup.get",
         ] {
             assert!(registry
-                .call(&**client, scope, key, &json!({"company_id":1}))
+                .call(&mut **client, scope, key, &json!({"company_id":1}))
                 .await
                 .is_err());
         }
@@ -257,7 +257,7 @@ async fn prove_setup(
     assert!(
         registry
             .call(
-                &**client,
+                &mut **client,
                 &contractor,
                 "finance.ledger.account.list",
                 &json!({"company_id":2})
@@ -366,10 +366,10 @@ async fn prove_setup(
         let submitted = ledger.submit_opening_balances(&manager, 1, &source).await?;
         ledger.approve_journal(&reviewer, 1, submitted.id).await?;
         let progress = ledger.opening_progress(&manager, 1).await?.unwrap();
-        let client = db.get().await?;
+        let mut client = db.get().await?;
         let read = registry
             .call(
-                &**client,
+                &mut **client,
                 &manager,
                 "finance.ledger.opening_balances.get",
                 &json!({"company_id":1}),
