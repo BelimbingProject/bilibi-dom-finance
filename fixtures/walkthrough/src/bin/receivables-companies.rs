@@ -49,6 +49,9 @@ impl bilibi_tenancy::ReadClient for PlanPreview<'_, '_> {
     }
 }
 impl bilibi_agent_api::OperationClient for PlanPreview<'_, '_> {
+    fn sql_client(&self) -> bilibi_tenancy::ProofFuture<'_, &tokio_postgres::Client> {
+        Box::pin(async move { Ok(self.0.client()) })
+    }
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         Some(self.0)
     }

@@ -73,7 +73,7 @@ pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
                 );
                 handler.commit(&mut tx, scope, &input).await?;
                 let state = registry
-                    .call(
+                    .call_in(
                         tx.sql(),
                         scope,
                         "finance.ledger.book.get",
@@ -93,7 +93,7 @@ pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
     }
     let state = registry
         .call(
-            &**client,
+            &mut **client,
             &manager,
             "finance.ledger.book.get",
             &json!({"company_id":COMPANY}),
@@ -124,7 +124,7 @@ pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
         .map_err(|_| "book.open preview waited for a second pooled connection")??;
     let listed = tokio::time::timeout(
         waiting,
-        registry.call(
+        registry.call_in(
             tx.sql(),
             &manager,
             "finance.ledger.book.currencies",
@@ -171,7 +171,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     let mut client = db.get().await?;
     let original = registry
         .call(
-            &**client,
+            &mut **client,
             &manager,
             "finance.reports.sections.get",
             &json!({"company_id":COMPANY}),
@@ -190,7 +190,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
         handler.preview(tx.sql(), &manager, input).await?;
         handler.commit(&mut tx, &manager, input).await?;
         let own = registry
-            .call(
+            .call_in(
                 tx.sql(),
                 &manager,
                 "finance.reports.sections.get",
@@ -248,7 +248,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     tx.rollback().await?;
     let after = registry
         .call(
-            &**client,
+            &mut **client,
             &manager,
             "finance.reports.sections.get",
             &json!({"company_id":COMPANY}),

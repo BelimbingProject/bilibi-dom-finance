@@ -491,10 +491,10 @@ async fn book_page_proof(
     // The tenant has used no currency and the manager manages no currency:
     // the contract an agent calls still offers every current one.
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
-    let client = db.get().await?;
+    let mut client = db.get().await?;
     let currencies = registry
         .call(
-            &**client,
+            &mut **client,
             manager,
             "finance.ledger.book.currencies",
             &json!({"company_id":COMPANY}),

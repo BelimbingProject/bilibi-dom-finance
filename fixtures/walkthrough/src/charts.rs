@@ -157,7 +157,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     // changes nothing until it is committed.
     let listed = registry
         .call(
-            &**db.get().await?,
+            &mut **db.get().await?,
             &manager,
             "finance.ledger.chart_template.list",
             &json!({"company_id": COMPANY}),
