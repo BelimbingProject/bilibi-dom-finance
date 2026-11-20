@@ -658,31 +658,47 @@ impl LiveState<Scope, Error> for Aging {
                                 r.customers.iter().any(|c| c.customer_id == customer_id)
                             })
                         {
-                            let data = self
+                            let draft = self
                                 .pages
                                 .read(
                                     r.scope,
-                                    "finance.receivables.customer.get",
-                                    json!({"customer_id":customer_id}),
+                                    crate::statement_mail::DRAFT,
+                                    json!({"customer_id":customer_id,"as_of":self.as_of}),
                                 )
-                                .await?;
-                            let customer: crate::Customer =
-                                serde_json::from_value(data).map_err(|_| Error::Internal)?;
-                            let overdue = self
-                                .report
-                                .as_ref()
-                                .and_then(|r| {
-                                    r.customers.iter().find(|c| c.customer_id == customer_id)
-                                })
-                                .is_some_and(|c| c.documents.iter().any(|d| d.days_overdue > 0));
-                            self.statement = Some(StatementDraft { customer_id, name: customer.name, as_of:self.as_of.clone(), values:[("recipient".into(),customer.party.email.unwrap_or_default()), ("subject".into(),"Your statement".into()), ("body".into(),if overdue { "Please find your statement attached. We would appreciate payment of any overdue amounts.".into() } else { "Please find your statement attached.".into() })].into(),errors:f::Errors::default() });
+                                .await;
+                            match draft {
+                                Ok(mut data) => {
+                                    let mut values: HashMap<String, String> =
+                                        serde_json::from_value(data["slots"].take())
+                                            .map_err(|_| Error::Internal)?;
+                                    values.insert(
+                                        "recipient".into(),
+                                        data["recipient"].as_str().unwrap_or("").into(),
+                                    );
+                                    self.statement = Some(StatementDraft {
+                                        customer_id,
+                                        name: data["name"].as_str().ok_or(Error::Internal)?.into(),
+                                        as_of: self.as_of.clone(),
+                                        values,
+                                        errors: f::Errors::default(),
+                                    });
+                                }
+                                Err(Error::Refused(message)) => {
+                                    self.flash.set(StatusKind::Error, message)
+                                }
+                                Err(other) => return Err(other),
+                            }
                         }
                     }
                     "send_statement" => {
                         if let Some(draft) = &mut self.statement {
                             draft.values.extend(
-                                params::form_values_checked(v, "statement", params::FIELD_LIMIT)
-                                    .map_err(bilibi_database::Error::refused)?,
+                                params::form_values_checked(
+                                    v,
+                                    "statement",
+                                    crate::statement_mail::BODY_LIMIT,
+                                )
+                                .map_err(bilibi_database::Error::refused)?,
                             );
                             let input = json!({"customer_id":draft.customer_id,"as_of":draft.as_of,"recipient":draft.values.get("recipient"),"subject":draft.values.get("subject"),"body":draft.values.get("body")});
                             match self
