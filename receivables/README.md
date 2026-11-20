@@ -268,7 +268,6 @@ Open **Administration → Templates → Customer statement email** to change the
 
 The send action queues the recipient, subject, and message approved in the dialog or agent review. Changes to the template after that review apply to later drafts.
 
-
 An administrator grants `finance-receivables-send-invoice` the `finance.receivables.documents.manage` and `finance.receivables.view` capabilities through Automation access. Configure Base Mail and the Artifacts PDF renderer before sending. A failed or cancelled job is recorded by the narrow `finance-receivables-mail-monitor` principal, whose standing grant can be denied by a tenant. The mail record and its audited changes keep the recipient, subject, message and statement facts.
 
 ## Printed invoices
