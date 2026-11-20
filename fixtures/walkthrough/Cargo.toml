@@ -21,6 +21,7 @@ path = "src/ui.rs"
 [dependencies]
 bilibi-authz.workspace = true
 bilibi-base.workspace = true
+bilibi-templates.workspace = true
 bilibi-core.workspace = true
 bilibi-database.workspace = true
 bilibi-domains.workspace = true

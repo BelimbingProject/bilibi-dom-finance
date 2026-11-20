@@ -11,6 +11,9 @@ use bilibi_finance_walkthrough_fixture::{install, sign_in};
 use bilibi_party::{CalendarDate, EffectiveDates, OrganisationId, PartyId};
 use serde_json::json;
 
+#[path = "../statement_cover.rs"]
+mod statement_cover;
+
 type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -479,9 +482,9 @@ async fn main() -> Outcome<()> {
     ));
     tx.rollback().await?;
     println!("PASS: sales workflow reads the issued invoice but its send is refused");
-    let key = "finance.receivables.statement.send";
+    let key = statement_cover::SEND;
     let statement = handler(&registry, key);
-    let input = json!({"company_id":1,"customer_id":customer.id,"as_of":"2026-11-15","recipient":"finance@orchid.example.test","subject":"Your statement","body":"Please see the attached statement."});
+    let input = statement_cover::draft(&db, &app.services, &admin, &manager, customer.id).await?;
     let mut tx = mutations
         .begin(&mut raw, manager.mutation_context("walkthrough.statement"))
         .await?;
@@ -511,6 +514,18 @@ async fn main() -> Outcome<()> {
         "PASS: statement review names the open invoice and its balance; rollback leaves no email"
     );
     if std::env::var_os("BILIBI_PDF_CHROMIUM").is_some() {
+        let mut tx = mutations
+            .begin(&mut raw, manager.mutation_context(key))
+            .await?;
+        let review = statement
+            .preview(&PlanPreview(tx.sql()), &manager, &input)
+            .await?
+            .envelope(key);
+        assert_eq!(review["result"]["subject"], input["subject"]);
+        assert_eq!(review["result"]["body"], input["body"]);
+        statement.commit(&mut tx, &manager, &input).await?;
+        tx.commit().await?;
+        statement_cover::delivered(&db, &app.services, &input).await?;
         let pdf = ar.print_document(&manager, 1, draft.id).await?;
         assert!(pdf.bytes.starts_with(b"%PDF-"));
         println!("PASS: the issued invoice renders as a PDF");
