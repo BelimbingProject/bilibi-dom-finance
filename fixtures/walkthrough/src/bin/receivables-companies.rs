@@ -652,7 +652,7 @@ async fn main() -> Outcome<()> {
         println!(
             "Customer browser proof at {origin}; manager@example.test uses the walkthrough password."
         );
-        axum::serve(listener, bilibi_web::router(app)).await?;
+        axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
     Ok(())
 }

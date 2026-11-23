@@ -134,7 +134,7 @@ async fn main() -> Outcome<()> {
     );
     axum::serve(
         tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-        bilibi_web::router(app),
+        bilibi_web::staff_router(app),
     )
     .await?;
     Ok(())

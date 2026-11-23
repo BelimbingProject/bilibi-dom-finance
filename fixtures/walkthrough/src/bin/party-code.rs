@@ -371,7 +371,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         println!("Browser at {origin}; manager@example.test / bilibi-dev");
-        axum::serve(listener, bilibi_web::router(app)).await?;
+        axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
     Ok(())
 }

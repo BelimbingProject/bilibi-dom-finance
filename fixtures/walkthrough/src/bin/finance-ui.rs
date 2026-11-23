@@ -465,7 +465,7 @@ async fn main() -> Outcome<()> {
         println!("Journals browser fixture: {origin}; manager@other.example.test and reviewer@other.example.test; walkthrough password");
         axum::serve(
             tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
         return Ok(());
@@ -477,7 +477,7 @@ async fn main() -> Outcome<()> {
         .await?;
         axum::serve(
             tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
         return Ok(());
@@ -836,7 +836,7 @@ async fn main() -> Outcome<()> {
     );
     axum::serve(
         tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-        bilibi_web::router(app),
+        bilibi_web::staff_router(app),
     )
     .await?;
     Ok(())

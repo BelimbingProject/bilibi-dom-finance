@@ -325,6 +325,6 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     println!("SST UI listening at {origin}");
-    axum::serve(listener, bilibi_web::router(app)).await?;
+    axum::serve(listener, bilibi_web::staff_router(app)).await?;
     Ok(())
 }

@@ -139,7 +139,7 @@ pub async fn run() -> Outcome<()> {
         let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4396".into());
         axum::serve(
             tokio::net::TcpListener::bind(bind).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
         return Ok(());
@@ -653,7 +653,7 @@ pub async fn run() -> Outcome<()> {
         println!("NE6 browser app ready; authority remains local; manager/viewer fixture accounts");
         axum::serve(
             tokio::net::TcpListener::bind(bind).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
     }

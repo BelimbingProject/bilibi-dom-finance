@@ -579,7 +579,7 @@ async fn main() -> Outcome<()> {
                 std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:43171".into()),
             )
             .await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
     }

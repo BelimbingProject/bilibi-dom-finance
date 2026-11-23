@@ -551,7 +551,7 @@ async fn serve(app: bilibi_web::App) -> Result<(), Box<dyn std::error::Error>> {
             std::env::var("BIND_ADDR").unwrap_or("127.0.0.1:3186".into()),
         )
         .await?,
-        bilibi_web::router(app),
+        bilibi_web::staff_router(app),
     )
     .await?;
     Ok(())

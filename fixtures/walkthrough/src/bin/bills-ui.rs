@@ -424,7 +424,7 @@ async fn main() -> Outcome<()> {
     )
     .await?;
     println!("Bills UI listening at {origin}");
-    let served = axum::serve(listener, bilibi_web::router(app)).await;
+    let served = axum::serve(listener, bilibi_web::staff_router(app)).await;
     let _ = stop.send(true);
     let _ = worker.await;
     served?;

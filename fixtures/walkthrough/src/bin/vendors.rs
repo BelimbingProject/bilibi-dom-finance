@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Vendor browser fixture at {origin} (existing proof database)");
         axum::serve(
             tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
         return Ok(());
@@ -388,7 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Vendor browser fixture at {origin}");
         axum::serve(
             tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
     }
