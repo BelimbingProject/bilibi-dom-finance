@@ -635,7 +635,7 @@ async fn main() -> Outcome<()> {
             std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4324".into()),
         )
         .await?;
-        axum::serve(listener, bilibi_web::router(app)).await?;
+        axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
     Ok(())
 }

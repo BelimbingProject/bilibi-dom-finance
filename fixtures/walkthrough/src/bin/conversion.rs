@@ -1531,7 +1531,7 @@ async fn main() -> Outcome<()> {
         // Fixture identities only: the normal launcher retires the old demo users.
         c.batch_execute("INSERT INTO persons(id,tenant_id,code,name,kind,email) VALUES(1,1,'ada_manager','Ada Manager','human','manager@example.test') ON CONFLICT DO NOTHING;
         INSERT INTO person_affiliations(id,tenant_id,person_id,organisation_id,title) VALUES(1,1,1,1,'Manager') ON CONFLICT DO NOTHING;
-        INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','manager@example.test',i.password_hash,1,1,1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=6 AND i.email='ai@agent.my' ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 1,1,'Ada Manager',id,1 FROM user_identities WHERE home_tenant_id=1 AND home_user_id=1 ON CONFLICT DO NOTHING;
+        INSERT INTO user_identities(kind,email,password_hash,last_tenant_id) SELECT 'staff','manager@example.test',i.password_hash,1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=6 AND i.email='ai@agent.my' ON CONFLICT DO NOTHING; INSERT INTO users(id,tenant_id,name,identity_id,person_id) SELECT 1,1,'Ada Manager',id,1 FROM user_identities WHERE kind='staff' AND lower(email)='manager@example.test' ON CONFLICT DO NOTHING;
         INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,1,1) ON CONFLICT DO NOTHING;").await?;
     }
     install(&db, &app.services).await?;
@@ -1665,7 +1665,7 @@ async fn main() -> Outcome<()> {
         );
         axum::serve(
             tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
     } else {

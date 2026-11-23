@@ -688,7 +688,7 @@ async fn main() -> Outcome<()> {
         println!("NX3 browser fixture ready at {origin}; asset {}", ids[0]);
         axum::serve(
             tokio::net::TcpListener::bind(bind).await?,
-            bilibi_web::router(app),
+            bilibi_web::staff_router(app),
         )
         .await?;
     }

@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
         let listener = tokio::net::TcpListener::bind(&bind).await?;
         println!("Browser proof at {origin}; PID {}", std::process::id());
-        axum::serve(listener, bilibi_web::router(app)).await?;
+        axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
     Ok(())
 }

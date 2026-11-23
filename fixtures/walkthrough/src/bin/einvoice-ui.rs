@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("serve") {
         let listener = tokio::net::TcpListener::bind(std::env::var("BIND_ADDR")?).await?;
         println!("NE5 browser fixture ready; manager@example.test / fixture password");
-        axum::serve(listener, bilibi_web::router(app)).await?;
+        axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
     Ok(())
 }
