@@ -581,5 +581,5 @@ define!(INVOICE_LOGO, "Invoice logo");
 inventory::submit! { bilibi_module_registry::Contribution::new(
     bilibi_settings_editor::IMAGE_SETTINGS, INVOICE_LOGO,
     bilibi_module_registry::Provenance { module: crate::MODULE, source: file!(), line: line!() },
-    &bilibi_settings_editor::ImageSetting { directory: "receivables-invoice-logos", max_bytes: 1024 * 1024 }
+    &bilibi_settings_editor::ImageSetting { directory: "receivables-invoice-logos", max_bytes: 1024 * 1024, staging: None, noun: "Invoice logo" }
 ) }
