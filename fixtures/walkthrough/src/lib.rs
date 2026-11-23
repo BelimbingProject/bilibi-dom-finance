@@ -297,7 +297,7 @@ pub async fn sign_in(db: &Db, services: &Services, tenant: i64, user: i64) -> Re
     let client = db.get().await.map_err(Error::from)?;
     client
         .execute(
-            "INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,user_agent) VALUES(encode(sha256(convert_to($1,'UTF8')),'hex'),$2,$3,'',now()+interval '1 day','Walkthrough browser') ON CONFLICT DO NOTHING",
+            "INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,user_agent,authentication_authority) VALUES(encode(sha256(convert_to($1,'UTF8')),'hex'),$2,$3,'',now()+interval '1 day','Walkthrough browser','portable') ON CONFLICT DO NOTHING",
             &[&format!("walkthrough-{tenant}-{user}"), &tenant, &user],
         )
         .await
