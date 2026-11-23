@@ -61,7 +61,7 @@ pub const SERVICE: &str = "finance/receivables.receivables";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/artifacts", "base/media", "base/mail", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
+        dependencies: &["base/artifacts", "base/media", "base/mail", "base/templates", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
         migrations: &[("finance-receivables-001-receivables", include_str!("../migrations/001-receivables.sql")), ("finance-receivables-002-write-offs", include_str!("../migrations/002-write-offs.sql")), ("finance-receivables-003-core-company", include_str!("../migrations/003-core-company.sql")), ("finance-receivables-004-opening-items", include_str!("../migrations/004-opening-items.sql")),
             ("finance-receivables-005-opening-lifecycle", include_str!("../migrations/005-opening-lifecycle.sql")), ("finance-receivables-006-party-facts", include_str!("../migrations/006-party-facts.sql")), ("finance-receivables-007-core-party-code", include_str!("../migrations/007-core-party-code.sql")),
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
@@ -75,6 +75,7 @@ inventory::submit! {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 ledger: services.get(bilibi_finance_ledger::SERVICE)?,
                 attachments: services.get(bilibi_finance_attachments::SERVICE)?,
+                templates: services.get(bilibi_templates::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
                 records: services.get(bilibi_records::SERVICE)?,
                 artifacts: services.get("base/artifacts.store")?,
@@ -189,6 +190,7 @@ pub struct Receivables {
     settings: Arc<bilibi_settings::Settings>,
     ledger: Arc<Ledger>,
     attachments: Arc<Attachments>,
+    templates: Arc<bilibi_templates::Templates>,
     parties: Arc<bilibi_tenancy::PartyProofs>,
     records: Arc<bilibi_records::Records>,
     queue: Arc<bilibi_queue::Queue>,

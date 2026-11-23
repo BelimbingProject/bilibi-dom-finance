@@ -5,28 +5,183 @@ use crate::{
 };
 use askama::Template;
 use bilibi_agent_api::{
-    Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, WriteHandler,
-    DEFINITIONS,
+    Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, ReadHandler,
+    WriteHandler, DEFINITIONS,
 };
 use bilibi_artifacts::{HtmlFuture, HtmlOwner, Operation as FileOperation, Owner, Reference};
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_finance_ledger::{MinorUnits, Money};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_party_ids::OrganisationId;
+use bilibi_templates::{
+    Audience, Context, DefaultText, Output, Slot, Template as Wording, Value as Fact, Variable,
+    CATALOGUE,
+};
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
 use tokio_postgres::Transaction;
+
+const KEY: &str = "finance.receivables.statement_cover";
+const SUBJECT_LIMIT: usize = 200;
+pub(super) const BODY_LIMIT: usize = 16_000;
+const REMINDER: &str = " We would appreciate payment of any overdue amounts.";
+
+inventory::submit! { Contribution::new(CATALOGUE, KEY, Provenance { module:MODULE, source:file!(), line:line!() }, &Wording {
+    key: KEY,
+    label: "Customer statement email",
+    audience: Audience::Customer,
+    outputs: &[Output::PlainText],
+    base_language: "en",
+    slots: &[
+        Slot { id:"subject", label:"Subject", context:Context::Subject, required:true, max_bytes:SUBJECT_LIMIT },
+        Slot { id:"body", label:"Message", context:Context::PlainText, required:true, max_bytes:BODY_LIMIT },
+    ],
+    variables: &[
+        Variable { id:"customer_name", label:"Customer name", optional:false, sample:Fact::Text("Acme Trading"), slots:&["subject","body"] },
+        Variable { id:"statement_date", label:"Statement date", optional:false, sample:Fact::Date(jiff::civil::date(2026, 11, 20)), slots:&["subject","body"] },
+        Variable { id:"overdue_reminder", label:"Overdue payment reminder", optional:true, sample:Fact::Text(REMINDER), slots:&["body"] },
+    ],
+    defaults: &[DefaultText {
+        language:"en", version:"1", slots:&[
+            ("subject","Your statement"),
+            ("body","Please find your statement attached.{{overdue_reminder}}"),
+        ],
+    }],
+}) }
+
+pub(super) const DRAFT: &str = "finance.receivables.statement.draft";
+struct DraftStatement;
+
+fn draft_input() -> Value {
+    json!({"type":"object","required":["company_id","customer_id","as_of"],"properties":{
+        "company_id":{"type":"integer","minimum":1},"customer_id":{"type":"integer","minimum":1},
+        "as_of":{"type":"string","format":"date"},"language":{"type":"string","maxLength":80}
+    }})
+}
+
+impl ReadHandler for DraftStatement {
+    fn owner(&self) -> &'static str {
+        MODULE
+    }
+
+    fn requires_transaction(&self) -> bool {
+        true
+    }
+
+    fn call<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let service = agent_operations::owner()?;
+            let tx = client.transaction().ok_or(Error::Internal)?;
+            let draft = draft(service, tx, scope, input)
+                .await
+                .map_err(|error| agent_operations::failure(error, "lines"))?;
+            Ok(draft.into())
+        })
+    }
+}
+
+fn statement_request(input: &Value) -> Result<(i64, i64, jiff::civil::Date)> {
+    let id = |name: &str| {
+        input[name]
+            .as_i64()
+            .filter(|n| *n > 0)
+            .ok_or(ReceivableError::InvalidOption)
+    };
+    let date = input["as_of"]
+        .as_str()
+        .ok_or(ReceivableError::InvalidOption)?
+        .parse()
+        .map_err(|_| invalid("as_of", "Choose a valid date."))?;
+    Ok((id("company_id")?, id("customer_id")?, date))
+}
+
+async fn draft(
+    service: &Receivables,
+    tx: &Transaction<'_>,
+    scope: &Scope,
+    input: &Value,
+) -> Result<Value> {
+    let (company, customer_id, as_of) = statement_request(input)?;
+    service
+        .authorize_on(tx, scope, company, MANAGE_DOCUMENTS)
+        .await?;
+    let report = service
+        .aged_receivables_on(tx, scope, company, as_of, &AgingOptions::default())
+        .await?;
+    let party = statement_customer(&report, customer_id)?;
+    let row = crate::store::find(
+        tx,
+        crate::store::CUSTOMERS,
+        scope.tenant(),
+        company,
+        Some(customer_id),
+    )
+    .await?
+    .ok_or(ReceivableError::CustomerNotFound)?;
+    let customer = service.customer(tx, scope, row).await?;
+    let company = OrganisationId::new(company).map_err(|_| ReceivableError::InvalidOption)?;
+    let template = service.templates.get(KEY)?;
+    let resolved = service
+        .templates
+        .resolve(
+            tx,
+            scope,
+            KEY,
+            Some(company),
+            input["language"].as_str().unwrap_or(template.base_language),
+            None,
+        )
+        .await?;
+    let mut facts = vec![
+        ("customer_name", Fact::Text(&customer.name)),
+        ("statement_date", Fact::Date(as_of)),
+    ];
+    if party
+        .documents
+        .iter()
+        .any(|document| document.days_overdue > 0)
+    {
+        facts.push(("overdue_reminder", Fact::Text(REMINDER)));
+    }
+    let slots = template
+        .render(&resolved.slots, &facts)
+        .map_err(|problem| Error::refused(problem.to_string()))?;
+    Ok(json!({
+        "name":customer.name,"recipient":customer.party.email.unwrap_or_default(),"slots":slots,
+        "template":{"language":resolved.language,"origin":resolved.origin}
+    }))
+}
+
+fn statement_customer(report: &crate::AgedReceivables, id: i64) -> Result<&crate::AgedCustomer> {
+    report
+        .customers
+        .iter()
+        .find(|customer| customer.customer_id == id)
+        .ok_or_else(|| {
+            invalid(
+                "customer_id",
+                "This customer has no open balance on that date.",
+            )
+        })
+}
 
 struct SendStatement;
 fn input() -> Value {
     json!({"type":"object","required":["company_id","customer_id","as_of","recipient","subject","body"],"properties":{
         "company_id":{"type":"integer","minimum":1},"customer_id":{"type":"integer","minimum":1},"as_of":{"type":"string","format":"date"},
-        "recipient":{"type":"string","maxLength":254},"subject":{"type":"string","maxLength":200},"body":{"type":"string","maxLength":16000}}})
+        "recipient":{"type":"string","maxLength":254},"subject":{"type":"string","maxLength":SUBJECT_LIMIT},"body":{"type":"string","maxLength":BODY_LIMIT}}})
 }
 fn output() -> Value {
     json!({"type":"object"})
 }
 inventory::submit! { Contribution::new(DEFINITIONS,"finance/receivables.statement_operations", Provenance {module:MODULE,source:file!(),line:line!()}, &Definitions { operations:&[Operation {
+    key:DRAFT,title:"Prepare statement wording",summary:"Fill a statement email with the wording for the authorised company and requested language.",keywords:&["statement","email"],capability:VIEW,input:draft_input,output,handler:Handler::Read(&DraftStatement),channels:Channels::Every,step_up:&[]
+}, Operation {
     key:"finance.receivables.statement.send",title:"Send a customer statement",summary:"Review a customer's open invoices and credits at the chosen date, then queue a statement PDF with the email.",keywords:&["reminder","chase"],capability:MANAGE_DOCUMENTS,input,output,handler:Handler::SafeWrite(&SendStatement),channels:Channels::Every,step_up:&[]
 }], guides:&[] }) }
 
@@ -36,32 +191,25 @@ async fn review(
     scope: &Scope,
     input: &Value,
 ) -> Result<Value> {
-    let company = input["company_id"]
-        .as_i64()
-        .filter(|n| *n > 0)
-        .ok_or(ReceivableError::InvalidOption)?;
-    let customer = input["customer_id"]
-        .as_i64()
-        .filter(|n| *n > 0)
-        .ok_or(ReceivableError::InvalidOption)?;
+    let (company, customer, as_of) = statement_request(input)?;
     service.join(tx, scope, company, MANAGE_DOCUMENTS).await?;
-    let as_of = input["as_of"]
-        .as_str()
-        .ok_or(ReceivableError::InvalidOption)?
-        .parse()
-        .map_err(|_| invalid("as_of", "Choose a valid date."))?;
     let recipient = input["recipient"].as_str().unwrap_or("").trim();
     bilibi_mail::Address::new(None, recipient)
         .map_err(|_| invalid("recipient", "Enter a valid email address."))?;
-    let subject = input["subject"].as_str().unwrap_or("").trim();
-    if subject.is_empty() || subject.len() > 200 || subject.chars().any(char::is_control) {
+    let subject = input["subject"].as_str().unwrap_or("");
+    if subject.trim().is_empty()
+        || subject.len() > SUBJECT_LIMIT
+        || subject
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
         return Err(invalid(
             "subject",
             "Enter a subject of up to 200 characters.",
         ));
     }
-    let body = input["body"].as_str().unwrap_or("").trim();
-    if body.is_empty() || body.len() > 16000 {
+    let body = input["body"].as_str().unwrap_or("").replace("\r\n", "\n");
+    if body.trim().is_empty() || body.len() > BODY_LIMIT {
         return Err(invalid(
             "body",
             "Enter a message of up to 16,000 characters.",
@@ -70,16 +218,7 @@ async fn review(
     let report = service
         .aged_receivables_on(tx, scope, company, as_of, &AgingOptions::default())
         .await?;
-    let party = report
-        .customers
-        .iter()
-        .find(|c| c.customer_id == customer)
-        .ok_or_else(|| {
-            invalid(
-                "customer_id",
-                "This customer has no open balance on that date.",
-            )
-        })?;
+    let party = statement_customer(&report, customer)?;
     Ok(
         json!({"company_id":company,"customer_id":customer,"recipient":recipient,"subject":subject,"body":body,
         "statement":{"as_of":report.as_of,"currency":report.currency_code,"minor_units":report.minor_units.get(),"customer":party},
