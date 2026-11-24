@@ -2,7 +2,8 @@
   "blocks": [
     {
       "type": "field",
-      "field": "logo"
+      "field": "logo",
+      "label": "Company logo"
     },
     {
       "type": "heading",
@@ -22,7 +23,8 @@
     },
     {
       "type": "field",
-      "field": "sales_order"
+      "field": "sales_order",
+      "label": "Sales order"
     },
     {
       "type": "field",
@@ -34,11 +36,13 @@
     },
     {
       "type": "field",
-      "field": "letterhead"
+      "field": "letterhead",
+      "label": "Letterhead"
     },
     {
       "type": "field",
-      "field": "remarks"
+      "field": "remarks",
+      "label": "Invoice remarks"
     },
     {
       "type": "table",
@@ -94,15 +98,18 @@
     },
     {
       "type": "field",
-      "field": "balance"
+      "field": "balance",
+      "label": "Balance summary"
     },
     {
       "type": "field",
-      "field": "terms"
+      "field": "terms",
+      "label": "Terms"
     },
     {
       "type": "field",
-      "field": "bank"
+      "field": "bank",
+      "label": "Bank details"
     },
     {
       "type": "field",
@@ -110,7 +117,8 @@
     },
     {
       "type": "field",
-      "field": "footer"
+      "field": "footer",
+      "label": "Notes"
     }
   ]
 }

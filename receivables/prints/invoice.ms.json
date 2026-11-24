@@ -2,7 +2,8 @@
   "blocks": [
     {
       "type": "field",
-      "field": "logo"
+      "field": "logo",
+      "label": "Logo syarikat"
     },
     {
       "type": "heading",
@@ -22,7 +23,8 @@
     },
     {
       "type": "field",
-      "field": "sales_order"
+      "field": "sales_order",
+      "label": "Pesanan jualan"
     },
     {
       "type": "field",
@@ -34,11 +36,13 @@
     },
     {
       "type": "field",
-      "field": "letterhead"
+      "field": "letterhead",
+      "label": "Kepala surat"
     },
     {
       "type": "field",
-      "field": "remarks"
+      "field": "remarks",
+      "label": "Catatan invois"
     },
     {
       "type": "table",
@@ -94,15 +98,18 @@
     },
     {
       "type": "field",
-      "field": "balance"
+      "field": "balance",
+      "label": "Ringkasan baki"
     },
     {
       "type": "field",
-      "field": "terms"
+      "field": "terms",
+      "label": "Terma"
     },
     {
       "type": "field",
-      "field": "bank"
+      "field": "bank",
+      "label": "Butiran bank"
     },
     {
       "type": "field",
@@ -110,7 +117,8 @@
     },
     {
       "type": "field",
-      "field": "footer"
+      "field": "footer",
+      "label": "Catatan"
     }
   ]
 }
