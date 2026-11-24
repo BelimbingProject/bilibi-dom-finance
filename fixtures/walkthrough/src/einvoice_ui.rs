@@ -12,7 +12,7 @@ use bilibi_queue::{Config, Executor};
 use bilibi_settings::Target;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{download::*, page::*};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{collections::HashMap, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
 
 type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
@@ -76,10 +76,32 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         .await?,
         "stored"
     );
-    let root = format!("/tmp/ne5-pdf-{}", std::process::id());
+    let proof_dir = std::env::var("EINVOICE_PRINT_PROOF_DIR").ok();
+    let root = proof_dir.as_ref().map_or_else(
+        || format!("/tmp/ne5-pdf-{}", std::process::id()),
+        |path| format!("{path}/private-artifacts"),
+    );
     std::fs::create_dir_all(&root)?;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
     crate::attachments::configure_storage(db, services, &admin, &root).await?;
+    save(
+        db,
+        services,
+        &admin,
+        Target::Global,
+        "pdf.chromium.binary",
+        json!(std::env::var("WALKTHROUGH_CHROMIUM").unwrap_or_else(|_| "chromium".into())),
+    )
+    .await?;
+    save(
+        db,
+        services,
+        &admin,
+        Target::Global,
+        "finance.einvoice.sandbox.portal_url",
+        json!("https://example.test"),
+    )
+    .await?;
     for (key, value) in [
         ("environment", "sandbox"),
         ("document_version", "1.0"),
@@ -112,6 +134,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let mut ids = Vec::new();
     for n in 0..30 {
         let mut d = draft(&format!("NE5-{n:03}"), None);
+        if n == 0 && proof_dir.is_some() {
+            let example = d.lines.first().ok_or("missing draft line")?.clone();
+            d.lines = (1..=85).map(|number| {
+                let mut line = example.clone();
+                line.description = Some(format!("Fiscal line {number:03} with a longer recorded description for pagination."));
+                line
+            }).collect();
+        }
         if n == 7 {
             d.code_number = Some("NE5-100%_\\ <invoice>".into());
             d.buyer.as_mut().unwrap().name = Some("Buyer <one> & partners".into());
@@ -224,8 +254,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         &event(&mut detail, &manager, json!({"type":"submit"})).await?,
         "Submission queued.",
     );
-    let client = db.get().await?;
-    clearance::jobs_settle(&client).await?;
+    clearance::jobs_settle(&**db.get().await?).await?;
     let refreshed = event(&mut detail, &manager, json!({"type":"refresh"})).await?;
     has(&refreshed, "Status read from the authority: valid.");
     has(&refreshed, "Sandbox");
@@ -250,7 +279,18 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         1,
         "PDF is not a status transition"
     );
-    let artifact = d.pdf_artifact_id.unwrap();
+    let validation_url = d
+        .validation_url
+        .as_deref()
+        .ok_or("no synthetic authority link")?;
+    let artifact = d.pdf_artifact_id.ok_or("no rendered e-invoice artifact")?;
+    assert_eq!(
+        facade.generate_pdf(&manager, 1, ids[0]).await?.artifact_id,
+        artifact
+    );
+    if let Some(proof_dir) = &proof_dir {
+        std::fs::write(format!("{proof_dir}/validation-url.txt"), validation_url)?;
+    }
     let downloads = services.get::<DownloadService<Scope, Error>>("finance/einvoice.files")?;
     let path = HashMap::from([
         ("id".into(), ids[0].to_string()),
@@ -266,6 +306,27 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         })
         .await?;
     assert!(file.bytes.starts_with(b"%PDF-"));
+    if let Some(proof_dir) = &proof_dir {
+        std::fs::write(format!("{proof_dir}/validated.pdf"), &file.bytes)?;
+        publish_malay_letter(db, services, &admin).await?;
+        let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
+        assert_ne!(malay.artifact_id, path["artifact_id"]);
+        let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
+        std::fs::write(
+            format!("{proof_dir}/validated-ms-letter.pdf"),
+            &translated.bytes,
+        )?;
+    }
+    assert!(downloads
+        .0
+        .serve(DownloadRequest {
+            operation: "pdf",
+            scope: &other,
+            path: &path,
+            query: &HashMap::new(),
+        })
+        .await
+        .is_err());
     has(
         &event(&mut detail, &manager, json!({"type":"open_cancel"})).await?,
         "einvoice-document-cancel-modal",
@@ -325,6 +386,12 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         Err(Error::Forbidden)
     ));
     grants.set_direct(&admin, 1, VIEW, None).await?;
+    let cancelled = facade.generate_pdf(&manager, 1, ids[0]).await?;
+    assert_ne!(cancelled.artifact_id, path["artifact_id"]);
+    if let Some(proof_dir) = &proof_dir {
+        let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
+        std::fs::write(format!("{proof_dir}/cancelled.pdf"), &file.bytes)?;
+    }
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
         .await?;
@@ -338,7 +405,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     );
     // Leave a validated document and an issued document for the browser run.
     facade.submit_document(&manager, 1, ids[1]).await?;
-    clearance::jobs_settle(&client).await?;
+    clearance::jobs_settle(&**db.get().await?).await?;
     // Cover two older sales with a consolidated document, without an extra UI.
     let mut covered = Vec::new();
     for n in 0..2 {
@@ -368,4 +435,54 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         ids[1], ids[2], ids[7]
     );
     Ok(stop)
+}
+
+async fn publish_malay_letter(db: &Db, services: &Services, admin: &Scope) -> Outcome<()> {
+    use bilibi_agent_api::{Handler, Registry};
+    use bilibi_database::MutationBoundary;
+    use bilibi_settings::Settings;
+    let key = "finance.einvoice.fiscal_document";
+    let registry = services.get::<Registry>("base/agent_api.registry")?;
+    let current = registry
+        .read(
+            db,
+            admin,
+            "base.templates.print.get",
+            &json!({"key":key,"company_id":1,"language":"ms"}),
+        )
+        .await?;
+    let print = &current["result"]["print"];
+    let mut layout: Value = serde_json::from_str(
+        print["effective"]["layout"]
+            .as_str()
+            .ok_or("missing fiscal layout")?,
+    )?;
+    layout["paper"] = json!("letter");
+    let input = json!({
+        "key":key, "company_id":1, "language":"ms", "review":print["review"],
+        "layout":layout.to_string()
+    });
+    let operation = "base.templates.print.publish";
+    let Handler::SafeWrite(publish) = registry.operations[operation].definition.handler else {
+        return Err("expected a reviewed fiscal layout write".into());
+    };
+    let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+    let settings = services.get::<Settings>("base/settings.store")?;
+    let mut client = db.get().await?;
+    let mut tx = boundary
+        .begin(&mut client, admin.mutation_context(operation))
+        .await?;
+    publish.preview(tx.sql(), admin, &input).await?;
+    publish.commit(&mut tx, admin, &input).await?;
+    settings
+        .put(
+            &mut tx,
+            admin,
+            Target::Company(OrganisationId::new(1)?),
+            "templates.language",
+            json!("ms"),
+        )
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }

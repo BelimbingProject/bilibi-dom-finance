@@ -119,6 +119,11 @@ jobs:
       - name: Build the app and every walkthrough
         run: cargo build --locked -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins
 
+      - name: Enable sandboxed Chrome for e-invoice PDFs
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          echo "WALKTHROUGH_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
+
       - name: Run the walkthroughs
         env:
           WALKTHROUGH_SLOW: ${{ github.event_name != 'pull_request' && '1' || '' }}

@@ -68,7 +68,7 @@ Resolve the `Einvoice` service (`finance/einvoice.einvoice`) from the registry a
 | `reconciliation` | `.view` | `unposted` (valid without an entry) and `unreversed` (cancelled with an entry standing) documents, newest first, each with its entries and the last failure's reason |
 | `consolidation_candidates` | `.view` | What a month's consolidated document would cover at `now`: the window, the eligible documents, those the authority's limits refuse with the reason, and the totals |
 | `issue_consolidated_document` | `.documents.issue` | Records the month's consolidated document at `now` (see Consolidation); audit action `finance.einvoice.document.consolidated` |
-| `generate_pdf` | `.view` | Renders the document's PDF on Base Artifacts once per state and records `pdf_generated`; audit action `finance.einvoice.pdf.generated` |
+| `generate_pdf` | `.view` | Renders the document's PDF on Base Artifacts once per source event and effective layout, and records `pdf_generated`; audit action `finance.einvoice.pdf.generated` |
 | `read_pdf` | `.view` | A stored PDF's bytes and download name, for the download route |
 | `qr_code_svg` | none | The validation link's QR code as an inline SVG |
 | `Einvoice::evidence_datasets`, `evidence_page` | `.view` | The auditor pack's frozen exports of this module's tables (see Evidence) |
@@ -92,6 +92,10 @@ A status reads the same on every page: Not sent (issued or released), Sent, Vali
 Cancellation asks for a reason in the shared Modal, then asks for confirmation in the shared ConfirmDialog. The pinned Platform cannot place a reason input or a custom “Keep document” label inside ConfirmDialog, so this requires one extra confirmation click compared with Bilimbi; no Domain script or Platform change is added.
 
 `/finance/einvoice/documents/{id}/pdf/{artifact_id}` returns an attachment through the Platform download contract. `read_pdf` reauthorizes the artifact's actual document and company on every request; the cosmetic document ID never grants access. The response is private/no-store and nosniff through the shared FileBody transport.
+
+The fiscal PDF uses the shared print compiler and the private offline Chromium renderer. Its English and Bahasa Melayu layouts use the frozen supplier and buyer details, classification, discount and charge amounts, tax and exemptions, original and source references, and authority evidence from the recorded document. Valid and buyer-rejected documents that still stand with the authority carry a scannable QR for its validation link. Cancelled and invalid copies show their current status and omit that QR. An unchanged request returns the recorded artifact; a later clearance event or effective layout revision produces another copy.
+
+Set `WALKTHROUGH_CHROMIUM` to a sandbox-capable Chromium binary for the PDF walkthrough. To retain disposable PDF evidence, also set `EINVOICE_PRINT_PROOF_DIR` to a private directory; the walkthrough saves browser-ready copies and the synthetic validation URL for QR comparison.
 
 Run the NE5 proof against an empty disposable database with `DATABASE_URL=... BILIBI_SETTINGS_KEY=<64 hex characters> cargo run -p bilibi-finance-walkthrough-fixture --bin einvoice-ui`. It exercises literal wildcard search, page boundaries and combined filters, tenant isolation, real queue submit/poll/refresh, PDF bytes, status after PDF events, cancellation with Unicode reason and revoked grants. Only MyInvois is a local stand-in. To inspect the same records in a browser, add `serve` and set matching `APP_ORIGIN` and `BIND_ADDR`; this is fixture-only and installs no production data.
 
