@@ -207,8 +207,8 @@ pub struct FiscalStandings {
 /// Reads the fiscal documents of a module's records, for that module's list
 /// and page. The reader authorizes the person with its own view capability.
 pub trait FiscalDocuments: Send + Sync {
-    /// A valid fiscal document's validation QR as an image data URL.
-    fn validation_qr<'a>(
+    /// A valid fiscal document's authority validation URL.
+    fn validation_url<'a>(
         &'a self,
         client: &'a dyn OperationClient,
         settings: &'a bilibi_settings::Settings,
@@ -368,8 +368,8 @@ pub(crate) async fn standing(
     Ok(all)
 }
 
-/// Validation QR for a posted record, when its issuer permits the reader to see it.
-pub(crate) async fn validation_qr(
+/// Validation URL for a posted record, when its issuer permits the reader to see it.
+pub(crate) async fn validation_url(
     client: &dyn OperationClient,
     settings: &bilibi_settings::Settings,
     scope: &Scope,
@@ -379,7 +379,7 @@ pub(crate) async fn validation_qr(
 ) -> Result<Option<String>, bilibi_database::Error> {
     for reader in DOCUMENTS.get().into_iter().flatten() {
         if let Some(qr) = reader
-            .validation_qr(client, settings, scope, company_id, module, record)
+            .validation_url(client, settings, scope, company_id, module, record)
             .await?
         {
             return Ok(Some(qr));

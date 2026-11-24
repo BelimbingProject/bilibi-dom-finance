@@ -18,6 +18,9 @@ mod order_operations;
 mod orders;
 mod pdf;
 mod posting;
+mod print_layouts;
+mod print_snapshot;
+mod print_values;
 mod records;
 mod reports;
 mod settlements;
@@ -61,7 +64,7 @@ pub const SERVICE: &str = "finance/receivables.receivables";
 inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
-        dependencies: &["base/artifacts", "base/media", "base/mail", "base/templates", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/party", "finance/ledger", "finance/attachments"],
+        dependencies: &["base/artifacts", "base/branding", "base/media", "base/mail", "base/templates", "base/settings", "base/settings_editor", "base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/queue", "base/schedule", "base/locale", "base/menu", "base/party_ids", "base/principal_directory", "base/records", "base/tenancy", "base/ui", "core/address", "core/company", "core/currency", "core/party", "finance/ledger", "finance/attachments"],
         migrations: &[("finance-receivables-001-receivables", include_str!("../migrations/001-receivables.sql")), ("finance-receivables-002-write-offs", include_str!("../migrations/002-write-offs.sql")), ("finance-receivables-003-core-company", include_str!("../migrations/003-core-company.sql")), ("finance-receivables-004-opening-items", include_str!("../migrations/004-opening-items.sql")),
             ("finance-receivables-005-opening-lifecycle", include_str!("../migrations/005-opening-lifecycle.sql")), ("finance-receivables-006-party-facts", include_str!("../migrations/006-party-facts.sql")), ("finance-receivables-007-core-party-code", include_str!("../migrations/007-core-party-code.sql")),
             ("finance-receivables-008-opening-credits", include_str!("../migrations/008-opening-credits.sql")),
@@ -69,16 +72,19 @@ inventory::submit! {
             ("finance-receivables-010-invoice-layout", include_str!("../migrations/010-invoice-layout.sql")),
             ("finance-receivables-011-sales-orders", include_str!("../migrations/011-sales-orders.sql")),
             ("finance-receivables-012-mail", include_str!("../migrations/012-mail.sql")),
-            ("finance-receivables-013-statement-mail", include_str!("../migrations/013-statement-mail.sql"))],
+            ("finance-receivables-013-statement-mail", include_str!("../migrations/013-statement-mail.sql")),
+            ("finance-receivables-014-print-facts", include_str!("../migrations/014-print-facts.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let receivables = Arc::new(Receivables {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 ledger: services.get(bilibi_finance_ledger::SERVICE)?,
+                currencies: services.get(bilibi_currency::SERVICE)?,
                 attachments: services.get(bilibi_finance_attachments::SERVICE)?,
                 templates: services.get(bilibi_templates::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
                 records: services.get(bilibi_records::SERVICE)?,
                 artifacts: services.get("base/artifacts.store")?,
+                branding: services.get(bilibi_branding::SERVICE)?,
                 media: services.get(bilibi_media::SERVICE)?,
                 settings: services.get("base/settings.store")?,
                 queue: services.get(bilibi_queue::SERVICE)?,
@@ -186,9 +192,11 @@ pub(crate) async fn authorize(
 pub struct Receivables {
     db: Db,
     artifacts: Arc<bilibi_artifacts::Artifacts>,
+    branding: Arc<bilibi_branding::Branding>,
     media: Arc<bilibi_media::Media>,
     settings: Arc<bilibi_settings::Settings>,
     ledger: Arc<Ledger>,
+    currencies: Arc<bilibi_currency::Currencies>,
     attachments: Arc<Attachments>,
     templates: Arc<bilibi_templates::Templates>,
     parties: Arc<bilibi_tenancy::PartyProofs>,

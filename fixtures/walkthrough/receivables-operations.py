@@ -241,7 +241,7 @@ for channel, company in [("api", 1), ("mcp", 2)]:
     write(channel, "setup.configure", company, income_account_id=accounts["income"])
     print("same-series multi-issue and mixed ledger-close/issue roll back business, entries, audit and code; separate issues number consecutively; closed-period preview refuses", flush=True)
 
-    credit = write(channel, "draft.create", company, kind="credit_note", series_id=series["credit_note"], customer_id=customer["id"], credited_document_id=invoice["id"], issue_date="2026-01-11", lines=[{"description": "Credit", "quantity": "1", "unit_price": "5"}])
+    credit = write(channel, "draft.create", company, kind="credit_note", series_id=series["credit_note"], customer_id=customer["id"], credited_document_id=invoice["id"], issue_date="2026-01-11", description="Service adjustment", lines=[{"description": "Credit", "quantity": "1", "unit_price": "5"}])
     credit = write(channel, "document.issue", company, document_id=credit["id"])
     require(credit["document_reference"] == "CR-001" and read(channel, "document.get", company, document_id=invoice["id"])["outstanding"] == "42.85", "credit did not settle original invoice")
     write(channel, "setup.configure", company, receivable_account_id=accounts["other-control"])

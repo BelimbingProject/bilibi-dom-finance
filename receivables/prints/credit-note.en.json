@@ -1,0 +1,120 @@
+{
+  "blocks": [
+    {
+      "type": "field",
+      "field": "logo"
+    },
+    {
+      "type": "heading",
+      "text": "Credit note"
+    },
+    {
+      "type": "field",
+      "field": "number"
+    },
+    {
+      "type": "field",
+      "field": "issue_date"
+    },
+    {
+      "type": "field",
+      "field": "original_invoice"
+    },
+    {
+      "type": "field",
+      "field": "original_date"
+    },
+    {
+      "type": "field",
+      "field": "reason"
+    },
+    {
+      "type": "field",
+      "field": "sales_order"
+    },
+    {
+      "type": "field",
+      "field": "seller"
+    },
+    {
+      "type": "field",
+      "field": "buyer"
+    },
+    {
+      "type": "field",
+      "field": "letterhead"
+    },
+    {
+      "type": "table",
+      "rows": "lines",
+      "columns": [
+        {
+          "field": "line"
+        },
+        {
+          "field": "description"
+        },
+        {
+          "field": "quantity"
+        },
+        {
+          "field": "price"
+        },
+        {
+          "field": "net"
+        },
+        {
+          "field": "tax_code"
+        },
+        {
+          "field": "rate"
+        },
+        {
+          "field": "tax"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "heading": "Credit totals",
+      "blocks": [
+        {
+          "type": "field",
+          "field": "subtotal"
+        },
+        {
+          "type": "field",
+          "field": "tax_total"
+        },
+        {
+          "type": "field",
+          "field": "total"
+        },
+        {
+          "type": "field",
+          "field": "ringgit"
+        }
+      ]
+    },
+    {
+      "type": "field",
+      "field": "balance"
+    },
+    {
+      "type": "field",
+      "field": "terms"
+    },
+    {
+      "type": "field",
+      "field": "bank"
+    },
+    {
+      "type": "field",
+      "field": "validation"
+    },
+    {
+      "type": "field",
+      "field": "footer"
+    }
+  ]
+}

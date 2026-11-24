@@ -1,9 +1,6 @@
-//! Regenerable A4 views of issued invoices and credit notes. Base Artifacts
-//! owns rendering, private storage and delivery authorization.
-use crate::{authorize, Document, InvoiceLayout, ReceivableError, Receivables, Result, VIEW};
-use askama::Template;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use bilibi_artifacts::{HtmlFuture, HtmlOwner, Operation, Owner, Reference};
+//! Private issued invoices and credit notes rendered from the owner's facts.
+use crate::{authorize, print_layouts, print_values, ReceivableError, Receivables, Result, VIEW};
+use bilibi_artifacts::{Operation, Owner, PdfOptions, Reference};
 use bilibi_database::Error;
 use bilibi_finance_ledger::Money;
 use bilibi_module_registry::{
@@ -11,9 +8,10 @@ use bilibi_module_registry::{
     Contribution, Provenance,
 };
 use bilibi_party_ids::OrganisationId;
+use bilibi_settings::Target;
+use bilibi_templates::Origin;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use bilibi_ui::download::{Download as DownloadHandler, DownloadFuture, DownloadRequest, FileBody};
-use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub(crate) const FILES: &str = "finance/receivables.pdf-downloads";
@@ -27,9 +25,7 @@ pub struct PdfFile {
     pub filename: String,
 }
 
-struct Printable {
-    html: String,
-}
+struct Printable;
 impl Owner for Printable {
     fn owner_id(&self) -> &'static str {
         "finance/receivables"
@@ -59,21 +55,9 @@ impl Owner for Printable {
         })
     }
 }
-impl HtmlOwner for Printable {
-    fn render_html<'a>(
-        &'a self,
-        _scope: &'a Scope,
-        _company: OrganisationId,
-        _reference: &'a Reference,
-        _data: &'a Value,
-    ) -> HtmlFuture<'a> {
-        Box::pin(async move { Ok(self.html.clone()) })
-    }
-}
 
 impl Receivables {
-    /// Print an issued invoice or credit note using current company letterhead
-    /// and the document's frozen customer facts and amounts (`VIEW`).
+    /// Print the issued commercial copy. Both the download and mail use it.
     pub async fn print_document(&self, scope: &Scope, company: i64, id: i64) -> Result<PdfFile> {
         let document = self.get_document(scope, company, id).await?;
         if document.status != "issued"
@@ -82,37 +66,41 @@ impl Receivables {
         {
             return Err(ReceivableError::NotIssued);
         }
-        let credited_reference = if let Some(original) = document.credited_document_id {
-            self.get_document(scope, company, original)
-                .await?
-                .document_reference
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        let layout = self.get_setup(scope, company).await?.invoice_layout;
+        let letterhead = self.get_setup(scope, company).await?.invoice_layout;
         let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company, VIEW).await?;
         let company_id =
             OrganisationId::new(company).map_err(|_| ReceivableError::CompanyNotFound)?;
-        let name = self
-            .parties
-            .organisation_name(&**client, scope, company_id)
-            .await?
-            .map(|o| o.name)
-            .unwrap_or_default();
-        let units = self
-            .ledger
-            .book_figures_on(&**client, scope, company, VIEW)
-            .await?
-            .minor_units;
-        let mut logo = String::new();
-        if let Some(id) = self
+        let language = self
             .settings
             .get(
                 &**client,
                 scope,
-                bilibi_settings::Target::Company(company_id),
+                Target::Company(company_id),
+                bilibi_templates::LANGUAGE,
+            )
+            .await?;
+        let contract = print_layouts::for_kind(&document.kind);
+        let resolved = self
+            .templates
+            .resolve_print(
+                &**client,
+                scope,
+                contract.key,
+                Some(company_id),
+                language.value.as_str().unwrap_or("en"),
+                None,
+            )
+            .await?;
+        let compiled = contract
+            .compile(&resolved.language, &resolved.layout)
+            .map_err(|_| ReceivableError::Pdf("invalid_print_layout"))?;
+        let logo = if let Some(id) = self
+            .settings
+            .get(
+                &**client,
+                scope,
+                Target::Company(company_id),
                 crate::configuration::INVOICE_LOGO,
             )
             .await?
@@ -128,71 +116,18 @@ impl Receivables {
                 .split_once("?token=")
                 .ok_or(ReceivableError::Pdf("invoice_logo_unavailable"))?
                 .1;
-            let image = self
-                .media
-                .read_signed_asset(&**client, id, token)
-                .await
-                .map_err(|_| ReceivableError::Pdf("invoice_logo_unavailable"))?;
-            if !matches!(
-                image.mime_type.as_deref().unwrap_or(""),
-                "image/png" | "image/jpeg" | "image/webp"
-            ) {
-                return Err(ReceivableError::Pdf("invoice_logo_invalid"));
-            }
-            logo = format!(
-                "data:{};base64,{}",
-                image.mime_type.as_deref().unwrap_or(""),
-                STANDARD.encode(image.bytes)
-            );
-        }
-        let recipient = [
-            document.party_name.as_deref(),
-            document.party_registration_identifier.as_deref(),
-            document.party_line1.as_deref(),
-            document.party_line2.as_deref(),
-            document.party_line3.as_deref(),
-            document.party_postcode.as_deref(),
-            document.party_locality.as_deref(),
-            document.party_admin1_code.as_deref(),
-            document.party_country_iso.as_deref(),
-            document.party_email.as_deref(),
-            document.party_phone.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-        let title = if document.kind == "credit_note" {
-            "Credit note"
+            Some(
+                self.media
+                    .read_signed_asset(&**client, id, token)
+                    .await
+                    .map_err(|_| ReceivableError::Pdf("invoice_logo_unavailable"))?,
+            )
         } else {
-            "Invoice"
+            None
         };
-        let reference = document.document_reference.clone().unwrap_or_default();
-        let rows = document
-            .lines
-            .iter()
-            .map(|l| Row {
-                description: l.description.clone(),
-                quantity: l.quantity.normalize().to_string(),
-                price: Money::display_decimal(l.unit_price, None),
-                net: l.amount.display(units),
-                tax: l.tax_amount.display(units),
-            })
-            .collect();
-        let taxes = document
-            .tax_lines
-            .iter()
-            .map(|t| TaxRow {
-                code: t.tax_code.clone(),
-                rate: t.tax_rate.normalize().to_string(),
-                taxable: t.taxable_amount.display(units),
-                tax: t.tax_amount.display(units),
-            })
-            .collect();
-        let qr = self
+        let validation = self
             .ledger
-            .fiscal_validation_qr_on(
+            .fiscal_validation_url_on(
                 &**client,
                 &self.settings,
                 scope,
@@ -201,67 +136,123 @@ impl Receivables {
                 &format!("document:{id}"),
             )
             .await?;
+
         let balance = if document.outstanding.is_some() {
-            let row = client.query_one(
-                "SELECT COALESCE((SELECT sum(a.amount) FROM finance_receivables_allocations a WHERE a.tenant_id=d.tenant_id AND a.company_id=d.company_id AND a.document_id=d.id AND NOT EXISTS (SELECT 1 FROM finance_receivables_payment_reversals r WHERE r.tenant_id=d.tenant_id AND r.company_id=d.company_id AND r.payment_id=a.payment_id)),0)::text, finance_receivables_outstanding(d.id)::text FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$3",
-                &[&scope.tenant(), &company, &id],
-            ).await.map_err(Error::from)?;
-            let money = |i: usize| {
-                Money::parse(row.get::<_, &str>(i), units)
+            let on = self.today(&**client, scope, company).await?;
+            let units = self
+                .ledger
+                .book_figures_on(&**client, scope, company, VIEW)
+                .await?
+                .minor_units;
+            let row = client
+                .query_one(
+                    "SELECT COALESCE((
+                       SELECT sum(a.amount) FROM finance_receivables_allocations a
+                       JOIN finance_receivables_payments p ON p.id=a.payment_id
+                         AND p.tenant_id=$1 AND p.company_id=$2
+                       WHERE a.tenant_id=$1 AND a.company_id=$2 AND a.document_id=$3
+                         AND p.payment_date<=$4::text::date AND NOT EXISTS (
+                           SELECT 1 FROM finance_receivables_payment_reversals r
+                           WHERE r.tenant_id=$1 AND r.company_id=$2 AND r.payment_id=p.id
+                             AND r.reversal_date<=$4::text::date
+                         )
+                     ),0)::text,
+                     finance_receivables_residual(
+                       $1,$2,$3,$4::text::date,9223372036854775807,9223372036854775807
+                     )::text",
+                    &[&scope.tenant(), &company, &id, &on.to_string()],
+                )
+                .await
+                .map_err(Error::from)?;
+            let money = |index: usize| {
+                Money::parse(row.get::<_, &str>(index), units)
                     .map_err(|_| ReceivableError::Pdf("payment_amount"))
             };
-            Some((money(0)?, money(1)?))
+            let paid = money(0)?;
+            let outstanding = money(1)?;
+            Some(print_values::Balance {
+                on,
+                paid,
+                outstanding,
+                adjustments: document.total - paid - outstanding,
+                units,
+            })
         } else {
             None
         };
-        let template = Invoice {
-            title,
-            qr,
-            credited_reference: &credited_reference,
-            recipient: &recipient,
-            reference: &reference,
-            company_name: if layout.company_name.is_empty() {
-                &name
-            } else {
-                &layout.company_name
-            },
-            logo: &logo,
-            layout: &layout,
-            document: &document,
-            rows,
-            taxes,
-            subtotal: document.subtotal.display(units),
-            tax: document.tax_total.display(units),
-            total: document.total.display(units),
-            paid: balance.map(|(paid, _)| paid.display(units)),
-            adjustments: balance
-                .map(|(paid, outstanding)| (document.total - paid - outstanding).display(units)),
-            outstanding: balance.map(|(_, outstanding)| outstanding.display(units)),
+        let business_name = document
+            .print_facts
+            .as_ref()
+            .map(|facts| facts.seller_name.as_str());
+        let trading = if business_name == Some(letterhead.company_name.as_str()) {
+            ""
+        } else {
+            letterhead.company_name.as_str()
         };
-        let owner = Printable {
-            html: template
-                .render()
-                .map_err(|_| ReceivableError::Pdf("template"))?,
+        let letterhead_lines = [trading, letterhead.contact.as_str()]
+            .into_iter()
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let print_letterhead = print_values::Letterhead {
+            lines: &letterhead_lines,
+            terms: &letterhead.payment_terms,
+            bank: &letterhead.bank_details,
+            footer: &letterhead.footer,
+            logo: logo.as_ref().and_then(|image| {
+                image
+                    .mime_type
+                    .as_deref()
+                    .map(|mime| (mime, image.bytes.as_ref()))
+            }),
         };
+        let accent = self.branding.accent(&**client).await?;
+        let inline = print_values::render(
+            &compiled,
+            &document,
+            resolved.language == "ms",
+            balance.as_ref(),
+            print_letterhead,
+            validation.as_deref(),
+            accent,
+        )?;
+
+        let reference = Reference {
+            subject: format!("document-{id}"),
+            kind: "invoice-pdf".into(),
+        };
+        let revision = match resolved.origin {
+            Origin::Packaged { version } => format!("packaged-{version}"),
+            Origin::Tenant { revision } | Origin::Company { revision, .. } => {
+                format!("revision-{revision}")
+            }
+        };
+        let options = PdfOptions::default()
+            .template_version(format!("{}-{revision}", resolved.language))
+            .data_version(format!(
+                "{}-entry-{}",
+                contract.version,
+                document
+                    .ledger_entry_number
+                    .ok_or(ReceivableError::NotIssued)?
+            ));
+        let owner = Printable;
         let owned = self.artifacts.for_owner(scope, company_id, &owner);
-        // The renderer contains the browser process and storage futures. Keep
-        // those allocations off the smaller web worker stack.
-        let artifact = Box::pin(owned.render_inline(
-            &mut client,
-            Reference {
-                subject: format!("document-{id}"),
-                kind: "invoice-pdf".into(),
-            },
-            &json!({}),
-        ))
-        .await
-        .map_err(|e| ReceivableError::Pdf(e.code()))?;
-        let file = Box::pin(owned.read(&mut client, &artifact.id))
+        let artifact =
+            Box::pin(owned.render_inline_document(&mut client, reference, inline, &options))
+                .await
+                .map_err(|error| ReceivableError::Pdf(error.code()))?;
+        let file = owned
+            .read(&mut client, &artifact.document.id)
             .await
-            .map_err(|e| ReceivableError::Pdf(e.code()))?;
+            .map_err(|error| ReceivableError::Pdf(error.code()))?;
+        let number = document
+            .document_reference
+            .as_deref()
+            .ok_or(ReceivableError::NotIssued)?;
         Ok(PdfFile {
             bytes: file.bytes,
-            filename: format!("{}-{reference}.pdf", document.kind),
+            filename: format!("{}-{number}.pdf", document.kind),
         })
     }
 }
@@ -298,39 +289,4 @@ impl DownloadHandler<Scope, Error> for Downloads {
             ))
         })
     }
-}
-
-struct TaxRow {
-    code: String,
-    rate: String,
-    taxable: String,
-    tax: String,
-}
-struct Row {
-    description: String,
-    quantity: String,
-    price: String,
-    net: String,
-    tax: String,
-}
-#[derive(Template)]
-#[template(path = "receivables_invoice.html")]
-struct Invoice<'a> {
-    qr: Option<String>,
-    credited_reference: &'a str,
-    recipient: &'a str,
-    title: &'a str,
-    reference: &'a str,
-    company_name: &'a str,
-    logo: &'a str,
-    layout: &'a InvoiceLayout,
-    document: &'a Document,
-    rows: Vec<Row>,
-    taxes: Vec<TaxRow>,
-    subtotal: String,
-    tax: String,
-    total: String,
-    paid: Option<String>,
-    adjustments: Option<String>,
-    outstanding: Option<String>,
 }
