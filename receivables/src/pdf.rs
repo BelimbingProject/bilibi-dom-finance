@@ -210,7 +210,7 @@ impl Receivables {
         let inline = print_values::render(
             &compiled,
             &document,
-            resolved.language == "ms",
+            resolved.language.split('-').next() == Some("ms"),
             balance.as_ref(),
             print_letterhead,
             validation.as_deref(),
