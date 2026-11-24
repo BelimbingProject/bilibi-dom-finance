@@ -165,6 +165,7 @@ impl Einvoice {
             .record_issue(&mut tx, scope, company_id, prepared)
             .await?;
         tx.commit().await?;
+        drop(client);
         self.view(scope, company_id, document_id).await
     }
 
