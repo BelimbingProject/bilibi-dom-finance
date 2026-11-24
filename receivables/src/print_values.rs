@@ -86,18 +86,27 @@ pub(super) fn render(
         "Registration no."
     };
     let tax_label = if malay { "No. cukai" } else { "Tax ID" };
-    let sst_label = if malay {
-        "No. pendaftaran SST"
+    let [sales_label, service_label] = if malay {
+        [
+            "No. pendaftaran cukai jualan",
+            "No. pendaftaran cukai perkhidmatan",
+        ]
     } else {
-        "SST registration no."
+        ["Sales tax registration no.", "Service tax registration no."]
     };
     let seller_ids = [
         seller_registration.map(|id| format!("{registration_label}: {id}")),
         seller_tax.map(|id| format!("{tax_label}: {id}")),
         print
             .seller_sst
+            .sales
             .as_ref()
-            .map(|id| format!("{sst_label}: {id}")),
+            .map(|id| format!("{sales_label}: {id}")),
+        print
+            .seller_sst
+            .service
+            .as_ref()
+            .map(|id| format!("{service_label}: {id}")),
     ];
     let seller = nonempty(
         std::iter::once(print.seller_name.as_str())
@@ -173,6 +182,7 @@ pub(super) fn render(
         ("seller", PrintValue::Text(&seller)),
         ("buyer", PrintValue::Text(&buyer)),
         ("lines", PrintValue::Rows(&rows)),
+        ("discount", money(Decimal::ZERO)),
         ("subtotal", money(document.subtotal.amount())),
         ("tax_total", money(document.tax_total.amount())),
         ("total", money(document.total.amount())),
@@ -197,6 +207,14 @@ pub(super) fn render(
             "due_date",
             PrintValue::Date(date(document.due_date.as_deref())?),
         ));
+        for (id, value) in [
+            ("remarks", document.description.as_deref()),
+            ("balance", balance.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+                facts.push((id, PrintValue::Text(value)));
+            }
+        }
     }
     for (id, value) in [
         (
@@ -209,14 +227,7 @@ pub(super) fn render(
         ("letterhead", Some(letterhead.lines)),
         ("terms", Some(letterhead.terms)),
         ("bank", Some(letterhead.bank)),
-        (
-            "remarks",
-            (document.kind == "invoice")
-                .then_some(document.description.as_deref())
-                .flatten(),
-        ),
         ("footer", Some(letterhead.footer)),
-        ("balance", balance.as_deref()),
     ] {
         if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
             facts.push((id, PrintValue::Text(value)));

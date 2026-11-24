@@ -80,6 +80,10 @@
       "blocks": [
         {
           "type": "field",
+          "field": "discount"
+        },
+        {
+          "type": "field",
           "field": "subtotal"
         },
         {

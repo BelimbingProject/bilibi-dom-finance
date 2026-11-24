@@ -83,6 +83,10 @@
       "blocks": [
         {
           "type": "field",
+          "field": "discount"
+        },
+        {
+          "type": "field",
           "field": "subtotal"
         },
         {
@@ -98,11 +102,6 @@
           "field": "ringgit"
         }
       ]
-    },
-    {
-      "type": "field",
-      "field": "balance",
-      "label": "Ringkasan baki"
     },
     {
       "type": "field",

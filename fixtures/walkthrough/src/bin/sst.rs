@@ -483,7 +483,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
 
     // Receivables and payables tax codes and documents through their facades.
-    ar.configure(&admin, COMPANY, &json!({"receivable_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "1100").map(|a| a.id),"income_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "4000").map(|a| a.id)}))
+    ar.configure(&admin, COMPANY, &json!({"receivable_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "1100").map(|a| a.id),"income_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "4000").map(|a| a.id),"invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}))
         .await?;
     let mut series = Vec::new();
     for (code, kind) in [

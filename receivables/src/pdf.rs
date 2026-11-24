@@ -137,8 +137,18 @@ impl Receivables {
             )
             .await?;
 
-        let balance = if document.outstanding.is_some() {
-            let on = self.today(&**client, scope, company).await?;
+        let balance_date = if document.kind == "invoice" && document.outstanding.is_some() {
+            let issued: jiff::civil::Date = document
+                .issue_date
+                .as_deref()
+                .and_then(|date| date.parse().ok())
+                .ok_or(ReceivableError::Pdf("missing_document_date"))?;
+            let today = self.today(&**client, scope, company).await?;
+            (issued <= today).then_some(today)
+        } else {
+            None
+        };
+        let balance = if let Some(on) = balance_date {
             let units = self
                 .ledger
                 .book_figures_on(&**client, scope, company, VIEW)
@@ -180,22 +190,8 @@ impl Receivables {
         } else {
             None
         };
-        let business_name = document
-            .print_facts
-            .as_ref()
-            .map(|facts| facts.seller_name.as_str());
-        let trading = if business_name == Some(letterhead.company_name.as_str()) {
-            ""
-        } else {
-            letterhead.company_name.as_str()
-        };
-        let letterhead_lines = [trading, letterhead.contact.as_str()]
-            .into_iter()
-            .filter(|text| !text.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
         let print_letterhead = print_values::Letterhead {
-            lines: &letterhead_lines,
+            lines: &letterhead.contact,
             terms: &letterhead.payment_terms,
             bank: &letterhead.bank_details,
             footer: &letterhead.footer,

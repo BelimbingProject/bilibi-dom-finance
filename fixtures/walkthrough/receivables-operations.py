@@ -139,7 +139,7 @@ for channel, company in [("api", 1), ("mcp", 2)]:
         accounts[code] = write(channel, "ledger.account.create", company, code=code, name=code, account_type=kind)["id"]
     year = write(channel, "ledger.fiscal_year.open", company, start_date="2026-01-01", end_date="2026-12-31")
     first_period = year["periods"][0]["id"]
-    write(channel, "setup.configure", company, receivable_account_id=accounts["control"], income_account_id=accounts["income"])
+    write(channel, "setup.configure", company, receivable_account_id=accounts["control"], income_account_id=accounts["income"], invoice_layout={"address": "12 Market Way, Kuala Lumpur"})
     history = read(channel, "setup.changes", company)["records"]
     require(len(history) == 2 and all(r["changed_by_user_id"] == 1 for r in history), "setup history or actor missing")
     write(channel, "setup.configure", company)

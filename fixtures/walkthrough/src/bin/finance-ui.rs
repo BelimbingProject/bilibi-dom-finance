@@ -239,7 +239,7 @@ async fn main() -> Outcome<()> {
         ar.configure(
             &manager,
             COMPANY,
-            &json!({"receivable_account_id": account("1100")?, "income_account_id": account("4000")?}),
+            &json!({"receivable_account_id": account("1100")?, "income_account_id": account("4000")?, "invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}),
         )
         .await?;
         let invoices = ar.create_series(&manager, COMPANY, &json!({"code":"INV","name":"Invoices","kind":"invoice","prefix":"INV-","number_width":5})).await?;

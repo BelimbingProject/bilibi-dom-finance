@@ -12,7 +12,7 @@
 //!
 //! Each reader works on the connection it is handed and authorizes the person
 //! itself with its own capability: a person who may not view the other side
-//! gets nothing, never a refusal. No posting rule reads either.
+//! gets nothing, never a refusal.
 use crate::MODULE;
 use bilibi_agent_api::OperationClient;
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError};
@@ -232,6 +232,40 @@ pub struct FiscalDocumentsDefinition {
     pub documents: &'static dyn FiscalDocuments,
 }
 
+pub const SST_REGISTRATION: &str = "finance/ledger.sst_registration";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SstNumbers {
+    pub sales: Option<String>,
+    pub service: Option<String>,
+}
+
+pub trait SstRegistration: Send + Sync {
+    fn numbers_on<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        company: i64,
+        date: jiff::civil::Date,
+    ) -> FiscalFuture<'a, SstNumbers>;
+}
+
+pub struct SstRegistrationDefinition {
+    pub registration: &'static dyn SstRegistration,
+}
+
+pub async fn sst_numbers_on(
+    client: &dyn OperationClient,
+    scope: &Scope,
+    company: i64,
+    date: jiff::civil::Date,
+) -> Result<SstNumbers, bilibi_database::Error> {
+    match SST.get().copied().flatten() {
+        Some(reader) => reader.numbers_on(client, scope, company, date).await,
+        None => Ok(SstNumbers::default()),
+    }
+}
+
 const SOURCE: &str = "source";
 const RECORD: &str = "record";
 
@@ -293,6 +327,22 @@ fn validate_documents(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
 inventory::submit! { Consumer::new::<FiscalSourcesDefinition>(FISCAL_SOURCES, MODULE, validate_sources) }
 inventory::submit! { Consumer::new::<FiscalDocumentsDefinition>(FISCAL_DOCUMENTS, MODULE, validate_documents) }
 
+fn validate_sst(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    if entries.len() > 1 {
+        return Err(RegistryError::Contribution(
+            "multiple SST registration readers".into(),
+        ));
+    }
+    for entry in entries {
+        entry.get::<SstRegistrationDefinition>()?;
+        owned(entry, "SST registration")?;
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<SstRegistrationDefinition>(SST_REGISTRATION, MODULE, validate_sst) }
+
+static SST: OnceLock<Option<&'static dyn SstRegistration>> = OnceLock::new();
+
 /// Each sources reader under the module that contributed it.
 static SOURCES: OnceLock<Vec<(&'static str, &'static dyn FiscalSources)>> = OnceLock::new();
 static DOCUMENTS: OnceLock<Vec<&'static dyn FiscalDocuments>> = OnceLock::new();
@@ -310,7 +360,12 @@ pub(crate) fn bind() -> bilibi_module_registry::Result<()> {
     for entry in catalog.entries::<FiscalDocumentsDefinition>(FISCAL_DOCUMENTS)? {
         documents.push(entry.get::<FiscalDocumentsDefinition>()?.documents);
     }
+    let mut registration = None;
+    for entry in catalog.entries::<SstRegistrationDefinition>(SST_REGISTRATION)? {
+        registration = Some(entry.get::<SstRegistrationDefinition>()?.registration);
+    }
     let duplicate = || RegistryError::Service("duplicate ledger fiscal binding".into());
+    SST.set(registration).map_err(|_| duplicate())?;
     SOURCES.set(sources).map_err(|_| duplicate())?;
     DOCUMENTS.set(documents).map_err(|_| duplicate())
 }

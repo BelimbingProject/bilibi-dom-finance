@@ -140,12 +140,11 @@ macro_rules! fields {
             text("buyer", &[("en", "Bill to"), ("ms", "Bil kepada")], "Example Customer\n44 Orchard Lane\nKuala Lumpur"),
             optional(text("sales_order", &[("en", "Sales order"), ("ms", "Pesanan jualan")], "SO-000021")),
             field("lines", &[("en", "Items"), ("ms", "Butiran")], PrintKind::Rows(LINE_COLUMNS), PrintValue::Rows(&[SAMPLE_LINE])),
+            money("discount", &[("en", "Discount"), ("ms", "Diskaun")], Decimal::ZERO),
             money("subtotal", &[("en", "Subtotal before tax"), ("ms", "Subjumlah sebelum cukai")], PRICE),
             money("tax_total", &[("en", "Total tax"), ("ms", "Jumlah cukai")], Decimal::from_parts(870, 0, 0, false, 2)),
             money("total", &[("en", "Total including tax"), ("ms", "Jumlah termasuk cukai")], SAMPLE_TOTAL),
-            optional(text("balance", &[("en", "Balance summary"), ("ms", "Ringkasan baki")], "As of 15 Oct 2026\nOutstanding: MYR 153.70")),
             optional(text("letterhead", &[("en", "Letterhead"), ("ms", "Kepala surat")], "example.test")),
-            optional(text("remarks", &[("en", "Remarks"), ("ms", "Catatan invois")], "Annual service renewal")),
             optional(text("bank", &[("en", "Bank details"), ("ms", "Butiran bank")], "Example Bank")),
             optional(text("terms", &[("en", "Terms"), ("ms", "Terma")], "Payment by bank transfer")),
             PrintField {
@@ -194,6 +193,16 @@ document!(
     INVOICE_KEY,
     "Invoice",
     "invoice",
+    optional(text(
+        "balance",
+        &[("en", "Balance summary"), ("ms", "Ringkasan baki")],
+        "As of 15 Oct 2026\nOutstanding: MYR 153.70"
+    )),
+    optional(text(
+        "remarks",
+        &[("en", "Remarks"), ("ms", "Catatan invois")],
+        "Annual service renewal"
+    )),
     field(
         "due_date",
         &[("en", "Due date"), ("ms", "Tarikh akhir")],

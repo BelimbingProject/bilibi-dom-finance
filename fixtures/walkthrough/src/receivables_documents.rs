@@ -70,7 +70,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     ar.configure(
         &admin,
         1,
-        &json!({"receivable_account_id":control1,"income_account_id":income}),
+        &json!({"receivable_account_id":control1,"income_account_id":income,"invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}),
     )
     .await?;
     let mut series = Vec::new();

@@ -2,6 +2,7 @@
 use crate::{invalid, Document, Receivables, Result};
 use bilibi_agent_api::OperationClient;
 use bilibi_database::Error;
+use bilibi_finance_ledger::{sst_numbers_on, SstNumbers};
 use bilibi_party::PartyId;
 use bilibi_tenancy::Scope;
 use jiff::civil::Date;
@@ -65,7 +66,7 @@ pub(crate) struct PrintSnapshot {
     pub seller_name: String,
     pub seller_registration: Option<String>,
     pub seller_tax: Option<String>,
-    pub seller_sst: Option<String>,
+    pub seller_sst: SstNumbers,
     pub ringgit: Option<Ringgit>,
     pub seller_address: Vec<String>,
     pub original_invoice: Option<String>,
@@ -134,6 +135,7 @@ impl Receivables {
                     ]
                     .into_iter()
                     .flatten()
+                    .filter(|line| !line.trim().is_empty())
                     .collect()
                 })
                 .unwrap_or_default();
@@ -148,14 +150,27 @@ impl Receivables {
                     .map(str::to_owned),
             );
         }
-        let seller_sst = configured["tax_number"]
-            .as_str()
-            .map(str::trim)
-            .filter(|number| !number.is_empty())
-            .map(str::to_owned);
-        let ringgit = if seller_sst.is_some()
+        let taxable = document
+            .tax_lines
+            .iter()
+            .any(|line| line.tax_rate > Decimal::ZERO);
+        if taxable && seller_address.is_empty() {
+            return Err(invalid(
+                "company",
+                "Record a supplier address before issuing a taxable document.",
+            ));
+        }
+        let seller_name = issuer.display_name();
+        if seller_name.trim().is_empty() {
+            return Err(invalid(
+                "company",
+                "Record a supplier name before issuing the document.",
+            ));
+        }
+        let seller_sst = sst_numbers_on(client, scope, company, date).await?;
+        let ringgit = if taxable
             && document.currency_code != "MYR"
-            && !document.tax_lines.is_empty()
+            && (seller_sst.sales.is_some() || seller_sst.service.is_some())
         {
             let currencies = &self.currencies;
             let amounts = match client.transaction() {
@@ -176,11 +191,19 @@ impl Receivables {
             None
         };
         Ok(PrintSnapshot {
-            seller_name: issuer.display_name(),
+            seller_name,
             seller_registration: issuer
                 .registration_number
                 .filter(|number| !number.is_empty()),
-            seller_tax: (!issuer.tax_id.is_empty()).then_some(issuer.tax_id),
+            seller_tax: if issuer.tax_id.trim().is_empty() {
+                configured["tax_number"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|number| !number.is_empty())
+                    .map(str::to_owned)
+            } else {
+                Some(issuer.tax_id)
+            },
             seller_address,
             seller_sst,
             ringgit,

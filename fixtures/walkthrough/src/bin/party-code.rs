@@ -361,6 +361,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::write(format!("{root}/configured.pdf"), configured.bytes)?;
 
         set_malay_letter(&db, &app.services, &admin).await?;
+        let sst = app
+            .services
+            .get::<bilibi_finance_sst::Sst>(bilibi_finance_sst::SERVICE)?;
+        sst.register(
+            &admin,
+            1,
+            &bilibi_finance_sst::RegistrationInput {
+                sales_tax_number: Some("X01-2601-00000001".into()),
+                service_tax_number: Some("X01-2601-00000002".into()),
+                period_start: Some(jiff::civil::date(2026, 1, 1)),
+                ..Default::default()
+            },
+        )
+        .await?;
         let services = ar.create_tax_code(&scope,1,&json!({"code":"SVC","name":"Taxable service","rate":"6","account_id":account("2100")})).await?;
         let goods = ar.create_tax_code(&scope,1,&json!({"code":"GOODS","name":"Taxable goods","rate":"8","account_id":account("2100")})).await?;
         let exempt = ar.create_tax_code(&scope,1,&json!({"code":"EXEMPT","name":"Exempt supply","rate":"0","account_id":account("2100")})).await?;

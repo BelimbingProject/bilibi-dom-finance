@@ -266,13 +266,6 @@ impl Receivables {
                 .map_err(|_| invalid("due_date", "is invalid"))?
                 .to_string());
         }
-        let (number, reference) = next_number(client, tenant, company, &series, false).await?;
-        data["status"] = json!("issued");
-        data["document_number"] = json!(number);
-        data["document_reference"] = json!(reference);
-        data["receivable_account_id"] = json!(control);
-        data["issued_by_user_id"] = json!(scope.user());
-        data["issued_by_impersonator_id"] = json!(scope.impersonator().map(|s| s.user()));
         // Preview and commit freeze the same Core facts on the handed connection.
         let day = date.to_string().try_into().map_err(|_| Error::Internal)?;
         let party = self
@@ -292,6 +285,13 @@ impl Receivables {
             )
             .await?
         );
+        let (number, reference) = next_number(client, tenant, company, &series, false).await?;
+        data["status"] = json!("issued");
+        data["document_number"] = json!(number);
+        data["document_reference"] = json!(reference);
+        data["receivable_account_id"] = json!(control);
+        data["issued_by_user_id"] = json!(scope.user());
+        data["issued_by_impersonator_id"] = json!(scope.impersonator().map(|s| s.user()));
         for (field, value) in party.as_object().into_iter().flatten() {
             data[field] = value.clone();
         }
