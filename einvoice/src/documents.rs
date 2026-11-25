@@ -245,6 +245,16 @@ impl Recorded {
         self.latest("submitted").map(|event| event.sequence)
     }
 
+    pub(crate) fn status_evidence_sequence(&self) -> Option<i32> {
+        self.events
+            .iter()
+            .rev()
+            .find(|event| {
+                STATUS_EVENTS.contains(&event.event.as_str()) || event.event == "status_checked"
+            })
+            .map(|event| event.sequence)
+    }
+
     fn submission_events(&self) -> impl Iterator<Item = &StatusEvent> {
         let submission = self.submission_sequence().zip(self.document_uuid());
         self.events.iter().rev().filter(move |event| {
@@ -259,26 +269,29 @@ impl Recorded {
             .find_map(|event| event.long_id.as_deref())
     }
 
-    /// When the authority validated it: its own instant, or when the `valid`
-    /// event was recorded.
+    /// The validation instant supplied by the authority.
     pub fn validated_at(&self) -> Option<Timestamp> {
-        let valid = self
-            .submission_events()
-            .find(|event| event.event == "valid")?;
-        Some(
-            valid
-                .response
-                .as_ref()
-                .and_then(|response| response.get("dateTimeValidated"))
-                .and_then(Value::as_str)
-                .and_then(|text| text.parse().ok())
-                .unwrap_or(valid.recorded_at),
-        )
+        self.submission_events()
+            .filter(|event| event.authority_status.as_deref() == Some("Valid"))
+            .find_map(|event| {
+                event
+                    .response
+                    .as_ref()?
+                    .get("dateTimeValidated")?
+                    .as_str()?
+                    .parse()
+                    .ok()
+            })
     }
 
     pub fn cancellable_until(&self, authority: &impl Authority) -> Option<Timestamp> {
         let hours = i64::from(authority.cancellation_window_hours());
         self.validated_at()
+            .or_else(|| {
+                self.submission_events()
+                    .find(|event| event.event == "valid")
+                    .map(|event| event.recorded_at)
+            })
             .map(|at| at + SignedDuration::from_hours(hours))
     }
 

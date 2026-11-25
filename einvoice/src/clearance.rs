@@ -588,6 +588,13 @@ impl Einvoice {
         if !CANCELLABLE.contains(&status.as_str()) {
             return Err(EinvoiceError::NotCancellable);
         }
+        let observed = self.fetch(scope, company_id, document_id).await?;
+        if observed.submission_sequence() != recorded.submission_sequence()
+            || observed.document_uuid() != Some(uuid.as_str())
+            || !CANCELLABLE.contains(&observed.status())
+        {
+            return Err(EinvoiceError::NotCancellable);
+        }
         let api_url = self.api_url(&document.environment).await?;
         let connection = self.connection(scope, company_id, &credentials, &api_url);
         let base = json!({
@@ -604,7 +611,7 @@ impl Einvoice {
                     .while_cancellable(
                         scope,
                         company_id,
-                        &recorded,
+                        &observed,
                         event,
                         ("finance.einvoice.cancelled", &base, &answer),
                     )
@@ -631,7 +638,7 @@ impl Einvoice {
                 self.while_cancellable(
                     scope,
                     company_id,
-                    &recorded,
+                    &observed,
                     event,
                     ("finance.einvoice.cancellation.refused", &base, &answer),
                 )
@@ -1237,7 +1244,8 @@ impl Einvoice {
                     .await
                     .map_err(|_| retry_database())?
                     .ok_or(Outcome::Cancel("document_not_found"))?;
-                if current.submission_sequence() != recorded.submission_sequence()
+                if current.status_evidence_sequence() != recorded.status_evidence_sequence()
+                    || current.submission_sequence() != recorded.submission_sequence()
                     || current.document_uuid() != Some(uuid)
                 {
                     return Err(Outcome::Completed);
@@ -1498,8 +1506,13 @@ impl Einvoice {
         {
             return Err(EinvoiceError::NotCancellable);
         }
-        if !CANCELLABLE.contains(&current.status()) {
+        if current.status() == "cancelled" {
             return Ok(false);
+        }
+        if current.status_evidence_sequence() != recorded.status_evidence_sequence()
+            || !CANCELLABLE.contains(&current.status())
+        {
+            return Err(EinvoiceError::NotCancellable);
         }
         documents::record_event(&mut tx, scope, company_id, document_id, event).await?;
         answer_action(&tx, name, base, answer).await?;

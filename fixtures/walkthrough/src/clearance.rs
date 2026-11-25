@@ -119,6 +119,7 @@ struct Held {
     long_id: String,
     status: &'static str,
     received: String,
+    validation_time: Option<&'static str>,
     rejection_requested: bool,
 }
 
@@ -163,7 +164,12 @@ impl StandIn {
             } else {
                 "Valid"
             },
-            received: Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            received: if code == "NE5-RECHECK" {
+                "2026-11-06T08:04:00Z".into()
+            } else {
+                Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+            },
+            validation_time: None,
             rejection_requested: code == "BROWSER-E-REJECTION",
         };
         self.held.lock().expect("held").push(held.clone());
@@ -187,6 +193,12 @@ impl StandIn {
             .find(|held| held.uuid == uuid)
             .expect("retry")
             .status = "Valid";
+    }
+
+    pub(crate) fn reveal_validation_time(&self, code: &str) {
+        self.set(code, |held| {
+            held.validation_time = Some("2026-11-06T09:13:00Z")
+        });
     }
 
     fn set(&self, code: &str, change: impl Fn(&mut Held)) {
@@ -403,13 +415,19 @@ async fn details(State(standin): Shared, headers: HeaderMap, Path(uuid): Path<St
         "documentStatusReason": Value::Null});
     if matches!(held.status, "Valid" | "Cancelled") {
         body["longId"] = json!(held.long_id);
-        body["dateTimeValidated"] = if held.code == "BROWSER-E-EXPIRED" {
-            json!((Timestamp::now() - SignedDuration::from_hours(73))
-                .strftime("%Y-%m-%dT%H:%M:%SZ")
-                .to_string())
+        if held.code == "NE5-RECHECK" {
+            if let Some(time) = held.validation_time {
+                body["dateTimeValidated"] = json!(time);
+            }
         } else {
-            json!(held.received)
-        };
+            body["dateTimeValidated"] = if held.code == "BROWSER-E-EXPIRED" {
+                json!((Timestamp::now() - SignedDuration::from_hours(73))
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string())
+            } else {
+                json!(held.received)
+            };
+        }
     } else if held.status == "Invalid" {
         body["validationResults"] = json!({"status": "Invalid", "validationSteps": [
             {"status": "Valid", "name": "Step01-Structure Validator"},

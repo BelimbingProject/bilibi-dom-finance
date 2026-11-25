@@ -668,6 +668,16 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "Disahkan",
         Some("https://example.test/DOCUMENT-0002/share/LONGID-0002-WALKTHROUGH"),
     )?;
+    assert!(valid.validated_at.is_none());
+    assert!(!pdf_text(&file.bytes)?.contains("Masa disahkan"));
+    authority.reveal_validation_time(code);
+    let checked = facade.refresh_status(&manager, 1, invalid).await?;
+    assert_eq!(checked.validated_at, Some("2026-11-06T09:13:00Z".parse()?));
+    let file = facade.read_pdf(&manager, 1, &valid_pdf.artifact_id).await?;
+    assert_eq!(
+        printed_field(&pdf_text(&file.bytes)?, "Masa disahkan"),
+        "6 Nov 2026, 09:13 UTC"
+    );
     authority.invalidate(code);
     facade.refresh_status(&manager, 1, invalid).await?;
     let saved_path = HashMap::from([
