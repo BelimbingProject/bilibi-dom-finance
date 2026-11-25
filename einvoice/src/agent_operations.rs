@@ -170,16 +170,9 @@ impl Einvoice {
         let recorded = documents::fetch(client, scope.tenant(), company, document)
             .await?
             .ok_or(EinvoiceError::DocumentNotFound)?;
-        let portal = {
-            // Same bounded Settings-only workaround as preview. Business data
-            // and consolidated/source reads remain on the handed connection.
-            let settings_client = tokio::time::timeout(Duration::from_secs(2), self.db.get())
-                .await
-                .map_err(|_| Error::Internal)?
-                .map_err(Error::from)?;
-            self.portal_on(&**settings_client, &recorded.document.environment)
-                .await?
-        };
+        let portal = self
+            .portal_on(client, &recorded.document.environment)
+            .await?;
         self.view_on(client, scope, company, recorded, &portal)
             .await
     }
