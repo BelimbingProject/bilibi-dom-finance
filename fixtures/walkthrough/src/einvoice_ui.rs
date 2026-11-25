@@ -695,12 +695,17 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         printed_field(&pdf_text(&historical.bytes)?, "Masa disahkan"),
         "6 Nov 2026, 09:13 UTC"
     );
-    let (first, second) = tokio::try_join!(
-        facade.generate_pdf(&manager, 1, ids[0]),
-        facade.generate_pdf(&manager, 1, ids[0]),
-    )?;
-    assert_eq!(first, second);
-    let cancelled = first;
+    // Each production download has its own task and may hold one connection.
+    let document_id = ids[0];
+    let parallel_render = {
+        let facade = facade.clone();
+        let manager = manager.clone();
+        tokio::spawn(async move { facade.generate_pdf(&manager, 1, document_id).await })
+    };
+    let cancelled = facade.generate_pdf(&manager, 1, document_id).await;
+    let parallel = parallel_render.await??;
+    let cancelled = cancelled?;
+    assert_eq!(cancelled, parallel);
     let current = facade.get_document(&manager, 1, ids[0]).await?;
     assert_eq!(
         current
