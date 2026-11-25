@@ -163,14 +163,31 @@ fn check_long_pdf(bytes: &[u8], malay: bool, expected: (f64, f64)) -> Outcome<()
     let text = pdf_text(bytes)?;
     let pages: Vec<_> = text.split_terminator('\x0c').collect();
     assert!(pages.len() > 1, "expected a multipage fiscal PDF");
-    let last_lines = pages
+    let (page_index, last_lines) = pages
         .iter()
+        .enumerate()
         .skip(1)
-        .find(|page| page.contains("Fiscal line 085"))
+        .find(|(_, page)| page.contains("Fiscal line 085"))
         .expect("the final seeded line must be on a continuation page");
+    // Narrow columns wrap headings mid-word. Raw PDF order keeps each cell's
+    // text together so the check can recognize the label across those wraps.
+    let page = (page_index + 1).to_string();
+    let raw_page = pdf_command(
+        "pdftotext",
+        &["-raw", "-f", &page, "-l", &page, "-", "-"],
+        bytes,
+    )?;
+    assert!(
+        raw_page.status.success(),
+        "pdftotext: {}",
+        String::from_utf8_lossy(&raw_page.stderr)
+    );
+    let compact = String::from_utf8(raw_page.stdout)?
+        .split_whitespace()
+        .collect::<String>();
     for heading in headings {
         assert!(
-            last_lines.split_whitespace().any(|word| word == heading),
+            compact.contains(heading),
             "missing repeated heading {heading}"
         );
     }
