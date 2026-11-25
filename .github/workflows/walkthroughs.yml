@@ -119,6 +119,13 @@ jobs:
       - name: Build the app and every walkthrough
         run: cargo build --locked -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins
 
+      - name: Prepare e-invoice PDF tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils zbar-tools
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          echo "WALKTHROUGH_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
+
       - name: Run the walkthroughs
         env:
           WALKTHROUGH_SLOW: ${{ github.event_name != 'pull_request' && '1' || '' }}

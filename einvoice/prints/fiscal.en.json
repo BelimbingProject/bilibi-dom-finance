@@ -1,0 +1,115 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "text": "E-invoice"
+    },
+    {
+      "type": "field",
+      "field": "type"
+    },
+    {
+      "type": "field",
+      "field": "reference"
+    },
+    {
+      "type": "field",
+      "field": "issued"
+    },
+    {
+      "type": "field",
+      "field": "status"
+    },
+    {
+      "type": "field",
+      "field": "uuid"
+    },
+    {
+      "type": "field",
+      "field": "validated"
+    },
+    {
+      "type": "field",
+      "field": "validation"
+    },
+    {
+      "type": "field",
+      "field": "original"
+    },
+    {
+      "type": "field",
+      "field": "source"
+    },
+    {
+      "type": "field",
+      "field": "supplier"
+    },
+    {
+      "type": "field",
+      "field": "buyer"
+    },
+    {
+      "type": "field",
+      "field": "exchange"
+    },
+    {
+      "type": "field",
+      "field": "billing"
+    },
+    {
+      "type": "table",
+      "rows": "lines",
+      "columns": [
+        {
+          "field": "line"
+        },
+        {
+          "field": "classification"
+        },
+        {
+          "field": "description"
+        },
+        {
+          "field": "quantity"
+        },
+        {
+          "field": "unit_price"
+        },
+        {
+          "field": "adjustment"
+        },
+        {
+          "field": "net"
+        },
+        {
+          "field": "tax_details"
+        },
+        {
+          "field": "tax"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "heading": "Fiscal totals",
+      "blocks": [
+        {
+          "type": "field",
+          "field": "net"
+        },
+        {
+          "type": "field",
+          "field": "tax"
+        },
+        {
+          "type": "field",
+          "field": "gross"
+        },
+        {
+          "type": "field",
+          "field": "payable"
+        }
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ mod agent_operations;
 mod contributions;
 mod document_page;
 mod documents;
+mod fiscal;
 pub use documents::NotPosted;
 mod opening;
 mod opening_csv;
@@ -368,15 +369,18 @@ pub struct MatchApproval {
 }
 impl Document {
     pub fn label(&self) -> String {
-        let kind = match self.document_type.as_str() {
-            "bill" => "Bill",
-            "opening_credit" => "Supplier credit",
-            _ => "Debit note",
-        };
-        match self.document_number {
-            Some(n) => format!("{kind} {n}"),
-            None => format!("{kind} (no number yet)"),
-        }
+        document_label(&self.document_type, self.document_number)
+    }
+}
+fn document_label(document_type: &str, number: Option<i64>) -> String {
+    let kind = match document_type {
+        "bill" => "Bill",
+        "opening_credit" => "Supplier credit",
+        _ => "Debit note",
+    };
+    match number {
+        Some(n) => format!("{kind} {n}"),
+        None => format!("{kind} (no number yet)"),
     }
 }
 #[derive(Clone, Debug)]

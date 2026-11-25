@@ -588,6 +588,13 @@ impl Einvoice {
         if !CANCELLABLE.contains(&status.as_str()) {
             return Err(EinvoiceError::NotCancellable);
         }
+        let observed = self.fetch(scope, company_id, document_id).await?;
+        if observed.submission_sequence() != recorded.submission_sequence()
+            || observed.document_uuid() != Some(uuid.as_str())
+            || !CANCELLABLE.contains(&observed.status())
+        {
+            return Err(EinvoiceError::NotCancellable);
+        }
         let api_url = self.api_url(&document.environment).await?;
         let connection = self.connection(scope, company_id, &credentials, &api_url);
         let base = json!({
@@ -604,7 +611,7 @@ impl Einvoice {
                     .while_cancellable(
                         scope,
                         company_id,
-                        document_id,
+                        &observed,
                         event,
                         ("finance.einvoice.cancelled", &base, &answer),
                     )
@@ -631,7 +638,7 @@ impl Einvoice {
                 self.while_cancellable(
                     scope,
                     company_id,
-                    document_id,
+                    &observed,
                     event,
                     ("finance.einvoice.cancellation.refused", &base, &answer),
                 )
@@ -748,7 +755,7 @@ impl Einvoice {
                 self.record_alone(
                     scope,
                     company_id,
-                    recorded.document.id,
+                    &recorded,
                     unsendable(format!("cannot submit: {reason}")),
                     writer,
                 )
@@ -822,7 +829,7 @@ impl Einvoice {
                 self.record_alone(
                     scope,
                     company_id,
-                    document.id,
+                    recorded,
                     unsendable(format!("cannot build the payload: {code}")),
                     writer,
                 )
@@ -852,7 +859,7 @@ impl Einvoice {
             self.record_alone(
                 scope,
                 company_id,
-                document.id,
+                recorded,
                 unsendable("cannot submit: source_taken".into()),
                 writer,
             )
@@ -1187,7 +1194,7 @@ impl Einvoice {
                 Progress::Refused(answer) => {
                     let event = event_with("status_unreadable", &answer);
                     if let Err(outcome) = self
-                        .record_alone(scope, company_id, document_id, event, writer)
+                        .record_alone(scope, company_id, &recorded, event, writer)
                         .await
                     {
                         return outcome;
@@ -1233,10 +1240,8 @@ impl Einvoice {
                     )
                     .await
                     .map_err(cancel_for)?;
-                let current = documents::fetch(tx.sql(), scope.tenant(), company_id, document.id)
-                    .await
-                    .map_err(|_| retry_database())?
-                    .ok_or(Outcome::Cancel("document_not_found"))?;
+                let current =
+                    Self::current_observation(tx.sql(), scope, company_id, recorded).await?;
                 let (status, follow_up, changed) = self
                     .apply_status(&mut tx, scope, company_id, &current, &answer)
                     .await
@@ -1256,11 +1261,30 @@ impl Einvoice {
             }
             StatusRead::Refused(answer) => {
                 let event = event_with("status_unreadable", &answer);
-                self.record_alone(scope, company_id, document.id, event, writer)
+                self.record_alone(scope, company_id, recorded, event, writer)
                     .await?;
                 Err(Outcome::Cancel("status_unreadable"))
             }
         }
+    }
+
+    async fn current_observation(
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        recorded: &Recorded,
+    ) -> std::result::Result<Recorded, Outcome> {
+        let current = documents::fetch(client, scope.tenant(), company_id, recorded.document.id)
+            .await
+            .map_err(|_| retry_database())?
+            .ok_or(Outcome::Cancel("document_not_found"))?;
+        if current.status_evidence_sequence() != recorded.status_evidence_sequence()
+            || current.submission_sequence() != recorded.submission_sequence()
+            || current.document_uuid() != recorded.document_uuid()
+        {
+            return Err(Outcome::Completed);
+        }
+        Ok(current)
     }
 
     // Records the status event the answer implies and returns the status,
@@ -1470,7 +1494,7 @@ impl Einvoice {
         &self,
         scope: &Scope,
         company_id: i64,
-        document_id: i64,
+        recorded: &Recorded,
         event: NewEvent,
         (name, base, answer): (&str, &Value, &Answer),
     ) -> Result<bool> {
@@ -1484,12 +1508,23 @@ impl Einvoice {
                 "finance.einvoice.cancel_document",
             )
             .await?;
-        let status = documents::status(tx.sql(), scope.tenant(), company_id, document_id).await?;
-        if !status
-            .as_deref()
-            .is_some_and(|status| CANCELLABLE.contains(&status))
+        let document_id = recorded.document.id;
+        let current = documents::fetch(tx.sql(), scope.tenant(), company_id, document_id)
+            .await?
+            .ok_or(EinvoiceError::DocumentNotFound)?;
+        if current.submission_sequence() != recorded.submission_sequence()
+            || current.document_uuid() != event.document_uuid.as_deref()
         {
+            return Err(EinvoiceError::NotCancellable);
+        }
+        if current.status() == "cancelled" {
             return Ok(false);
+        }
+        if !CANCELLABLE.contains(&current.status())
+            || (event.event != "cancelled"
+                && current.status_evidence_sequence() != recorded.status_evidence_sequence())
+        {
+            return Err(EinvoiceError::NotCancellable);
         }
         documents::record_event(&mut tx, scope, company_id, document_id, event).await?;
         answer_action(&tx, name, base, answer).await?;
@@ -1714,23 +1749,27 @@ impl Einvoice {
         let recorded = self.fetch(scope, company_id, document_id).await?;
         let client = self.db.get().await.map_err(Error::from)?;
         let portal = self
-            .settings
-            .get_global(
-                &**client,
-                &format!(
-                    "finance.einvoice.{}.portal_url",
-                    recorded.document.environment
-                ),
-            )
+            .portal_on(&**client, &recorded.document.environment)
             .await?;
-        self.view_on(
-            &**client,
-            scope,
-            company_id,
-            recorded,
-            portal.as_str().unwrap_or_default(),
-        )
-        .await
+        self.view_on(&**client, scope, company_id, recorded, &portal)
+            .await
+    }
+
+    pub(crate) async fn portal_on(
+        &self,
+        client: &dyn OperationClient,
+        environment: &str,
+    ) -> Result<String> {
+        let key = format!("finance.einvoice.{environment}.portal_url");
+        let portal = match client.transaction() {
+            Some(tx) => self.settings.get_global(tx, &key).await?,
+            None => {
+                self.settings
+                    .get_global(client.sql_client().await?, &key)
+                    .await?
+            }
+        };
+        Ok(portal.as_str().unwrap_or_default().to_owned())
     }
 
     pub(crate) async fn view_on(
@@ -1748,6 +1787,9 @@ impl Einvoice {
         let mut view = recorded.view(&Self::authority(), portal, queued);
         view.sources = sources;
         view.consolidated_by = consolidated_by;
+        view.pdf_artifact_id = self
+            .pdf_for_reader_on(client, scope, company_id, &view)
+            .await?;
         Ok(view)
     }
 
@@ -1820,7 +1862,7 @@ impl Einvoice {
         &self,
         scope: &Scope,
         company_id: i64,
-        document_id: i64,
+        recorded: &Recorded,
         event: NewEvent,
         writer: Writer<'_>,
     ) -> std::result::Result<(), Outcome> {
@@ -1835,7 +1877,8 @@ impl Einvoice {
             )
             .await
             .map_err(cancel_for)?;
-        documents::record_event(&mut tx, scope, company_id, document_id, event)
+        Self::current_observation(tx.sql(), scope, company_id, recorded).await?;
+        documents::record_event(&mut tx, scope, company_id, recorded.document.id, event)
             .await
             .map_err(|_| retry_database())?;
         tx.commit().await.map_err(|_| retry_database())

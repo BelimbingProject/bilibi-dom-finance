@@ -102,7 +102,7 @@ pub use conversion::OpeningContext;
 pub use evidence::EvidencePage;
 pub use fiscal::{
     sst_numbers_on, FiscalChoice, FiscalDocuments, FiscalDocumentsDefinition, FiscalFuture,
-    FiscalLine, FiscalParty, FiscalSource, FiscalSourceKind, FiscalSources,
+    FiscalLine, FiscalParty, FiscalReference, FiscalSource, FiscalSourceKind, FiscalSources,
     FiscalSourcesDefinition, FiscalStanding, FiscalStandings, FiscalStart, FiscalTone, SstNumbers,
     SstRegistration, SstRegistrationDefinition, FISCAL_DOCUMENTS, FISCAL_SOURCES, SST_REGISTRATION,
 };
@@ -1445,6 +1445,18 @@ impl Ledger {
         record: &str,
     ) -> Result<Option<FiscalSource>> {
         Ok(fiscal::source(client, scope, company_id, module, record).await?)
+    }
+
+    /// The authorized references of a module's requested posted documents.
+    pub async fn fiscal_references_on(
+        &self,
+        client: &dyn bilibi_agent_api::OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        module: &str,
+        records: &[String],
+    ) -> Result<Vec<FiscalReference>> {
+        Ok(fiscal::references(client, scope, company_id, module, records).await?)
     }
 
     /// The newest posted records a fiscal document can be made for, each
