@@ -245,26 +245,58 @@ impl Einvoice {
         bilibi_company::authorize_work_target(&**client, scope, company_id, VIEW)
             .await
             .map_err(crate::refusal)?;
-        let mut records = Vec::new();
-        for link in links.iter().take(NAMED_SOURCES) {
-            let source = self
-                .ledger
-                .fiscal_source_on(&**client, scope, company_id, &link.module, &link.record)
-                .await
-                .map_err(ledger_error)?;
-            records.push(source.map(|source| SourceRecord {
-                name: format!(
-                    "{} {}",
-                    match source.kind {
-                        FiscalSourceKind::Invoice => "Invoice",
-                        FiscalSourceKind::CreditNote => "Credit note",
-                    },
-                    source.number
-                ),
-                href: source.href,
-            }));
+        self.source_records_on(
+            &**client,
+            scope,
+            company_id,
+            &links[..links.len().min(NAMED_SOURCES)],
+        )
+        .await
+    }
+
+    pub(crate) async fn source_records_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        links: &[SourceLink],
+    ) -> Result<Vec<Option<SourceRecord>>> {
+        let mut by_module = std::collections::BTreeMap::<&str, Vec<String>>::new();
+        for link in links {
+            by_module
+                .entry(&link.module)
+                .or_default()
+                .push(link.record.clone());
         }
-        Ok(records)
+        let mut by_record = std::collections::BTreeMap::<
+            &str,
+            std::collections::BTreeMap<String, SourceRecord>,
+        >::new();
+        for (module, records) in by_module {
+            for source in self
+                .ledger
+                .fiscal_references_on(client, scope, company_id, module, &records)
+                .await
+                .map_err(ledger_error)?
+            {
+                by_record.entry(module).or_default().insert(
+                    source.record,
+                    SourceRecord {
+                        name: source.label,
+                        href: source.href,
+                    },
+                );
+            }
+        }
+        Ok(links
+            .iter()
+            .map(|link| {
+                by_record
+                    .get(link.module.as_str())
+                    .and_then(|records| records.get(&link.record))
+                    .cloned()
+            })
+            .collect())
     }
 
     /// The posted records an e-invoice can be started for

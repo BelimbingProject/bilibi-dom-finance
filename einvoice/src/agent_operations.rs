@@ -171,23 +171,10 @@ impl Einvoice {
             .await?
             .ok_or(EinvoiceError::DocumentNotFound)?;
         let portal = self
-            .settings
-            .get_global(
-                client.sql_client().await?,
-                &format!(
-                    "finance.einvoice.{}.portal_url",
-                    recorded.document.environment
-                ),
-            )
+            .portal_on(client, &recorded.document.environment)
             .await?;
-        self.view_on(
-            client,
-            scope,
-            company,
-            recorded,
-            portal.as_str().unwrap_or_default(),
-        )
-        .await
+        self.view_on(client, scope, company, recorded, &portal)
+            .await
     }
 
     async fn documents_on(

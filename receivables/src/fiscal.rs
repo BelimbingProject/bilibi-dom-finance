@@ -8,8 +8,9 @@
 use crate::{documents, Document, ReceivableError, Receivables, Result, MODULE, VIEW};
 use bilibi_agent_api::OperationClient;
 use bilibi_finance_ledger::{
-    FiscalChoice, FiscalFuture, FiscalLine, FiscalParty, FiscalSource, FiscalSourceKind,
-    FiscalSources, FiscalSourcesDefinition, FiscalStanding, FiscalStart, FISCAL_SOURCES,
+    FiscalChoice, FiscalFuture, FiscalLine, FiscalParty, FiscalReference, FiscalSource,
+    FiscalSourceKind, FiscalSources, FiscalSourcesDefinition, FiscalStanding, FiscalStart,
+    FISCAL_SOURCES,
 };
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_tenancy::Scope;
@@ -181,6 +182,52 @@ impl FiscalSources for Issued {
                 Err(ReceivableError::Failed(error)) => Err(error),
                 Err(_) => Ok(None),
             }
+        })
+    }
+
+    fn references<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        company_id: i64,
+        records: &'a [String],
+    ) -> FiscalFuture<'a, Vec<FiscalReference>> {
+        Box::pin(async move {
+            if !may_view(client, scope, company_id).await? {
+                return Ok(Vec::new());
+            }
+            let ids: Vec<i64> = records
+                .iter()
+                .filter_map(|record| record.strip_prefix("document:")?.parse().ok())
+                .collect();
+            let rows = client
+                .query(
+                    "SELECT d.id, d.kind, d.document_reference FROM finance_receivables_documents d
+                 WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=ANY($3) AND d.status='issued'
+                   AND d.kind IN ('invoice','credit_note') AND d.ledger_entry_id IS NOT NULL
+                   AND d.document_reference IS NOT NULL AND d.issue_date IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM finance_receivables_opening_items i
+                     WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id)",
+                    &[&scope.tenant(), &company_id, &ids],
+                )
+                .await?;
+            Ok(rows
+                .iter()
+                .map(|row| {
+                    let id: i64 = row.get(0);
+                    let kind = if row.get::<_, &str>(1) == "credit_note" {
+                        "Credit note"
+                    } else {
+                        "Invoice"
+                    };
+                    let number: &str = row.get(2);
+                    FiscalReference {
+                        record: record(id),
+                        label: format!("{kind} {number}"),
+                        href: format!("/finance/receivables/invoices/{id}"),
+                    }
+                })
+                .collect())
         })
     }
 

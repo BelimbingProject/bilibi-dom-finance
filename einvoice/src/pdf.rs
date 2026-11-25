@@ -1,25 +1,19 @@
-//! The printable document (Bilimbi `ArtifactOwner`, `QrCode`,
-//! `Einvoice.generate_pdf/3` and `read_pdf/3`): the module's adapter for Base
-//! Artifacts, who may create, read and delete a document's PDF, and the QR
-//! code of the authority's validation link.
-//!
-//! A PDF is a regenerable visual of the stored record, not the record: the
-//! payload the authority validated lives in the submission. It is rendered by
-//! Base Artifacts' pure serializer (`bilibi_artifacts::pdf`), so it needs no
-//! browser or external tool and is deterministic for one document view. It
-//! prints the parties, lines, totals, status, the authority's identifiers and
-//! the validation link whose QR code the document page shows. Every operation
-//! re-asks `finance.einvoice.view` for the company, as the facade does.
+//! Private visual copies from the frozen fiscal document and its clearance evidence.
 use crate::clearance::{action, Writer};
-use crate::documents::{self, DocumentView, NewEvent};
-use crate::{authorize, Authority, Einvoice, EinvoiceError, PartySnapshot, Result, VIEW};
-use bilibi_artifacts::pdf::{self as serializer, Block, Metadata};
-use bilibi_artifacts::{Operation, Owner, PdfOwner, Reference, RenderFuture};
+use crate::documents::{self, NewEvent, StatusEvent};
+use crate::{
+    authorize, print_layouts::CONTRACT, print_values, Einvoice, EinvoiceError, Result, VIEW,
+};
+use bilibi_agent_api::OperationClient;
+use bilibi_artifacts::{Operation, Owner, PdfOptions, Reference};
 use bilibi_database::Error;
 use bilibi_party_ids::OrganisationId;
+use bilibi_settings::Target;
+use bilibi_templates::Origin;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use qrcode::render::svg;
 use qrcode::QrCode;
+use rsa::sha2::{Digest, Sha256};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -63,9 +57,7 @@ pub fn qr_code_svg(text: &str, size: u32) -> Option<String> {
 
 /// The module's Artifacts adapter. It renders only the document the facade
 /// handed it, built from a view the caller was authorized to read.
-pub(crate) struct ArtifactOwner {
-    render: Option<serializer::Document>,
-}
+pub(crate) struct ArtifactOwner;
 
 fn reference(document_id: i64) -> Reference {
     Reference {
@@ -113,30 +105,125 @@ impl Owner for ArtifactOwner {
     }
 }
 
-impl PdfOwner for ArtifactOwner {
-    fn render_pdf<'a>(
-        &'a self,
-        _scope: &'a Scope,
-        _company: OrganisationId,
-        _reference: &'a Reference,
-        _data: &'a Value,
-    ) -> RenderFuture<'a> {
-        Box::pin(async move {
-            let document = self
-                .render
-                .as_ref()
-                .ok_or(bilibi_artifacts::Error::InvalidDocument)?;
-            serializer::render(document)
-        })
+fn source_sequence(events: &[StatusEvent]) -> i32 {
+    events
+        .iter()
+        .rev()
+        .find(|event| event.event != "pdf_generated")
+        .map_or(0, |event| event.sequence)
+}
+
+fn source_indices(records: &[Option<crate::SourceRecord>]) -> Value {
+    json!(records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| record.as_ref().map(|_| index))
+        .collect::<Vec<_>>())
+}
+
+fn current_pdfs(events: &[StatusEvent]) -> impl Iterator<Item = &Value> {
+    let as_of = i64::from(source_sequence(events));
+    events
+        .iter()
+        .rev()
+        .filter(|event| event.event == "pdf_generated")
+        .filter_map(|event| event.response.as_ref())
+        .filter(move |response| response["as_of_sequence"].as_i64() == Some(as_of))
+}
+
+struct PreparedPdf {
+    inline: bilibi_artifacts::InlineDocument,
+    identity: PdfIdentity,
+}
+
+#[derive(PartialEq, Eq)]
+struct PdfIdentity {
+    template_version: String,
+    data_version: String,
+    source_indices: Value,
+}
+
+impl PdfIdentity {
+    fn matching<'a>(&'a self, events: &'a [StatusEvent]) -> impl Iterator<Item = PdfArtifact> + 'a {
+        current_pdfs(events)
+            .filter(move |response| {
+                response["data_version"].as_str() == Some(self.data_version.as_str())
+                    && response["template_version"].as_str() == Some(self.template_version.as_str())
+                    && response["source_indices"] == self.source_indices
+            })
+            .filter_map(|response| {
+                Some(PdfArtifact {
+                    artifact_id: response["artifact_id"].as_str()?.to_owned(),
+                    byte_size: response["byte_size"].as_i64()?,
+                    sha256: response["sha256"].as_str()?.to_owned(),
+                })
+            })
     }
 }
 
 impl Einvoice {
+    async fn available_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+        identity: &PdfIdentity,
+    ) -> Result<Option<PdfArtifact>> {
+        let mut matching = identity.matching(&view.events).peekable();
+        if matching.peek().is_none() {
+            return Ok(None);
+        }
+        let reference = reference(view.document.id);
+        let documents = self
+            .artifacts
+            .subject_documents(
+                client.sql_client().await?,
+                scope,
+                &ArtifactOwner,
+                &reference.subject,
+            )
+            .await
+            .map_err(artifacts)?;
+        let now = jiff::Timestamp::now();
+        Ok(matching.find(|pdf| {
+            documents.iter().any(|(company, document)| {
+                company.get() == company_id
+                    && document.reference.kind == reference.kind
+                    && document.id == pdf.artifact_id
+                    && document.expires_at.as_deref().is_none_or(|expiry| {
+                        expiry
+                            .parse::<jiff::Timestamp>()
+                            .is_ok_and(|expiry| expiry > now)
+                    })
+            })
+        }))
+    }
+
+    pub(crate) async fn pdf_for_reader_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+    ) -> Result<Option<String>> {
+        if current_pdfs(&view.events).next().is_none() {
+            return Ok(None);
+        }
+        match self.prepare_pdf_on(client, scope, company_id, view).await {
+            Ok(prepared) => Ok(self
+                .available_pdf_on(client, scope, company_id, view, &prepared.identity)
+                .await?
+                .map(|pdf| pdf.artifact_id)),
+            Err(EinvoiceError::Artifacts(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Renders the document as a PDF through Base Artifacts and records it on
     /// a `pdf_generated` event (`finance.einvoice.view`). The event keeps the
-    /// sequence of the last other event the PDF was rendered from; while the
-    /// document has gained none since, asking again answers that artifact and
-    /// records nothing. Base Artifacts needs a storage root and a retention
+    /// source event and print versions. An unchanged request returns the
+    /// recorded artifact. Base Artifacts needs a storage root and a retention
     /// period first (`Artifacts("policy")`). The audit action is
     /// `finance.einvoice.pdf.generated`.
     pub async fn generate_pdf(
@@ -145,59 +232,42 @@ impl Einvoice {
         company_id: i64,
         document_id: i64,
     ) -> Result<PdfArtifact> {
-        let client = self.db.get().await.map_err(Error::from)?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company_id, VIEW).await?;
         // Recording the PDF on the document is a write, refused for an
         // archived company before an artifact is stored.
         bilibi_company::require_writable(&**client, scope, company_id, false)
             .await
             .map_err(crate::company_write)?;
-        drop(client);
-        let view = self.view(scope, company_id, document_id).await?;
-        let as_of = view
-            .events
-            .iter()
-            .filter(|event| event.event != "pdf_generated")
-            .map(|event| event.sequence)
-            .max()
-            .unwrap_or_default();
-        if let Some(stored) = view
-            .events
-            .iter()
-            .rev()
-            .find(|event| event.event == "pdf_generated")
-            .and_then(|event| event.response.as_ref())
-            .filter(|response| response["as_of_sequence"].as_i64() == Some(i64::from(as_of)))
-            .and_then(|response| {
-                Some(PdfArtifact {
-                    artifact_id: response["artifact_id"].as_str()?.to_owned(),
-                    byte_size: response["byte_size"].as_i64()?,
-                    sha256: response["sha256"].as_str()?.to_owned(),
-                })
-            })
+        let company =
+            OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
+        let (view, prepared) = self
+            .prepare_document_pdf_on(&**client, scope, company_id, document_id)
+            .await?;
+        let as_of = source_sequence(&view.events);
+        let PreparedPdf { inline, identity } = prepared;
+        if let Some(stored) = self
+            .available_pdf_on(&**client, scope, company_id, &view, &identity)
+            .await?
         {
             return Ok(stored);
         }
-        let company =
-            OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
-        let owner = ArtifactOwner {
-            render: Some(printable(&view)),
-        };
-        let mut client = self.db.get().await.map_err(Error::from)?;
-        let stored = self
-            .artifacts
-            .for_owner(scope, company, &owner)
-            .generate_pdf(
-                &mut client,
-                reference(document_id),
-                &json!({ "document_id": document_id }),
-            )
-            .await
-            .map_err(artifacts)?;
+        let options = PdfOptions::default()
+            .template_version(identity.template_version.clone())
+            .data_version(identity.data_version.clone());
+        let owned = self.artifacts.for_owner(scope, company, &ArtifactOwner);
+        let stored = Box::pin(owned.render_inline_document(
+            &mut client,
+            reference(document_id),
+            inline,
+            &options,
+        ))
+        .await
+        .map_err(artifacts)?;
         let artifact = PdfArtifact {
-            artifact_id: stored.id,
-            byte_size: stored.byte_size,
-            sha256: stored.sha256,
+            artifact_id: stored.document.id,
+            byte_size: stored.document.byte_size,
+            sha256: stored.document.sha256,
         };
         let mut tx = self
             .begin(
@@ -208,10 +278,29 @@ impl Einvoice {
                 "finance.einvoice.generate_pdf",
             )
             .await?;
+        let (current_view, current) = self
+            .prepare_document_pdf_on(tx.sql(), scope, company_id, document_id)
+            .await?;
+        if current.identity != identity {
+            return Err(EinvoiceError::Artifacts("print_inputs_changed"));
+        }
+        if let Some(stored) = self
+            .available_pdf_on(tx.sql(), scope, company_id, &current_view, &identity)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(stored);
+        }
+        let PdfIdentity {
+            template_version,
+            data_version,
+            source_indices,
+        } = identity;
         let mut event = NewEvent::new("pdf_generated");
         event.response = Some(json!({
             "artifact_id": artifact.artifact_id, "byte_size": artifact.byte_size,
-            "sha256": artifact.sha256, "as_of_sequence": as_of,
+            "sha256": artifact.sha256, "as_of_sequence": as_of, "template_version": template_version,
+            "data_version": data_version, "source_indices": source_indices,
         }));
         documents::record_event(&mut tx, scope, company_id, document_id, event).await?;
         action(
@@ -227,9 +316,104 @@ impl Einvoice {
         Ok(artifact)
     }
 
-    /// The bytes of a PDF [`Einvoice::generate_pdf`] stored, for the download
-    /// route (`finance.einvoice.view`, asked again by Base Artifacts, which
-    /// verifies the bytes and records the read).
+    async fn prepare_document_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        document_id: i64,
+    ) -> Result<(crate::DocumentView, PreparedPdf)> {
+        let recorded = documents::fetch(client, scope.tenant(), company_id, document_id)
+            .await?
+            .ok_or(EinvoiceError::DocumentNotFound)?;
+        let portal = self
+            .portal_on(client, &recorded.document.environment)
+            .await?;
+        let view = recorded.view(&Self::authority(), &portal, false);
+        let prepared = self
+            .prepare_pdf_on(client, scope, company_id, &view)
+            .await?;
+        Ok((view, prepared))
+    }
+
+    async fn prepare_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+    ) -> Result<PreparedPdf> {
+        let company =
+            OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
+        let language = self
+            .settings
+            .get(
+                client,
+                scope,
+                Target::Company(company),
+                bilibi_templates::LANGUAGE,
+            )
+            .await
+            .map_err(|_| EinvoiceError::Artifacts("print_language_unavailable"))?;
+        let resolved = self
+            .templates
+            .resolve_print(
+                client,
+                scope,
+                CONTRACT.key,
+                Some(company),
+                language.value.as_str().unwrap_or("en"),
+                None,
+            )
+            .await
+            .map_err(|_| EinvoiceError::Artifacts("print_layout_unavailable"))?;
+        let revision = match resolved.origin {
+            Origin::Packaged { version } => format!("packaged-{version}"),
+            Origin::Tenant { revision } | Origin::Company { revision, .. } => {
+                format!("revision-{revision}")
+            }
+        };
+        let template_version = format!("{}-{revision}", resolved.language);
+        let accent = match client.transaction() {
+            Some(tx) => self.branding.accent(tx).await?,
+            None => self.branding.accent(client.sql_client().await?).await?,
+        };
+        let as_of = source_sequence(&view.events);
+        let records = self
+            .source_records_on(client, scope, company_id, &view.source_links)
+            .await?;
+        let source_indices = source_indices(&records);
+        let source = records
+            .iter()
+            .flatten()
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let compiled = CONTRACT
+            .compile(&resolved.language, &resolved.layout)
+            .map_err(|_| EinvoiceError::Artifacts("invalid_print_layout"))?;
+        let inline = print_values::document(
+            view,
+            &source,
+            &compiled,
+            resolved.language.split('-').next() == Some("ms"),
+            accent,
+        )?;
+        let mut digest = Sha256::new();
+        digest.update(format!("{:?}:", inline.paper()));
+        digest.update(inline.html().as_bytes());
+        let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
+        Ok(PreparedPdf {
+            inline,
+            identity: PdfIdentity {
+                template_version,
+                data_version,
+                source_indices,
+            },
+        })
+    }
+
+    /// The PDF download (`finance.einvoice.view`) for the current document state.
     pub async fn read_pdf(
         &self,
         scope: &Scope,
@@ -240,16 +424,81 @@ impl Einvoice {
         authorize(&**client, scope, company_id, VIEW).await?;
         let company =
             OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
-        let owner = ArtifactOwner { render: None };
+        let owner = ArtifactOwner;
         let document = self
             .artifacts
             .for_owner(scope, company, &owner)
             .read(&mut client, artifact_id)
             .await
             .map_err(artifacts)?;
+        let document_id = document
+            .metadata
+            .reference
+            .subject
+            .strip_prefix("document-")
+            .and_then(|id| id.parse().ok())
+            .ok_or(EinvoiceError::Unauthorized)?;
+        let events = documents::events(&**client, scope.tenant(), company_id, document_id).await?;
+        let response = events
+            .iter()
+            .rev()
+            .filter(|event| event.event == "pdf_generated")
+            .filter_map(|event| event.response.as_ref())
+            .find(|response| response["artifact_id"].as_str() == Some(artifact_id))
+            .ok_or(EinvoiceError::Unauthorized)?;
+        let source_indices: Vec<usize> = serde_json::from_value(response["source_indices"].clone())
+            .map_err(|_| EinvoiceError::Unauthorized)?;
+        if !source_indices.is_empty() {
+            let links =
+                documents::source_links_of(&**client, scope.tenant(), company_id, &[document_id])
+                    .await?;
+            let named = source_indices
+                .into_iter()
+                .map(|index| links.get(index).map(|(_, link)| link.clone()))
+                .collect::<Option<Vec<_>>>()
+                .ok_or(EinvoiceError::Unauthorized)?;
+            let records = self
+                .source_records_on(&**client, scope, company_id, &named)
+                .await?;
+            if records.iter().any(Option::is_none) {
+                return Err(EinvoiceError::Unauthorized);
+            }
+        }
+        let (view, current) = self
+            .prepare_document_pdf_on(&**client, scope, company_id, document_id)
+            .await?;
+        let selected = self
+            .available_pdf_on(&**client, scope, company_id, &view, &current.identity)
+            .await?;
+        let stored_bytes = match selected {
+            Some(pdf) if pdf.artifact_id == artifact_id => Some(document.bytes),
+            Some(pdf) => match self
+                .artifacts
+                .for_owner(scope, company, &owner)
+                .read(&mut client, &pdf.artifact_id)
+                .await
+            {
+                Ok(copy) => Some(copy.bytes),
+                Err(bilibi_artifacts::Error::NotFound) => None,
+                Err(error) => return Err(artifacts(error)),
+            },
+            None => None,
+        };
+        let bytes = match stored_bytes {
+            Some(bytes) => bytes,
+            None => self
+                .artifacts
+                .print_document(&client, current.inline)
+                .await
+                .map_err(artifacts)?,
+        };
+        let latest = documents::events(&**client, scope.tenant(), company_id, document_id).await?;
+        if source_sequence(&latest) != source_sequence(&view.events) {
+            return Err(EinvoiceError::Artifacts("print_inputs_changed"));
+        }
         Ok(PdfFile {
             filename: filename(&document.metadata.reference),
-            bytes: document.bytes,
+            bytes,
         })
     }
 }
@@ -259,175 +508,4 @@ fn artifacts(error: bilibi_artifacts::Error) -> EinvoiceError {
         bilibi_artifacts::Error::Database(Error::Forbidden) => EinvoiceError::Unauthorized,
         other => EinvoiceError::Artifacts(other.code()),
     }
-}
-
-/// The printable document of a view: what Bilimbi's `render_pdf` prints.
-fn printable(view: &DocumentView) -> serializer::Document {
-    let document = &view.document;
-    let type_name = Einvoice::authority().document_type_name(&document.document_type);
-    let title = format!("{type_name} {}", document.code_number);
-    let mut heading = vec![
-        format!("{} {}", type_name.to_uppercase(), document.code_number),
-        format!(
-            "Issued {}",
-            bilibi_finance_ledger::dates::display_utc(document.issued_at)
-        ),
-        format!("Status: {}", view.status),
-    ];
-    if let Some(uuid) = &view.document_uuid {
-        heading.push(format!("Authority UUID: {uuid}"));
-    }
-    if let Some(at) = view.validated_at {
-        heading.push(format!(
-            "Validated {}",
-            bilibi_finance_ledger::dates::display_utc(at)
-        ));
-    }
-    if let Some(url) = &view.validation_url {
-        heading.push(format!("Validation link: {url}"));
-    }
-    if let Some(code) = &document.details.original_code_number {
-        heading.push(format!(
-            "Original document: {code} ({})",
-            document
-                .details
-                .original_document_uuid
-                .as_deref()
-                .unwrap_or_default()
-        ));
-    }
-    let keywords: Vec<&str> = [view.document_uuid.as_deref(), view.long_id.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect();
-    serializer::Document {
-        title: latin1(&title),
-        metadata: Metadata {
-            author: Some(document.supplier.name.clone().unwrap_or_default()),
-            subject: Some(title.clone()),
-            keywords: Some(keywords.join(" ")),
-        },
-        blocks: vec![
-            Block::Text(latin1(&heading.join("\n"))),
-            Block::Table {
-                headers: vec!["Supplier".into(), "Buyer".into()],
-                rows: vec![vec![party(&document.supplier), party(&document.buyer)]],
-            },
-            Block::Table {
-                headers: [
-                    "#",
-                    "Description",
-                    "Qty",
-                    "Unit price",
-                    "Amount",
-                    "Tax",
-                    "Tax amount",
-                ]
-                .map(String::from)
-                .to_vec(),
-                rows: document
-                    .lines
-                    .iter()
-                    .map(|line| {
-                        vec![
-                            line.line_number.to_string(),
-                            latin1(&line.description),
-                            bilibi_locale::money(line.quantity, 2),
-                            bilibi_locale::money(line.unit_price, 2),
-                            bilibi_locale::money(line.line_extension_amount, 2),
-                            format!(
-                                "{} {}%",
-                                line.tax_type,
-                                line.tax_rate
-                                    .map(|rate| bilibi_locale::money(rate, 2))
-                                    .unwrap_or_default()
-                            ),
-                            bilibi_locale::money(line.tax_amount, 2),
-                        ]
-                    })
-                    .collect(),
-            },
-            Block::Table {
-                headers: vec![
-                    "Total".into(),
-                    format!("Amount ({})", document.currency_code),
-                ],
-                rows: vec![
-                    vec![
-                        "Tax exclusive".into(),
-                        bilibi_locale::money(document.tax_exclusive_amount, 2),
-                    ],
-                    vec!["Tax".into(), bilibi_locale::money(document.tax_amount, 2)],
-                    vec![
-                        "Tax inclusive".into(),
-                        bilibi_locale::money(document.tax_inclusive_amount, 2),
-                    ],
-                    vec![
-                        "Payable".into(),
-                        bilibi_locale::money(document.payable_amount, 2),
-                    ],
-                ],
-            },
-            Block::Text(
-                "Generated from the recorded document; the payload the authority validated is \
-                 kept with its submission. Open the validation link, or scan its QR code on the \
-                 document page, to confirm the document with the authority."
-                    .into(),
-            ),
-        ],
-    }
-}
-
-fn party(party: &PartySnapshot) -> String {
-    let address = &party.address;
-    let join = |parts: &[Option<&str>], separator: &str| {
-        parts
-            .iter()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>()
-            .join(separator)
-    };
-    [
-        party.name.clone(),
-        Some(format!(
-            "TIN {}",
-            party.tax_id.as_deref().unwrap_or_default()
-        )),
-        party
-            .registration_number
-            .as_ref()
-            .map(|number| format!("Reg. {number}")),
-        Some(address.lines.join(", ")),
-        Some(join(
-            &[address.postcode.as_deref(), address.city.as_deref()],
-            " ",
-        )),
-        Some(join(
-            &[
-                address.state_code.as_deref(),
-                address.country_code.as_deref(),
-            ],
-            " ",
-        )),
-        party.phone.clone(),
-        party.email.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|line| !line.is_empty())
-    .map(|line| latin1(&line))
-    .collect::<Vec<_>>()
-    .join("\n")
-}
-
-/// The serializer's font covers printable ASCII and Latin-1; anything else is
-/// replaced visibly rather than refused.
-fn latin1(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            ' '..='~' | '\u{a0}'..='\u{ff}' | '\n' => c,
-            _ => '?',
-        })
-        .collect()
 }

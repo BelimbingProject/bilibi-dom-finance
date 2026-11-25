@@ -27,6 +27,7 @@ pub(super) fn refusal(action: &str, error: E) -> String {
         ("cancel", E::CancellationRefused { code: CancelRefusal::ActiveReferencingDocuments, .. }) => "The authority refused: an active document references this one.",
         ("cancel", E::CancellationRefused { reason, .. }) => return reason.as_ref().map_or("The authority refused the cancellation.".into(), |r| format!("The authority refused the cancellation: {r}")),
         ("generate_pdf", E::Unauthorized) => "You do not have permission to generate the PDF.",
+        ("generate_pdf", E::Artifacts("print_inputs_changed")) => "The document or its print settings changed. Generate the PDF again.",
         ("generate_pdf", E::Artifacts("policy")) => "File storage is not set up. Ask your administrator to set the storage folder in System settings.",
         ("generate_pdf", E::Artifacts("unsafe_root")) => "The storage folder cannot be used. Ask your administrator to check it in System settings.",
         ("generate_pdf", E::Artifacts("missing_root")) => "The storage folder cannot be found. Ask your administrator to check it in System settings.",

@@ -185,7 +185,7 @@ pub struct DocumentView {
     /// or reverses an entry itself (`recognised_by_source`).
     pub source_links: Vec<SourceLink>,
     pub recognised_by_source: bool,
-    /// The latest PDF generated of it.
+    /// The latest PDF for this state and the reader’s source access.
     pub pdf_artifact_id: Option<String>,
     /// For a consolidated document, the documents it covers.
     pub sources: Vec<ConsolidatedSource>,
@@ -238,37 +238,65 @@ impl Recorded {
     }
 
     pub fn document_uuid(&self) -> Option<&str> {
+        self.latest("submitted")?.document_uuid.as_deref()
+    }
+
+    pub(crate) fn submission_sequence(&self) -> Option<i32> {
+        self.latest("submitted").map(|event| event.sequence)
+    }
+
+    pub(crate) fn status_evidence_sequence(&self) -> Option<i32> {
         self.events
             .iter()
             .rev()
-            .find_map(|event| event.document_uuid.as_deref())
+            .find(|event| {
+                STATUS_EVENTS.contains(&event.event.as_str()) || event.event == "status_checked"
+            })
+            .map(|event| event.sequence)
+    }
+
+    fn submission_events(&self) -> impl Iterator<Item = &StatusEvent> {
+        let submission = self.submission_sequence().zip(self.document_uuid());
+        self.events.iter().rev().filter(move |event| {
+            submission.is_some_and(|(sequence, uuid)| {
+                event.sequence >= sequence && event.document_uuid.as_deref() == Some(uuid)
+            })
+        })
     }
 
     fn long_id(&self) -> Option<&str> {
-        self.events
-            .iter()
-            .rev()
+        self.submission_events()
             .find_map(|event| event.long_id.as_deref())
     }
 
-    /// When the authority validated it: its own instant, or when the `valid`
-    /// event was recorded.
+    /// The validation instant supplied by the authority.
     pub fn validated_at(&self) -> Option<Timestamp> {
-        let valid = self.latest("valid")?;
-        Some(
-            valid
-                .response
-                .as_ref()
-                .and_then(|response| response.get("dateTimeValidated"))
-                .and_then(Value::as_str)
-                .and_then(|text| text.parse().ok())
-                .unwrap_or(valid.recorded_at),
-        )
+        self.submission_events()
+            .filter(|event| {
+                matches!(
+                    event.authority_status.as_deref(),
+                    Some("Valid" | "Cancelled")
+                )
+            })
+            .find_map(|event| {
+                event
+                    .response
+                    .as_ref()?
+                    .get("dateTimeValidated")?
+                    .as_str()?
+                    .parse()
+                    .ok()
+            })
     }
 
     pub fn cancellable_until(&self, authority: &impl Authority) -> Option<Timestamp> {
         let hours = i64::from(authority.cancellation_window_hours());
         self.validated_at()
+            .or_else(|| {
+                self.submission_events()
+                    .find(|event| event.event == "valid")
+                    .map(|event| event.recorded_at)
+            })
             .map(|at| at + SignedDuration::from_hours(hours))
     }
 
@@ -364,6 +392,7 @@ impl Recorded {
             validation_url: document_uuid
                 .as_deref()
                 .zip(long_id.as_deref())
+                .filter(|_| VALID_STATUSES.contains(&status.as_str()))
                 .map(|(uuid, long_id)| authority.validation_url(portal_url, uuid, long_id)),
             document_uuid,
             long_id,
@@ -374,12 +403,7 @@ impl Recorded {
             ledger_entry_id: self.ledger_entry_id(),
             reversal_entry_id: self.reversal_entry_id(),
             recognised_by_source: self.recognised_by_source(),
-            pdf_artifact_id: self
-                .latest("pdf_generated")
-                .and_then(|event| event.response.as_ref())
-                .and_then(|response| response.get("artifact_id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            pdf_artifact_id: None,
             source_links: self.source_links,
             sources: Vec::new(),
             consolidated_by: None,

@@ -38,6 +38,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 pub(crate) type Outcome<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -119,7 +120,13 @@ struct Held {
     long_id: String,
     status: &'static str,
     received: String,
+    validation_time: Option<&'static str>,
     rejection_requested: bool,
+}
+
+struct CancelGate {
+    entered: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
 }
 
 /// The stand-in authority's state for the run.
@@ -136,6 +143,7 @@ pub(crate) struct StandIn {
     rate_limited: Mutex<Vec<String>>,
     log: Mutex<Vec<String>>,
     counter: AtomicUsize,
+    cancel_gate: Mutex<Option<CancelGate>>,
 }
 
 impl StandIn {
@@ -150,17 +158,25 @@ impl StandIn {
     }
     fn hold(&self, code: &str) -> Held {
         let n = self.next();
+        let pending_retry = code == "NE5-RECHECK" && self.find_code(code).is_some();
         let held = Held {
             code: code.to_owned(),
             submission_uid: format!("SUBMISSION-{n:04}"),
             uuid: format!("DOCUMENT-{n:04}"),
             long_id: format!("LONGID-{n:04}-WALKTHROUGH"),
-            status: if code.contains("INVALID") {
+            status: if pending_retry {
+                "Submitted"
+            } else if code.contains("INVALID") {
                 "Invalid"
             } else {
                 "Valid"
             },
-            received: Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            received: if code == "NE5-RECHECK" {
+                "2026-11-06T08:04:00Z".into()
+            } else {
+                Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+            },
+            validation_time: None,
             rejection_requested: code == "BROWSER-E-REJECTION",
         };
         self.held.lock().expect("held").push(held.clone());
@@ -174,6 +190,38 @@ impl StandIn {
             .find(|held| held.uuid == uuid)
             .cloned()
     }
+    pub(crate) fn pause_next_cancel(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered, wait) = oneshot::channel();
+        let (resume, paused) = oneshot::channel();
+        *self.cancel_gate.lock().expect("cancel gate") = Some(CancelGate {
+            entered,
+            resume: paused,
+        });
+        (wait, resume)
+    }
+
+    pub(crate) fn request_rejection(&self, code: &str) {
+        self.set(code, |held| held.rejection_requested = true);
+    }
+
+    pub(crate) fn invalidate(&self, code: &str) {
+        self.set(code, |held| held.status = "Invalid");
+    }
+
+    pub(crate) fn finish_retry(&self, uuid: &str) {
+        let mut held = self.held.lock().expect("held");
+        held.iter_mut()
+            .find(|held| held.uuid == uuid)
+            .expect("retry")
+            .status = "Valid";
+    }
+
+    pub(crate) fn reveal_validation_time(&self, code: &str) {
+        self.set(code, |held| {
+            held.validation_time = Some("2026-11-06T09:13:00Z")
+        });
+    }
+
     fn set(&self, code: &str, change: impl Fn(&mut Held)) {
         for held in self.held.lock().expect("held").iter_mut() {
             if held.code == code {
@@ -352,7 +400,7 @@ async fn submission_status(
         *count
     };
     // The first read of each submission finds it still processing.
-    let overall = if reads == 1 {
+    let overall = if reads == 1 || first.status == "Submitted" {
         "In Progress"
     } else {
         first.status
@@ -386,16 +434,22 @@ async fn details(State(standin): Shared, headers: HeaderMap, Path(uuid): Path<St
     let mut body = json!({"uuid": held.uuid, "submissionUid": held.submission_uid,
         "internalId": held.code, "status": held.status, "dateTimeReceived": held.received,
         "documentStatusReason": Value::Null});
-    if held.status != "Invalid" {
+    if matches!(held.status, "Valid" | "Cancelled") {
         body["longId"] = json!(held.long_id);
-        body["dateTimeValidated"] = if held.code == "BROWSER-E-EXPIRED" {
-            json!((Timestamp::now() - SignedDuration::from_hours(73))
-                .strftime("%Y-%m-%dT%H:%M:%SZ")
-                .to_string())
+        if matches!(held.code.as_str(), "NE5-000" | "NE5-RECHECK") {
+            if let Some(time) = held.validation_time {
+                body["dateTimeValidated"] = json!(time);
+            }
         } else {
-            json!(held.received)
-        };
-    } else {
+            body["dateTimeValidated"] = if held.code == "BROWSER-E-EXPIRED" {
+                json!((Timestamp::now() - SignedDuration::from_hours(73))
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string())
+            } else {
+                json!(held.received)
+            };
+        }
+    } else if held.status == "Invalid" {
         body["validationResults"] = json!({"status": "Invalid", "validationSteps": [
             {"status": "Valid", "name": "Step01-Structure Validator"},
             {"status": "Invalid", "name": "Step03-Codes Validator", "error": {
@@ -471,8 +525,19 @@ async fn cancel(
         )
             .into_response();
     }
+    let gate = standin.cancel_gate.lock().expect("cancel gate").take();
+    if let Some(gate) = gate {
+        let _ = gate.entered.send(());
+        if gate.resume.await.is_err() {
+            return unavailable();
+        }
+    }
     standin.set(&held.code, |held| held.status = "Cancelled");
-    Json(json!({"uuid": uuid, "status": "Cancelled"})).into_response()
+    let mut response = json!({"uuid": uuid, "status": "Cancelled"});
+    if held.code == "NE5-000" {
+        response["dateTimeValidated"] = json!("2026-11-06T09:13:00Z");
+    }
+    Json(response).into_response()
 }
 
 /// Serves the stand-in on a free loopback port and answers its base URL.

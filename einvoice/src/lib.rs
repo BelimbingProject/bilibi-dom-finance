@@ -41,6 +41,8 @@ pub mod myinvois;
 mod pdf;
 mod posting;
 mod posting_setup;
+mod print_layouts;
+mod print_values;
 mod web;
 mod workers;
 
@@ -75,6 +77,7 @@ pub use myinvois::signer::SigningKey;
 pub use pdf::{qr_code_svg, PdfArtifact, PdfFile, ARTIFACT_OWNER};
 
 use bilibi_artifacts::Artifacts;
+use bilibi_branding::Branding;
 use bilibi_company::WriteError;
 use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction};
 use bilibi_finance_ledger::Ledger;
@@ -83,6 +86,7 @@ use bilibi_module_registry::{Layer, Module, Service};
 use bilibi_party_ids::OrganisationId;
 use bilibi_queue::Queue;
 use bilibi_settings::{Resolved, Settings, Target};
+use bilibi_templates::Templates;
 use bilibi_tenancy::Scope;
 use jiff::{civil::Date, Timestamp};
 use serde::Serialize;
@@ -100,9 +104,9 @@ inventory::submit! {
     Module {
         id: MODULE, layer: Layer::Domains,
         dependencies: &[
-            "base/agent_api", "base/artifacts", "base/audit", "base/authz", "base/database", "base/integration",
+            "base/agent_api", "base/artifacts", "base/audit", "base/authz", "base/branding", "base/database", "base/integration",
             "base/datetime", "base/locale", "base/menu", "base/ui",
-            "base/party_ids", "base/principal_directory", "base/queue", "base/settings", "base/tenancy", "core/company",
+            "base/party_ids", "base/principal_directory", "base/queue", "base/settings", "base/templates", "base/tenancy", "core/company",
             "finance/ledger",
         ],
         migrations: &[
@@ -120,6 +124,8 @@ inventory::submit! {
                 queue: services.get("base/queue.store")?,
                 ledger: services.get(bilibi_finance_ledger::SERVICE)?,
                 artifacts: services.get("base/artifacts.store")?,
+                branding: services.get(bilibi_branding::SERVICE)?,
+                templates: services.get(bilibi_templates::SERVICE)?,
                 parties: services.get("base/tenancy.parties")?,
                 });
                 agent_operations::bind(owner.clone())?;
@@ -395,6 +401,8 @@ pub struct Einvoice {
     queue: Arc<Queue>,
     ledger: Arc<Ledger>,
     artifacts: Arc<Artifacts>,
+    branding: Arc<Branding>,
+    templates: Arc<Templates>,
     parties: Arc<bilibi_tenancy::PartyProofs>,
 }
 

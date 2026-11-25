@@ -97,6 +97,13 @@ pub struct FiscalChoice {
     pub issue_date: String,
 }
 
+/// The identity and link of a posted source record.
+pub struct FiscalReference {
+    pub record: String,
+    pub label: String,
+    pub href: String,
+}
+
 /// Reads a module's posted records for the module that issues their fiscal
 /// documents. The reader authorizes the person with its own view capability.
 pub trait FiscalSources: Send + Sync {
@@ -109,6 +116,15 @@ pub trait FiscalSources: Send + Sync {
         company_id: i64,
         record: &'a str,
     ) -> FiscalFuture<'a, Option<FiscalSource>>;
+
+    /// References for the requested posted records the reader may view.
+    fn references<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        company_id: i64,
+        records: &'a [String],
+    ) -> FiscalFuture<'a, Vec<FiscalReference>>;
 
     /// The company's newest posted records, at most `limit`, newest first;
     /// none when the person may not view them.
@@ -384,6 +400,21 @@ pub(crate) async fn source(
         }
     }
     Ok(None)
+}
+
+pub(crate) async fn references(
+    client: &dyn OperationClient,
+    scope: &Scope,
+    company_id: i64,
+    module: &str,
+    records: &[String],
+) -> Result<Vec<FiscalReference>, bilibi_database::Error> {
+    for (owner, reader) in SOURCES.get().into_iter().flatten() {
+        if *owner == module {
+            return reader.references(client, scope, company_id, records).await;
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// Every mounted reader's newest posted records, each under its module.

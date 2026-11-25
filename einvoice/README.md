@@ -68,8 +68,8 @@ Resolve the `Einvoice` service (`finance/einvoice.einvoice`) from the registry a
 | `reconciliation` | `.view` | `unposted` (valid without an entry) and `unreversed` (cancelled with an entry standing) documents, newest first, each with its entries and the last failure's reason |
 | `consolidation_candidates` | `.view` | What a month's consolidated document would cover at `now`: the window, the eligible documents, those the authority's limits refuse with the reason, and the totals |
 | `issue_consolidated_document` | `.documents.issue` | Records the month's consolidated document at `now` (see Consolidation); audit action `finance.einvoice.document.consolidated` |
-| `generate_pdf` | `.view` | Renders the document's PDF on Base Artifacts once per state and records `pdf_generated`; audit action `finance.einvoice.pdf.generated` |
-| `read_pdf` | `.view` | A stored PDF's bytes and download name, for the download route |
+| `generate_pdf` | `.view` | Renders the document's PDF on Base Artifacts for the current source event and effective print inputs, and records `pdf_generated`; audit action `finance.einvoice.pdf.generated` |
+| `read_pdf` | `.view` | The PDF bytes and download name. Saved links return a copy for the current state |
 | `qr_code_svg` | none | The validation link's QR code as an inline SVG |
 | `Einvoice::evidence_datasets`, `evidence_page` | `.view` | The auditor pack's frozen exports of this module's tables (see Evidence) |
 
@@ -92,6 +92,10 @@ A status reads the same on every page: Not sent (issued or released), Sent, Vali
 Cancellation asks for a reason in the shared Modal, then asks for confirmation in the shared ConfirmDialog. The pinned Platform cannot place a reason input or a custom “Keep document” label inside ConfirmDialog, so this requires one extra confirmation click compared with Bilimbi; no Domain script or Platform change is added.
 
 `/finance/einvoice/documents/{id}/pdf/{artifact_id}` returns an attachment through the Platform download contract. `read_pdf` reauthorizes the artifact's actual document and company on every request; the cosmetic document ID never grants access. The response is private/no-store and nosniff through the shared FileBody transport.
+
+The fiscal PDF uses the shared print compiler and the private offline Chromium renderer. Its English and Bahasa Melayu layouts use the frozen supplier and buyer details, classification, discount and charge amounts, tax and exemptions, original and source references, and authority evidence from the recorded document. Valid and buyer-rejected documents that still stand with the authority carry a scannable QR for its validation link. Cancelled and invalid copies show their current status and omit that QR. An unchanged request returns the recorded artifact. A later clearance event or a change to the effective layout, validation link, branding, or visible source references produces another copy. The document page offers the latest copy for its current state, effective print inputs, and the reader’s source access. A download rechecks access to the source records named in that copy. Saved links resolve to the current state and reuse an available matching copy. If none is available, the download renders the current copy on demand.
+
+The PDF walkthrough uses a sandbox-capable Chromium binary (`WALKTHROUGH_CHROMIUM`), Poppler (`pdftotext`, `pdftoppm`, and `pdfinfo`), and ZBar (`zbarimg`) to read printed status and scan the generated QR.
 
 Run the NE5 proof against an empty disposable database with `DATABASE_URL=... BILIBI_SETTINGS_KEY=<64 hex characters> cargo run -p bilibi-finance-walkthrough-fixture --bin einvoice-ui`. It exercises literal wildcard search, page boundaries and combined filters, tenant isolation, real queue submit/poll/refresh, PDF bytes, status after PDF events, cancellation with Unicode reason and revoked grants. Only MyInvois is a local stand-in. To inspect the same records in a browser, add `serve` and set matching `APP_ORIGIN` and `BIND_ADDR`; this is fixture-only and installs no production data.
 
@@ -176,7 +180,7 @@ A document issued with a `source` never posts or reverses (see Source links): it
 
 ## Printable document
 
-`pdf.rs` (Bilimbi `ArtifactOwner` and `QrCode`). `generate_pdf` renders the document with Base Artifacts' deterministic serializer (parties, lines, totals, status, identifiers and the validation link; characters outside Latin-1 print as `?`) and stores it under owner `finance/einvoice`, kind `document-pdf`, subject `document-<id>`. The adapter re-asks `finance.einvoice.view` on every create, read and delete and never retains. A `pdf_generated` event keeps the artifact and the last event it was rendered from, so asking again before the document changes answers the same artifact. Base Artifacts needs its storage root and retention period first. `qr_code_svg` draws the validation link's QR code (black on white, no script) for the document page.
+Base Artifacts stores the compiled fiscal PDF under owner `finance/einvoice`, kind `document-pdf`, and subject `document-<id>`. It needs a private storage root and retention period. A `pdf_generated` event records the source event and print versions. The document page uses `qr_code_svg` for its on-screen validation link.
 
 ## Evidence
 
