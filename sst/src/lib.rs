@@ -60,7 +60,7 @@ pub const MODULE: &str = "finance/sst";
 pub const SERVICE: &str = "finance/sst.sst";
 inventory::submit! { Module {
     id: MODULE, layer: Layer::Domains,
-    dependencies: &["base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/principal_directory", "base/tenancy", "base/ui", "core/company", "finance/ledger", "finance/payables", "finance/receivables"],
+    dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/principal_directory", "base/tenancy", "base/ui", "core/company", "finance/ledger", "finance/payables", "finance/receivables"],
     migrations: &[("finance-sst-001-sst", include_str!("../migrations/001-sst.sql"))],
     services: &[Service { id: SERVICE, factory: |s| Ok(Arc::new(Sst {
         db: s.get::<Db>("base/database.pool")?.as_ref().clone(),

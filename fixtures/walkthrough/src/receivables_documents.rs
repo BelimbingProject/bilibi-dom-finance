@@ -69,7 +69,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     ar.configure(
         &admin,
         1,
-        &json!({"receivable_account_id":control1,"income_account_id":income}),
+        &json!({"receivable_account_id":control1,"income_account_id":income,"invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}),
     )
     .await?;
     let mut series = Vec::new();
@@ -505,7 +505,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let second = ar.issue_document(&admin, 1, second.id).await?;
     assert_eq!(second.receivable_account_id, Some(control2));
     assert_eq!(second.document_number, Some(2));
-    let credit = |day: &str, price: &str| json!({"kind":"credit_note","series_id":series[1].id,"customer_id":customer.id,"credited_document_id":first.id,"issue_date":day,"lines":[{"description":"R2 credit","quantity":"1","unit_price":price,"tax_code_id":tax.id}]});
+    let credit = |day: &str, price: &str| json!({"kind":"credit_note","series_id":series[1].id,"customer_id":customer.id,"credited_document_id":first.id,"issue_date":day,"description":"Service adjustment","lines":[{"description":"R2 credit","quantity":"1","unit_price":price,"tax_code_id":tax.id}]});
     let excessive = ar
         .create_draft(&admin, 1, &credit("2026-10-02", "101"))
         .await?;

@@ -60,6 +60,7 @@ const ISSUED: Table = Table {
         "party_postcode",
         "party_admin1_code",
         "party_country_iso",
+        "print_facts",
         "issued_by_user_id",
         "issued_by_impersonator_id",
         "ledger_entry_id",
@@ -197,6 +198,17 @@ impl Receivables {
             return Err(invalid("total", "must be greater than zero"));
         }
         let credit = draft.kind == "credit_note";
+        if credit
+            && draft
+                .description
+                .as_deref()
+                .is_none_or(|reason| reason.trim().is_empty())
+        {
+            return Err(invalid(
+                "description",
+                "Enter the reason for this credit note.",
+            ));
+        }
         let mut credited = None;
         let control = if credit {
             let invoice = documents::read(
@@ -254,6 +266,25 @@ impl Receivables {
                 .map_err(|_| invalid("due_date", "is invalid"))?
                 .to_string());
         }
+        // Preview and commit freeze the same Core facts on the handed connection.
+        let day = date.to_string().try_into().map_err(|_| Error::Internal)?;
+        let party = self
+            .frozen_party(client, scope, &customer.party, &day)
+            .await?;
+        data["print_facts"] = json!(
+            self.prepare_print_snapshot(
+                client,
+                scope,
+                company,
+                crate::print_snapshot::PrintIssue {
+                    date,
+                    document: &draft,
+                    original: credited.as_ref(),
+                    configured: &setup["invoice_layout"],
+                },
+            )
+            .await?
+        );
         let (number, reference) = next_number(client, tenant, company, &series, false).await?;
         data["status"] = json!("issued");
         data["document_number"] = json!(number);
@@ -261,11 +292,6 @@ impl Receivables {
         data["receivable_account_id"] = json!(control);
         data["issued_by_user_id"] = json!(scope.user());
         data["issued_by_impersonator_id"] = json!(scope.impersonator().map(|s| s.user()));
-        // Preview and commit freeze the same Core facts on the handed connection.
-        let day = date.to_string().try_into().map_err(|_| Error::Internal)?;
-        let party = self
-            .frozen_party(client, scope, &customer.party, &day)
-            .await?;
         for (field, value) in party.as_object().into_iter().flatten() {
             data[field] = value.clone();
         }
@@ -315,7 +341,7 @@ impl Receivables {
     }
 
     /// Today's date where the company is, from its time zone setting.
-    async fn today(
+    pub(super) async fn today(
         &self,
         client: &dyn OperationClient,
         scope: &Scope,

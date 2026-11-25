@@ -139,6 +139,49 @@ pub(crate) async fn governing(
     .pop())
 }
 
+struct PrintRegistration;
+
+impl bilibi_finance_ledger::SstRegistration for PrintRegistration {
+    fn numbers_on<'a>(
+        &'a self,
+        client: &'a dyn bilibi_agent_api::OperationClient,
+        scope: &'a Scope,
+        company: i64,
+        date: Date,
+    ) -> bilibi_finance_ledger::FiscalFuture<'a, bilibi_finance_ledger::SstNumbers> {
+        Box::pin(async move {
+            bilibi_company::authorize_work_target(
+                client,
+                scope,
+                company,
+                bilibi_finance_receivables::ISSUE,
+            )
+            .await?;
+            let registration = match client.transaction() {
+                Some(sql) => governing(sql, scope.tenant(), company, date).await?,
+                None => {
+                    governing(client.sql_client().await?, scope.tenant(), company, date).await?
+                }
+            };
+            Ok(registration
+                .map(|registration| bilibi_finance_ledger::SstNumbers {
+                    sales: registration.sales_tax_number,
+                    service: registration.service_tax_number,
+                })
+                .unwrap_or_default())
+        })
+    }
+}
+
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(
+        bilibi_finance_ledger::SST_REGISTRATION,
+        "finance/sst.print_registration",
+        bilibi_module_registry::Provenance { module: MODULE, source: file!(), line: line!() },
+        &bilibi_finance_ledger::SstRegistrationDefinition { registration: &PrintRegistration },
+    )
+}
+
 /// The end of the latest period any finalised return reported.
 async fn reported_through(
     c: &(impl GenericClient + Sync),

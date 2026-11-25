@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ar.configure(
         &manager,
         1,
-        &json!({"receivable_account_id":control,"income_account_id":account("4000")?}),
+        &json!({"receivable_account_id":control,"income_account_id":account("4000")?,"invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}),
     )
     .await?;
     let series=ar.create_series(&manager,1,&json!({"code":"BD-I","name":"Invoices","kind":"invoice","prefix":"BD-I-","number_width":3})).await?;

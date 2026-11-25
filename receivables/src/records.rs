@@ -120,6 +120,8 @@ pub struct Document {
     pub party_postcode: Option<String>,
     pub party_admin1_code: Option<String>,
     pub party_country_iso: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub(crate) print_facts: Option<crate::print_snapshot::PrintSnapshot>,
     pub ledger_entry_id: Option<i64>,
     pub ledger_entry_number: Option<i64>,
     pub issued_by_user_id: Option<i64>,

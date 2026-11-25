@@ -128,7 +128,7 @@ inventory::submit! {
 }
 
 impl FiscalDocuments for Issued {
-    fn validation_qr<'a>(
+    fn validation_url<'a>(
         &'a self,
         client: &'a dyn OperationClient,
         settings: &'a bilibi_settings::Settings,
@@ -170,18 +170,7 @@ impl FiscalDocuments for Issued {
                 portal.as_str().unwrap_or_default(),
                 false,
             );
-            let Some(svg) = view
-                .validation_url
-                .as_deref()
-                .and_then(|url| crate::qr_code_svg(url, 160))
-            else {
-                return Ok(None);
-            };
-            use base64::{engine::general_purpose::STANDARD, Engine as _};
-            Ok(Some(format!(
-                "data:image/svg+xml;base64,{}",
-                STANDARD.encode(svg)
-            )))
+            Ok(view.validation_url)
         })
     }
     fn standing<'a>(

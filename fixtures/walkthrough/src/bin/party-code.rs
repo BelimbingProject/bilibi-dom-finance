@@ -335,24 +335,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(bilibi_finance_receivables::ReceivableError::Invalid(_))
         ));
         ar.configure(&scope, 1, &json!({"invoice_layout":{"company_name":"Example Trading & Services", "registration_number":"Example registration 001", "tax_number":"Example tax 002", "payment_terms":"Due in 30 days", "bank_details":"Example Bank 123456", "address":"First floor\nExample Street", "contact":"accounts@example.test", "footer":"Payment terms: 30 days.\nPlease quote the invoice number. <This is plain text.>"}})).await?;
+        let payments = ar
+            .create_series(
+                &scope,
+                1,
+                &json!({
+                    "code":"PRINT-RECEIPT","name":"Receipts","kind":"payment","prefix":"RC-"
+                }),
+            )
+            .await?;
+        ar.record_payment(
+            &scope,
+            1,
+            &json!({
+                "series_id":payments.id,"customer_id":consumer.id,"payment_date":"2026-10-30",
+                "amount":"1.00","deposit_account_id":account("1000"),
+                "allocations":[{"document_id":issued.id,"amount":"1.00"}]
+            }),
+        )
+        .await?;
+        let paid = ar.get_document(&scope, 1, issued.id).await?;
+        assert_eq!(paid.total, issued.total);
+        assert!(paid.outstanding.is_some_and(|owed| owed < paid.total));
         let configured = ar.print_document(&scope, 1, issued.id).await?;
         std::fs::write(format!("{root}/configured.pdf"), configured.bytes)?;
-        let tax = ar.create_tax_code(&scope,1,&json!({"code":"PRINT-TAX","name":"Example tax","rate":"6","account_id":account("2100")})).await?;
-        let lines: Vec<_> = (1..=100).map(|n| json!({"description":format!("Service line {n}: a description long enough to wrap on the printed invoice"),"quantity":"1","unit_price":"12.50","tax_code_id":tax.id})).collect();
+
+        set_malay_letter(&db, &app.services, &admin).await?;
+        let sst = app
+            .services
+            .get::<bilibi_finance_sst::Sst>(bilibi_finance_sst::SERVICE)?;
+        sst.register(
+            &admin,
+            1,
+            &bilibi_finance_sst::RegistrationInput {
+                sales_tax_number: Some("X01-2601-00000001".into()),
+                service_tax_number: Some("X01-2601-00000002".into()),
+                period_start: Some(jiff::civil::date(2026, 1, 1)),
+                ..Default::default()
+            },
+        )
+        .await?;
+        let services = ar.create_tax_code(&scope,1,&json!({"code":"SVC","name":"Taxable service","rate":"6","account_id":account("2100")})).await?;
+        let goods = ar.create_tax_code(&scope,1,&json!({"code":"GOODS","name":"Taxable goods","rate":"8","account_id":account("2100")})).await?;
+        let exempt = ar.create_tax_code(&scope,1,&json!({"code":"EXEMPT","name":"Exempt supply","rate":"0","account_id":account("2100")})).await?;
+        let mut lines: Vec<_> = (1..=100).map(|n| json!({"description":format!("Service line {n}: a description long enough to wrap on the printed invoice"),"quantity":"1","unit_price":"12.50","tax_code_id":services.id})).collect();
+        lines.extend([
+            json!({"description":"Taxable goods","quantity":"1","unit_price":"12.50","tax_code_id":goods.id}),
+            json!({"description":"Exempt supply, certificate EX-2026-001","quantity":"1","unit_price":"12.50","tax_code_id":exempt.id}),
+        ]);
         let long = ar.create_draft(&scope,1,&json!({"kind":"invoice","series_id":series.id,"customer_id":consumer.id,"issue_date":"2026-10-30","lines":lines})).await?;
         assert!(matches!(
             ar.print_document(&scope, 1, long.id).await,
             Err(bilibi_finance_receivables::ReceivableError::NotIssued)
         ));
         let long = ar.issue_document(&scope, 1, long.id).await?;
-        assert_eq!(long.tax_total.display(None), "75.00");
-        assert_eq!(long.total.display(None), "1,325.00");
+        assert_eq!(long.tax_total.display(None), "76.00");
+        assert_eq!(long.total.display(None), "1,351.00");
         std::fs::write(
             format!("{root}/long.pdf"),
             ar.print_document(&scope, 1, long.id).await?.bytes,
         )?;
         let notes = ar.create_series(&scope,1,&json!({"code":"PRINT-CREDIT","name":"Credit notes","kind":"credit_note","prefix":"CN-"})).await?;
-        let note = ar.create_draft(&scope,1,&json!({"kind":"credit_note","series_id":notes.id,"customer_id":consumer.id,"credited_document_id":issued.id,"issue_date":"2026-10-30","lines":[{"description":"Service credit","quantity":"1","unit_price":"5.00"}]})).await?;
+        let note = ar.create_draft(&scope,1,&json!({"kind":"credit_note","series_id":notes.id,"customer_id":consumer.id,"credited_document_id":issued.id,"issue_date":"2026-10-30","description":"Service credit", "lines":[{"description":"Service credit","quantity":"1","unit_price":"5.00"}]})).await?;
         let note = ar.issue_document(&scope, 1, note.id).await?;
         std::fs::write(
             format!("{root}/credit-note.pdf"),
@@ -361,7 +405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let other = sign_in(&db, &app.services, 2, 5).await?;
         assert!(ar.print_document(&other, 1, issued.id).await.is_err());
         println!(
-            "PASS: default/configured PDFs, 100-line invoice {}, credit note {}, draft/missing/cross-tenant refusals and layout validation; files in {}",
+            "PASS: default/configured PDFs, 102-line invoice {}, credit note {}, draft/missing/cross-tenant refusals and layout validation; files in {}",
             long.id, note.id, root
         );
     }
@@ -373,5 +417,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Browser at {origin}; manager@example.test / bilibi-dev");
         axum::serve(listener, bilibi_web::staff_router(app)).await?;
     }
+    Ok(())
+}
+
+async fn set_malay_letter(
+    db: &bilibi_database::Db,
+    services: &bilibi_module_registry::Services,
+    scope: &bilibi_tenancy::Scope,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bilibi_agent_api::{Handler, Registry};
+    use bilibi_settings::{Settings, Target};
+    let registry = services.get::<Registry>("base/agent_api.registry")?;
+    let boundary = services.get::<bilibi_database::MutationBoundary>("base/database.mutations")?;
+    let settings = services.get::<Settings>("base/settings.store")?;
+    let company = bilibi_party::OrganisationId::new(1)?;
+    let read = registry
+        .read(
+            db,
+            scope,
+            "base.templates.print.get",
+            &json!({
+                "key":"finance.receivables.invoice","company_id":1,"language":"ms"
+            }),
+        )
+        .await?;
+    let print = &read["result"]["print"];
+    let mut layout: serde_json::Value = serde_json::from_str(
+        print["effective"]["layout"]
+            .as_str()
+            .ok_or("missing effective invoice layout")?,
+    )?;
+    layout["paper"] = json!("letter");
+    let input = json!({
+        "key":"finance.receivables.invoice","company_id":1,"language":"ms",
+        "review":print["review"],"layout":layout.to_string()
+    });
+    let operation = "base.templates.print.publish";
+    let Handler::SafeWrite(handler) = registry.operations[operation].definition.handler else {
+        return Err("the layout write must support review".into());
+    };
+    let mut client = db.get().await?;
+    let mut tx = boundary
+        .begin(&mut client, scope.mutation_context(operation))
+        .await?;
+    handler.preview(tx.sql(), scope, &input).await?;
+    handler.commit(&mut tx, scope, &input).await?;
+    settings
+        .put(
+            &mut tx,
+            scope,
+            Target::Company(company),
+            "templates.language",
+            json!("ms"),
+        )
+        .await?;
+    tx.commit().await?;
     Ok(())
 }

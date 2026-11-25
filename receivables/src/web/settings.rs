@@ -522,7 +522,7 @@ impl Settings {
                 "Registration number",
                 &layout.registration_number,
             ),
-            ("tax_number", "Tax registration number", &layout.tax_number),
+            ("tax_number", "Tax ID", &layout.tax_number),
             ("payment_terms", "Payment terms", &layout.payment_terms),
             ("bank_details", "Bank details", &layout.bank_details),
             ("address", "Address", &layout.address),

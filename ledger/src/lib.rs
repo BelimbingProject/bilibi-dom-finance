@@ -101,9 +101,10 @@ pub use contributions::{
 pub use conversion::OpeningContext;
 pub use evidence::EvidencePage;
 pub use fiscal::{
-    FiscalChoice, FiscalDocuments, FiscalDocumentsDefinition, FiscalFuture, FiscalLine,
-    FiscalParty, FiscalSource, FiscalSourceKind, FiscalSources, FiscalSourcesDefinition,
-    FiscalStanding, FiscalStandings, FiscalStart, FiscalTone, FISCAL_DOCUMENTS, FISCAL_SOURCES,
+    sst_numbers_on, FiscalChoice, FiscalDocuments, FiscalDocumentsDefinition, FiscalFuture,
+    FiscalLine, FiscalParty, FiscalSource, FiscalSourceKind, FiscalSources,
+    FiscalSourcesDefinition, FiscalStanding, FiscalStandings, FiscalStart, FiscalTone, SstNumbers,
+    SstRegistration, SstRegistrationDefinition, FISCAL_DOCUMENTS, FISCAL_SOURCES, SST_REGISTRATION,
 };
 pub use money::{MinorUnits, Money, MoneyError};
 pub use opening::{OpeningBalances, OpeningImport, OpeningProgress};
@@ -1473,8 +1474,8 @@ impl Ledger {
         Ok(fiscal::standing(client, scope, company_id, module, records).await?)
     }
 
-    /// Validation QR for the valid fiscal document of a posted record.
-    pub async fn fiscal_validation_qr_on(
+    /// Validation URL for the valid fiscal document of a posted record.
+    pub async fn fiscal_validation_url_on(
         &self,
         client: &dyn bilibi_agent_api::OperationClient,
         settings: &bilibi_settings::Settings,
@@ -1483,7 +1484,7 @@ impl Ledger {
         module: &str,
         record: &str,
     ) -> Result<Option<String>> {
-        Ok(fiscal::validation_qr(client, settings, scope, company_id, module, record).await?)
+        Ok(fiscal::validation_url(client, settings, scope, company_id, module, record).await?)
     }
 
     /// Adds an account (`finance.ledger.accounts.manage`). `retained_earnings`

@@ -1,0 +1,128 @@
+{
+  "blocks": [
+    {
+      "type": "field",
+      "field": "logo",
+      "label": "Company logo"
+    },
+    {
+      "type": "heading",
+      "text": "Invoice"
+    },
+    {
+      "type": "field",
+      "field": "number"
+    },
+    {
+      "type": "field",
+      "field": "issue_date"
+    },
+    {
+      "type": "field",
+      "field": "due_date"
+    },
+    {
+      "type": "field",
+      "field": "sales_order",
+      "label": "Sales order"
+    },
+    {
+      "type": "field",
+      "field": "seller"
+    },
+    {
+      "type": "field",
+      "field": "buyer"
+    },
+    {
+      "type": "field",
+      "field": "letterhead",
+      "label": "Letterhead"
+    },
+    {
+      "type": "field",
+      "field": "remarks",
+      "label": "Invoice remarks"
+    },
+    {
+      "type": "table",
+      "rows": "lines",
+      "columns": [
+        {
+          "field": "line"
+        },
+        {
+          "field": "description"
+        },
+        {
+          "field": "quantity"
+        },
+        {
+          "field": "price"
+        },
+        {
+          "field": "net"
+        },
+        {
+          "field": "tax_code"
+        },
+        {
+          "field": "rate"
+        },
+        {
+          "field": "tax"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "heading": "Invoice totals",
+      "blocks": [
+        {
+          "type": "field",
+          "field": "discount"
+        },
+        {
+          "type": "field",
+          "field": "subtotal"
+        },
+        {
+          "type": "field",
+          "field": "tax_total"
+        },
+        {
+          "type": "field",
+          "field": "total"
+        },
+        {
+          "type": "field",
+          "field": "ringgit"
+        }
+      ]
+    },
+    {
+      "type": "field",
+      "field": "balance",
+      "label": "Balance summary"
+    },
+    {
+      "type": "field",
+      "field": "terms",
+      "label": "Terms"
+    },
+    {
+      "type": "field",
+      "field": "bank",
+      "label": "Bank details"
+    },
+    {
+      "type": "field",
+      "field": "validation"
+    },
+    {
+      "type": "field",
+      "field": "footer",
+      "label": "Notes"
+    }
+  ]
+}

@@ -239,7 +239,7 @@ async fn main() -> Outcome<()> {
         ar.configure(
             &manager,
             COMPANY,
-            &json!({"receivable_account_id": account("1100")?, "income_account_id": account("4000")?}),
+            &json!({"receivable_account_id": account("1100")?, "income_account_id": account("4000")?, "invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}),
         )
         .await?;
         let invoices = ar.create_series(&manager, COMPANY, &json!({"code":"INV","name":"Invoices","kind":"invoice","prefix":"INV-","number_width":5})).await?;
@@ -401,7 +401,7 @@ async fn main() -> Outcome<()> {
         }
         let credit = ar.create_draft(&manager, COMPANY, &json!({
             "kind":"credit_note","series_id":credits.id,"customer_id":customer[0].id,
-            "credited_document_id":issued[1].id,"issue_date":"2026-09-25",
+            "credited_document_id":issued[1].id,"issue_date":"2026-09-25","description":"Travel not charged",
             "lines":[{"description":"Travel not charged","quantity":"1","unit_price":"80.00"}]
         })).await?;
         ar.issue_document(&manager, COMPANY, credit.id).await?;

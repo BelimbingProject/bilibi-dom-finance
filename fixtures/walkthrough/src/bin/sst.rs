@@ -482,7 +482,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
 
     // Receivables and payables tax codes and documents through their facades.
-    ar.configure(&admin, COMPANY, &json!({"receivable_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "1100").map(|a| a.id),"income_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "4000").map(|a| a.id)}))
+    ar.configure(&admin, COMPANY, &json!({"receivable_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "1100").map(|a| a.id),"income_account_id":ledger.list_accounts(&admin, COMPANY).await?.iter().find(|a| a.code == "4000").map(|a| a.id),"invoice_layout":{"address":"12 Market Way, Kuala Lumpur"}}))
         .await?;
     let mut series = Vec::new();
     for (code, kind) in [
@@ -537,7 +537,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     .await?;
     assert_eq!(i1.total, money("2150"));
     issue(invoice("2026-02-05", &[("SV6", "100"), ("OT3", "100")])).await?;
-    let credit = |day: &str, price: &str| json!({"kind":"credit_note","series_id":series[1],"customer_id":customer,"credited_document_id":i1.id,"issue_date":day,"lines":[{"description":"Returned goods","quantity":"1","unit_price":price,"tax_code_id":codes["ST10"]}]});
+    let credit = |day: &str, price: &str| json!({"kind":"credit_note","series_id":series[1],"customer_id":customer,"credited_document_id":i1.id,"issue_date":day,"description":"Taxable sale adjustment","lines":[{"description":"Returned goods","quantity":"1","unit_price":price,"tax_code_id":codes["ST10"]}]});
     issue(credit("2026-02-20", "100")).await?;
     ar.record_payment(&admin, COMPANY, &json!({"series_id":series[2],"customer_id":customer,"payment_date":"2026-02-15","amount":"1075","deposit_account_id":accounts.bank,"allocations":[{"document_id":i1.id,"amount":"1075"}]}))
         .await?;

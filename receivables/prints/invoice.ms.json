@@ -1,0 +1,128 @@
+{
+  "blocks": [
+    {
+      "type": "field",
+      "field": "logo",
+      "label": "Logo syarikat"
+    },
+    {
+      "type": "heading",
+      "text": "Invois"
+    },
+    {
+      "type": "field",
+      "field": "number"
+    },
+    {
+      "type": "field",
+      "field": "issue_date"
+    },
+    {
+      "type": "field",
+      "field": "due_date"
+    },
+    {
+      "type": "field",
+      "field": "sales_order",
+      "label": "Pesanan jualan"
+    },
+    {
+      "type": "field",
+      "field": "seller"
+    },
+    {
+      "type": "field",
+      "field": "buyer"
+    },
+    {
+      "type": "field",
+      "field": "letterhead",
+      "label": "Kepala surat"
+    },
+    {
+      "type": "field",
+      "field": "remarks",
+      "label": "Catatan invois"
+    },
+    {
+      "type": "table",
+      "rows": "lines",
+      "columns": [
+        {
+          "field": "line"
+        },
+        {
+          "field": "description"
+        },
+        {
+          "field": "quantity"
+        },
+        {
+          "field": "price"
+        },
+        {
+          "field": "net"
+        },
+        {
+          "field": "tax_code"
+        },
+        {
+          "field": "rate"
+        },
+        {
+          "field": "tax"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "heading": "Jumlah invois",
+      "blocks": [
+        {
+          "type": "field",
+          "field": "discount"
+        },
+        {
+          "type": "field",
+          "field": "subtotal"
+        },
+        {
+          "type": "field",
+          "field": "tax_total"
+        },
+        {
+          "type": "field",
+          "field": "total"
+        },
+        {
+          "type": "field",
+          "field": "ringgit"
+        }
+      ]
+    },
+    {
+      "type": "field",
+      "field": "balance",
+      "label": "Ringkasan baki"
+    },
+    {
+      "type": "field",
+      "field": "terms",
+      "label": "Terma"
+    },
+    {
+      "type": "field",
+      "field": "bank",
+      "label": "Butiran bank"
+    },
+    {
+      "type": "field",
+      "field": "validation"
+    },
+    {
+      "type": "field",
+      "field": "footer",
+      "label": "Catatan"
+    }
+  ]
+}
