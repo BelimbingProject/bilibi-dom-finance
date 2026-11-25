@@ -200,6 +200,10 @@ impl StandIn {
         (wait, resume)
     }
 
+    pub(crate) fn request_rejection(&self, code: &str) {
+        self.set(code, |held| held.rejection_requested = true);
+    }
+
     pub(crate) fn invalidate(&self, code: &str) {
         self.set(code, |held| held.status = "Invalid");
     }

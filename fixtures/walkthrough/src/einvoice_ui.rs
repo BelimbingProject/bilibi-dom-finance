@@ -237,6 +237,18 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let admin = crate::sign_in(db, services, 1, 4).await?;
     let other = crate::sign_in(db, services, 2, 5).await?;
     let facade = services.get::<Einvoice>(bilibi_finance_einvoice::SERVICE)?;
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
+    if today.year() > crate::FISCAL_YEAR_START.year() {
+        use bilibi_finance_ledger::{Ledger, NewFiscalYear};
+        let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
+        for _ in crate::FISCAL_YEAR_START.year()..today.year() {
+            ledger
+                .open_fiscal_year(&manager, 1, &NewFiscalYear::default())
+                .await?;
+        }
+    }
     let grants = services.get::<Grants>("base/authz.grants")?;
     let target = Target::Company(OrganisationId::new(1)?);
     let authority = Arc::new(StandIn::default());
@@ -786,6 +798,46 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "Disahkan",
         Some("https://example.test/DOCUMENT-0003/share/LONGID-0003-WALKTHROUGH"),
     )?;
+    let before = facade.get_document(&manager, 1, invalid).await?;
+    assert!(before.ledger_entry_id.is_some());
+    let saved_valid = facade.generate_pdf(&manager, 1, invalid).await?;
+    let (entered, resume) = authority.pause_next_cancel();
+    let reject_while_cancelling = async {
+        tokio::time::timeout(Duration::from_secs(10), entered).await??;
+        authority.request_rejection(code);
+        let rejected = facade.refresh_status(&manager, 1, invalid).await?;
+        assert_eq!(rejected.status, "rejected");
+        resume
+            .send(())
+            .map_err(|_| "cancellation reply was not waiting")?;
+        Ok::<_, Box<dyn std::error::Error>>(())
+    };
+    let cancel_rejected = async {
+        Ok::<_, Box<dyn std::error::Error>>(
+            facade
+                .cancel_document(&manager, 1, invalid, "Buyer requested a correction")
+                .await?,
+        )
+    };
+    tokio::try_join!(cancel_rejected, reject_while_cancelling)?;
+    let after = facade.get_document(&manager, 1, invalid).await?;
+    assert_eq!(after.status, "cancelled");
+    assert_eq!(after.ledger_entry_id, before.ledger_entry_id);
+    assert!(after.reversal_entry_id.is_some());
+    let saved_path = HashMap::from([
+        ("id".into(), invalid.to_string()),
+        ("artifact_id".into(), saved_valid.artifact_id),
+    ]);
+    let saved = downloads
+        .0
+        .serve(DownloadRequest {
+            operation: "pdf",
+            scope: &manager,
+            path: &saved_path,
+            query: &HashMap::new(),
+        })
+        .await?;
+    check_pdf(&saved.bytes, "Status dokumen", "Dibatalkan", None)?;
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
         .await?;
