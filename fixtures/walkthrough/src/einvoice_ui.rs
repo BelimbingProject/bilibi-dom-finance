@@ -1,5 +1,7 @@
 //! NE5's running proof uses the public facade, page and download contracts.
 //! Only the clearance authority is a stand-in. No product seeds or unit tests.
+mod linked_print;
+
 use crate::clearance::{self, draft, save, StandIn, CLIENT_ID, CLIENT_SECRET};
 use bilibi_authz::grants::Grants;
 use bilibi_database::{Db, Error};
@@ -79,15 +81,19 @@ fn pdf_command(program: &str, args: &[&str], input: &[u8]) -> Outcome<Output> {
     Ok(child.wait_with_output()?)
 }
 
+fn pdf_text(bytes: &[u8]) -> Outcome<String> {
+    let output = pdf_command("pdftotext", &["-", "-"], bytes)?;
+    assert!(
+        output.status.success(),
+        "pdftotext: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
+
 fn check_pdf(bytes: &[u8], status: &str, validation: Option<&str>) -> Outcome<()> {
     assert!(bytes.starts_with(b"%PDF-"));
-    let text = pdf_command("pdftotext", &["-", "-"], bytes)?;
-    assert!(
-        text.status.success(),
-        "pdftotext: {}",
-        String::from_utf8_lossy(&text.stderr)
-    );
-    let text = String::from_utf8(text.stdout)?;
+    let text = pdf_text(bytes)?;
     assert!(
         text.contains(status),
         "missing fiscal status {status}: {text}"
@@ -157,11 +163,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         .await?,
         "stored"
     );
-    let proof_dir = std::env::var("EINVOICE_PRINT_PROOF_DIR").ok();
-    let root = proof_dir.as_ref().map_or_else(
-        || format!("/tmp/ne5-pdf-{}", std::process::id()),
-        |path| format!("{path}/private-artifacts"),
-    );
+    let root = format!("/tmp/ne5-pdf-{}", std::process::id());
     std::fs::create_dir_all(&root)?;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
     crate::attachments::configure_storage(db, services, &admin, &root).await?;
@@ -215,7 +217,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let mut ids = Vec::new();
     for n in 0..30 {
         let mut d = draft(&format!("NE5-{n:03}"), None);
-        if n == 0 && proof_dir.is_some() {
+        if n == 0 {
             let example = d.lines.first().ok_or("missing draft line")?.clone();
             d.lines = (1..=85).map(|number| {
                 let mut line = example.clone();
@@ -367,9 +369,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         facade.generate_pdf(&manager, 1, ids[0]).await?.artifact_id,
         artifact
     );
-    if let Some(proof_dir) = &proof_dir {
-        std::fs::write(format!("{proof_dir}/validation-url.txt"), validation_url)?;
-    }
     let downloads = services.get::<DownloadService<Scope, Error>>("finance/einvoice.files")?;
     let path = HashMap::from([
         ("id".into(), ids[0].to_string()),
@@ -390,13 +389,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     assert_ne!(malay.artifact_id, path["artifact_id"]);
     let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
     check_pdf(&translated.bytes, "Disahkan", Some(validation_url))?;
-    if let Some(proof_dir) = &proof_dir {
-        std::fs::write(format!("{proof_dir}/validated.pdf"), &file.bytes)?;
-        std::fs::write(
-            format!("{proof_dir}/validated-ms-letter.pdf"),
-            &translated.bytes,
-        )?;
-    }
     assert!(downloads
         .0
         .serve(DownloadRequest {
@@ -490,9 +482,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     assert_ne!(cancelled.artifact_id, updated.artifact_id);
     let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
     check_pdf(&file.bytes, "Dibatalkan", None)?;
-    if let Some(proof_dir) = &proof_dir {
-        std::fs::write(format!("{proof_dir}/cancelled.pdf"), &file.bytes)?;
-    }
     let invalid = facade
         .issue_document(&manager, 1, &draft("NE5-INVALID", None))
         .await?
@@ -507,9 +496,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let invalid = facade.generate_pdf(&manager, 1, invalid).await?;
     let file = facade.read_pdf(&manager, 1, &invalid.artifact_id).await?;
     check_pdf(&file.bytes, "Tidak sah", None)?;
-    if let Some(proof_dir) = &proof_dir {
-        std::fs::write(format!("{proof_dir}/invalid.pdf"), &file.bytes)?;
-    }
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
         .await?;
@@ -521,6 +507,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     println!(
         "NE5 actions: real queue submit/poll/refresh; PDF bytes; latest status ignores PDF; pending cancel revoked and refused, Unicode reason accepted; revoked PDF download and forged submit refused"
     );
+    linked_print::prove(services, &manager, &admin).await?;
     // Leave a validated document and an issued document for the browser run.
     facade.submit_document(&manager, 1, ids[1]).await?;
     clearance::jobs_settle(&**db.get().await?).await?;
@@ -544,6 +531,15 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         )
         .await?;
     assert_eq!(consolidated.sources.len(), 2);
+    let pdf = facade
+        .generate_pdf(&manager, 1, consolidated.document.id)
+        .await?;
+    let file = facade.read_pdf(&manager, 1, &pdf.artifact_id).await?;
+    let text = pdf_text(&file.bytes)?;
+    assert!(
+        text.contains("Status dokumen") && text.contains("September 2026"),
+        "{text}"
+    );
     println!(
         "NE5 covered sources {covered:?}; consolidated document {}",
         consolidated.document.id

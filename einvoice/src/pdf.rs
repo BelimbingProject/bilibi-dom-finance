@@ -4,6 +4,7 @@ use crate::documents::{self, NewEvent, StatusEvent};
 use crate::{
     authorize, print_layouts::CONTRACT, print_values, Einvoice, EinvoiceError, Result, VIEW,
 };
+use bilibi_agent_api::OperationClient;
 use bilibi_artifacts::{Operation, Owner, PdfOptions, Reference};
 use bilibi_database::Error;
 use bilibi_party_ids::OrganisationId;
@@ -14,7 +15,7 @@ use qrcode::render::svg;
 use qrcode::QrCode;
 use rsa::sha2::{Digest, Sha256};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// The stable Artifacts owner id.
 pub const ARTIFACT_OWNER: &str = "finance/einvoice";
@@ -112,7 +113,45 @@ fn source_sequence(events: &[StatusEvent]) -> i32 {
         .map_or(0, |event| event.sequence)
 }
 
+fn source_indices(records: &[Option<crate::SourceRecord>]) -> Value {
+    json!(records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| record.as_ref().map(|_| index))
+        .collect::<Vec<_>>())
+}
+
+fn current_pdfs(events: &[StatusEvent]) -> impl Iterator<Item = &Value> {
+    let as_of = i64::from(source_sequence(events));
+    events
+        .iter()
+        .rev()
+        .filter(|event| event.event == "pdf_generated")
+        .filter_map(|event| event.response.as_ref())
+        .filter(move |response| response["as_of_sequence"].as_i64() == Some(as_of))
+}
+
 impl Einvoice {
+    pub(crate) async fn pdf_for_reader_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+    ) -> Result<Option<String>> {
+        let mut pdfs = current_pdfs(&view.events).peekable();
+        if pdfs.peek().is_none() {
+            return Ok(None);
+        }
+        let records = self
+            .source_records_on(client, scope, company_id, &view.source_links)
+            .await?;
+        let indices = source_indices(&records);
+        Ok(pdfs
+            .filter(|response| response["source_indices"] == indices)
+            .find_map(|response| response["artifact_id"].as_str().map(str::to_owned)))
+    }
+
     /// Renders the document as a PDF through Base Artifacts and records it on
     /// a `pdf_generated` event (`finance.einvoice.view`). The event keeps the
     /// source event and print versions. An unchanged request returns the
@@ -172,11 +211,7 @@ impl Einvoice {
             .source_records_on(&**client, scope, company_id, &view.source_links)
             .await?;
         drop(client);
-        let source_indices: Vec<_> = records
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| record.as_ref().map(|_| index))
-            .collect();
+        let source_indices = source_indices(&records);
         let source = records
             .iter()
             .flatten()
@@ -197,18 +232,13 @@ impl Einvoice {
         digest.update(format!("{:?}:", inline.paper()));
         digest.update(inline.html().as_bytes());
         let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
-        if let Some(stored) = view
-            .events
-            .iter()
-            .rev()
-            .find(|event| event.event == "pdf_generated")
-            .and_then(|event| event.response.as_ref())
+        if let Some(stored) = current_pdfs(&view.events)
             .filter(|response| {
                 response["data_version"].as_str() == Some(data_version.as_str())
                     && response["template_version"].as_str() == Some(template_version.as_str())
-                    && response["source_indices"] == json!(source_indices)
+                    && response["source_indices"] == source_indices
             })
-            .and_then(|response| {
+            .find_map(|response| {
                 Some(PdfArtifact {
                     artifact_id: response["artifact_id"].as_str()?.to_owned(),
                     byte_size: response["byte_size"].as_i64()?,

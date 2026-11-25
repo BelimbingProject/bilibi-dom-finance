@@ -1,4 +1,5 @@
 use crate::{documents::DocumentView, Authority, Einvoice, EinvoiceError, PartySnapshot, Result};
+use bilibi_finance_ledger::dates;
 use bilibi_templates::{CompiledPrint, PrintFacts, PrintValue};
 use rust_decimal::Decimal;
 
@@ -204,7 +205,7 @@ pub(super) fn document(
     let rows: Vec<PrintFacts<'_>> = rows.iter().map(|row| row.as_slice()).collect();
 
     let document_type = kind(&document.document_type, malay);
-    let issued_at = bilibi_finance_ledger::dates::display_utc(document.issued_at);
+    let issued_at = dates::display_utc(document.issued_at);
     let supplier = party(&document.supplier, malay);
     let buyer = party(&document.buyer, malay);
     let mut facts = vec![
@@ -229,19 +230,37 @@ pub(super) fn document(
         .into_iter()
         .flatten(),
     );
+    let billing_start = document
+        .details
+        .billing_period_start
+        .as_deref()
+        .map(dates::display_text);
+    let billing_end = document
+        .details
+        .billing_period_end
+        .as_deref()
+        .map(dates::display_text);
+    let consolidation_month = document
+        .details
+        .consolidation_month
+        .as_deref()
+        .and_then(|month| {
+            format!("{month}-01")
+                .parse::<jiff::civil::Date>()
+                .ok()
+                .map(dates::month)
+        });
     let billing = joined(
         [
-            document.details.billing_period_start.as_deref(),
-            document.details.billing_period_end.as_deref(),
+            billing_start.as_deref(),
+            billing_end.as_deref(),
             document.details.billing_period_description.as_deref(),
-            document.details.consolidation_month.as_deref(),
+            consolidation_month.as_deref(),
         ]
         .into_iter()
         .flatten(),
     );
-    let published = view
-        .validated_at
-        .map(bilibi_finance_ledger::dates::display_utc);
+    let published = view.validated_at.map(dates::display_utc);
     let exchange = document.exchange_rate.map(|rate| rate.to_string());
     for (id, value) in [
         ("uuid", view.document_uuid.as_deref()),

@@ -1748,6 +1748,7 @@ impl Einvoice {
         let mut view = recorded.view(&Self::authority(), portal, queued);
         view.sources = sources;
         view.consolidated_by = consolidated_by;
+        view.pdf_artifact_id = self.pdf_for_reader_on(client, scope, company_id, &view).await?;
         Ok(view)
     }
 

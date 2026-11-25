@@ -100,7 +100,7 @@ pub(crate) static CONTRACT: PrintContract = PrintContract {
             "Masa dikeluarkan",
             "2026-10-15T04:30:00Z"
         ),
-        text!("status", "Authority status", "Status penilaian", "Valid"),
+        text!("status", "Document status", "Status dokumen", "Valid"),
         optional(text!(
             "uuid",
             "Authority UUID",
@@ -147,7 +147,7 @@ pub(crate) static CONTRACT: PrintContract = PrintContract {
             "billing",
             "Billing period",
             "Tempoh bil",
-            "2026-10-01 to 2026-10-30"
+            "1 Oct 2026\n30 Oct 2026"
         )),
         PrintField {
             id: "lines",

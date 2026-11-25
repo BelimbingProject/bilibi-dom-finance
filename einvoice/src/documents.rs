@@ -185,7 +185,7 @@ pub struct DocumentView {
     /// or reverses an entry itself (`recognised_by_source`).
     pub source_links: Vec<SourceLink>,
     pub recognised_by_source: bool,
-    /// The latest PDF generated of it.
+    /// The latest PDF for this state and the reader’s source access.
     pub pdf_artifact_id: Option<String>,
     /// For a consolidated document, the documents it covers.
     pub sources: Vec<ConsolidatedSource>,
@@ -374,12 +374,7 @@ impl Recorded {
             ledger_entry_id: self.ledger_entry_id(),
             reversal_entry_id: self.reversal_entry_id(),
             recognised_by_source: self.recognised_by_source(),
-            pdf_artifact_id: self
-                .latest("pdf_generated")
-                .and_then(|event| event.response.as_ref())
-                .and_then(|response| response.get("artifact_id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            pdf_artifact_id: None,
             source_links: self.source_links,
             sources: Vec::new(),
             consolidated_by: None,
