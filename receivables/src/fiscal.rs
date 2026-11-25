@@ -215,14 +215,15 @@ impl FiscalSources for Issued {
                 .iter()
                 .map(|row| {
                     let id: i64 = row.get(0);
+                    let kind = if row.get::<_, &str>(1) == "credit_note" {
+                        "Credit note"
+                    } else {
+                        "Invoice"
+                    };
+                    let number: &str = row.get(2);
                     FiscalReference {
                         record: record(id),
-                        kind: if row.get::<_, &str>(1) == "credit_note" {
-                            FiscalSourceKind::CreditNote
-                        } else {
-                            FiscalSourceKind::Invoice
-                        },
-                        number: row.get(2),
+                        label: format!("{kind} {number}"),
                         href: format!("/finance/receivables/invoices/{id}"),
                     }
                 })

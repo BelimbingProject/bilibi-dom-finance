@@ -279,14 +279,10 @@ impl Einvoice {
                 .await
                 .map_err(ledger_error)?
             {
-                let kind = match source.kind {
-                    FiscalSourceKind::Invoice => "Invoice",
-                    FiscalSourceKind::CreditNote => "Credit note",
-                };
                 by_record.entry(module).or_default().insert(
                     source.record,
                     SourceRecord {
-                        name: format!("{kind} {}", source.number),
+                        name: source.label,
                         href: source.href,
                     },
                 );

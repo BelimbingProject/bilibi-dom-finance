@@ -850,6 +850,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "NE5 actions: real queue submit/poll/refresh; PDF bytes; latest status ignores PDF; pending cancel revoked and refused, Unicode reason accepted; revoked PDF download and forged submit refused"
     );
     linked_print::prove(services, &manager, &admin).await?;
+    linked_print::prove_payables(db, services, &manager, &admin).await?;
     // Leave a validated document and an issued document for the browser run.
     facade.submit_document(&manager, 1, ids[1]).await?;
     clearance::jobs_settle(&**db.get().await?).await?;

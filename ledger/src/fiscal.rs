@@ -100,8 +100,7 @@ pub struct FiscalChoice {
 /// The identity and link of a posted source record.
 pub struct FiscalReference {
     pub record: String,
-    pub kind: FiscalSourceKind,
-    pub number: String,
+    pub label: String,
     pub href: String,
 }
 
