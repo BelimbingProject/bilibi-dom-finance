@@ -122,6 +122,7 @@ impl Vendors {
             width: ModalWidth::Wide,
             description: &format!("For {}", self.company_name),
             role: "dialog",
+            close_icon: false,
             flash: None,
             body: render(Form {
                 id: &format!("{id}-form"),
