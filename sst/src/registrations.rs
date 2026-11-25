@@ -165,8 +165,18 @@ impl Sst {
     /// Every version of the registration, oldest first: its history.
     pub async fn list_registrations(&self, s: &Scope, company: i64) -> Result<Vec<Registration>> {
         let c = self.db.get().await.map_err(Error::from)?;
-        authorize(&**c, s, company, VIEW).await?;
-        Ok(read(&**c, "ORDER BY version", &[&s.tenant(), &company]).await?)
+        self.list_registrations_on(&**c, s, company).await
+    }
+
+    /// Authorized registration history on the caller's connection.
+    pub async fn list_registrations_on(
+        &self,
+        c: &(impl GenericClient + Sync),
+        s: &Scope,
+        company: i64,
+    ) -> Result<Vec<Registration>> {
+        authorize(c, s, company, VIEW).await?;
+        Ok(read(c, "ORDER BY version", &[&s.tenant(), &company]).await?)
     }
 
     /// Records the next version of the registration from the current one and

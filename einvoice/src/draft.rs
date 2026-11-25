@@ -94,15 +94,21 @@ impl crate::Einvoice {
         company_id: i64,
         counterparty_id: i64,
     ) -> crate::Result<DraftParty> {
-        // Core's detail read needs a full connection, including when the
-        // operation handler was handed an object-safe proof connection.
-        let client = tokio::time::timeout(std::time::Duration::from_secs(2), self.db.get())
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        self.prefill_party_on(&**client, scope, company_id, counterparty_id)
             .await
-            .map_err(|_| bilibi_database::Error::Internal)?
-            .map_err(bilibi_database::Error::from)?;
-        crate::authorize(&**client, scope, company_id, crate::VIEW).await?;
+    }
+
+    pub(crate) async fn prefill_party_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &bilibi_tenancy::Scope,
+        company_id: i64,
+        counterparty_id: i64,
+    ) -> crate::Result<DraftParty> {
+        crate::authorize(client, scope, company_id, crate::VIEW).await?;
         let party = bilibi_finance_ledger::PartyLinks::new(&self.parties)
-            .frozen_party(&**client, scope, "company", counterparty_id, "buyer", true)
+            .frozen_party(client, scope, "company", counterparty_id, "buyer", true)
             .await
             .map_err(|error| match error {
                 bilibi_finance_ledger::LedgerError::Invalid(fields) => {

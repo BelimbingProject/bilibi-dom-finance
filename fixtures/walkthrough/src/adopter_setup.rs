@@ -106,11 +106,8 @@ pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
         "opening rollbacks leave no book or duty change: {}",
         state["result"]
     );
-    let status = db.status();
-    let mut held = Vec::new();
-    for _ in 0..status.max_size - status.size + status.available {
-        held.push(db.get().await?);
-    }
+    let max_size = db.status().max_size;
+    db.resize(1);
     let waiting = std::time::Duration::from_secs(5);
     let input = json!({"company_id":COMPANY,"currency_code":"MYR","minor_units":2});
     let tx = boundary
@@ -134,7 +131,8 @@ pub async fn opening(db: &Db, services: &Services) -> Outcome<()> {
     .await
     .map_err(|_| "book.currencies waited for a second pooled connection")??;
     tx.rollback().await?;
-    drop(held);
+    db.resize(max_size);
+    drop(client);
     println!(
         "book.open preview and book.currencies complete with every pool slot occupied: {} / {}",
         review.envelope("finance.ledger.book.open"),
@@ -168,10 +166,9 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     let reconciliation = services.get::<Reconciliation>(bilibi_finance_reconciliation::SERVICE)?;
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
     let handler = write(&registry, "finance.reports.sections.set")?;
-    let mut client = db.get().await?;
     let original = registry
         .call(
-            &mut **client,
+            &mut **db.get().await?,
             &manager,
             "finance.reports.sections.get",
             &json!({"company_id":COMPANY}),
@@ -181,6 +178,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     let empty = json!({"company_id":COMPANY,"sections":[]});
     let explicit = json!({"company_id":COMPANY,"sections":[{"report":"cash_position","name":"No cash selected","accounts":[]}]});
     for input in [&empty, &explicit] {
+        let mut client = db.get().await?;
         let mut tx = boundary
             .begin(
                 &mut client,
@@ -205,6 +203,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
             own["result"]
         );
         tx.commit().await?;
+        drop(client);
         let report = reports
             .cash_position(&viewer, COMPANY, &[jiff::civil::date(2026, 12, 31)], None)
             .await?;
@@ -230,6 +229,7 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
             report.totals
         );
     }
+    let mut client = db.get().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -269,7 +269,10 @@ pub async fn reports(db: &Db, services: &Services) -> Outcome<()> {
     tx.commit().await?;
     println!(
         "layout restored; book uses {} decimal places",
-        ledger.get_book(&manager, COMPANY).await?.minor_units
+        ledger
+            .get_book_on(&**client, &manager, COMPANY)
+            .await?
+            .minor_units
     );
     Ok(())
 }

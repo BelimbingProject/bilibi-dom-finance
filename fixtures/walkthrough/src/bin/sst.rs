@@ -246,7 +246,6 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let grants = services.get::<Grants>("base/authz.grants")?;
     let admin = sign_in(db, services, 1, 4).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let raw = db.get().await?;
     let units = ledger.get_book(&admin, COMPANY).await?.minor_units;
     let money = |s: &str| Money::parse(s, units).expect("fixture money");
     let accounts = chart(&ledger, &admin).await?;
@@ -948,11 +947,13 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     companies
         .suspend_company(&admin, 22, Some("Walkthrough: customer suspended"))
         .await?;
-    raw.execute(
-        "UPDATE companies SET legal_name='SST renamed customer' WHERE tenant_id=1 AND id=22",
-        &[],
-    )
-    .await?;
+    db.get()
+        .await?
+        .execute(
+            "UPDATE companies SET legal_name='SST renamed customer' WHERE tenant_id=1 AND id=22",
+            &[],
+        )
+        .await?;
     assert_eq!(
         sst.preview_return(&manager, COMPANY, TaxType::SalesTax, jan, pin)
             .await?,
@@ -1063,7 +1064,9 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
 
     // Scope: an archived company records nothing and still reads.
-    raw.batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
+    db.get()
+        .await?
+        .batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
         .await?;
     let archived = sst
         .register(
@@ -1077,6 +1080,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )
         .await;
     let readable = sst.get_registration(&manager, COMPANY).await;
+    let raw = db.get().await?;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
     refused("an archived company", archived, |e| {
@@ -1181,6 +1185,7 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     raw.batch_execute("ROLLBACK").await?;
     assert_eq!((numbered, version), (1, 5));
     println!("the database numbers what the writer sent: return number 0 stored as {numbered}, registration version 99 as {version}");
+    drop(raw);
     returns::run(returns::Fixture {
         db,
         services,

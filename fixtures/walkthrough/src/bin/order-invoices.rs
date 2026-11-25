@@ -188,10 +188,13 @@ async fn main() -> Result<()> {
         ar.invoice_sales_order(&manager, 1, source, None).await?.id,
         invoice.id
     );
-    let (a, b) = tokio::join!(
-        ar.invoice_sales_order(&manager, 1, source, None),
-        ar.invoice_sales_order(&manager, 1, source, None)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let manager = manager.clone();
+        tokio::spawn(async move { ar.invoice_sales_order(&manager, 1, source, None).await })
+    };
+    let a = ar.invoice_sales_order(&manager, 1, source, None).await;
+    let b = competing.await?;
     assert_eq!(a?.id, b?.id);
     let events = services.get::<bilibi_base::events::Events>(bilibi_base::events::SERVICE)?;
     events

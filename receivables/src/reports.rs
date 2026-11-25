@@ -245,11 +245,6 @@ impl Receivables {
         options: &AgingOptions,
     ) -> Result<AgedReceivables> {
         authorize(client, scope, company, VIEW).await?;
-        crate::settlements::complete_pins(
-            options.through_entry_number,
-            options.through_opening_batch_id,
-            options.through_settlement_number,
-        )?;
         window(None, None, options.through_entry_number)?;
         if options.bucket_days.is_empty()
             || options.bucket_days.iter().any(|n| *n <= 0 || *n > 36_500)
@@ -258,23 +253,19 @@ impl Receivables {
             return Err(ReceivableError::InvalidOption);
         }
         let book = self.ledger.get_book_on(client, scope, company).await?;
-        let pin = self
-            .ledger
-            .trial_balance_on(client, scope, company, as_of, options.through_entry_number)
-            .await?
-            .through_entry_number;
-        let opening_pin =
-            crate::opening::pin(client, scope, company, options.through_opening_batch_id).await?;
-        let settlement_pin = crate::settlements::pin(
+        let (pin, opening_pin, settlement_pin) = crate::settlements::report_pins(
             client,
             scope,
             company,
-            options.through_settlement_number,
-            pin,
-            opening_pin,
+            (
+                options.through_entry_number,
+                options.through_opening_batch_id,
+                options.through_settlement_number,
+            ),
             as_of,
         )
         .await?;
+
         let mut buckets = vec![AgingBucket {
             from_days: None,
             to_days: Some(0),
@@ -587,12 +578,20 @@ impl Receivables {
         pins: &BalancePins,
     ) -> Result<ControlAccountsTieOut> {
         authorize(client, scope, company, VIEW).await?;
-        crate::settlements::complete_pins(
-            pins.through_entry_number,
-            pins.through_opening_batch_id,
-            pins.through_settlement_number,
-        )?;
         window(None, None, pins.through_entry_number)?;
+        self.ledger.get_book_on(client, scope, company).await?;
+        let (entry_pin, opening_pin, settlement_pin) = crate::settlements::report_pins(
+            client,
+            scope,
+            company,
+            (
+                pins.through_entry_number,
+                pins.through_opening_batch_id,
+                pins.through_settlement_number,
+            ),
+            as_of,
+        )
+        .await?;
         let ledger = self
             .ledger
             .account_totals_by_owner_on(
@@ -601,24 +600,12 @@ impl Receivables {
                 company,
                 &TotalsQuery {
                     to: Some(as_of),
-                    through_entry_number: pins.through_entry_number,
+                    through_entry_number: Some(entry_pin),
                     ..Default::default()
                 },
             )
             .await?;
         let chart = self.ledger.list_accounts_on(client, scope, company).await?;
-        let opening_pin =
-            crate::opening::pin(client, scope, company, pins.through_opening_batch_id).await?;
-        let settlement_pin = crate::settlements::pin(
-            client,
-            scope,
-            company,
-            pins.through_settlement_number,
-            ledger.through_entry_number,
-            opening_pin,
-            as_of,
-        )
-        .await?;
         let mut subledger: BTreeMap<i64, Decimal> = BTreeMap::new();
         for d in balances(
             client,

@@ -160,9 +160,10 @@ impl FixedAssets {
     }
     pub async fn list_categories(&self, s: &Scope, company: i64) -> Result<Vec<Category>> {
         let c = self.db.get().await.map_err(Error::from)?;
-        self.categories_on(&**c, s, company).await
+        self.list_categories_on(&**c, s, company).await
     }
-    pub(super) async fn categories_on(
+    /// Authorized category history on the caller's connection.
+    pub async fn list_categories_on(
         &self,
         c: &dyn OperationClient,
         s: &Scope,

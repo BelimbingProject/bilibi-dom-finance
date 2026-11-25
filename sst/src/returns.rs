@@ -734,19 +734,36 @@ impl Sst {
         let c = self.db.get().await.map_err(Error::from)?;
         authorize(&**c, s, company, VIEW).await?;
         let loaded = load(&**c, s, company, id).await?;
-        self.report(&**c, s, company, loaded).await
+        self.report(c, s, company, loaded).await
     }
 
     async fn report(
         &self,
-        c: &(impl GenericClient + Sync),
+        c: bilibi_database::Connection,
         s: &Scope,
         company: i64,
         loaded: Loaded,
     ) -> Result<ReturnReport> {
         let tenant = s.tenant();
         let registration =
-            registrations::get(c, tenant, company, loaded.tax_return.registration_id).await?;
+            registrations::get(&**c, tenant, company, loaded.tax_return.registration_id).await?;
+        let stored = if loaded.status() == ReturnStatus::Finalised {
+            Some(snapshot(&**c, tenant, company, &loaded, registration.as_ref()).await?)
+        } else {
+            None
+        };
+        let amendment = match loaded.tax_return.amends_return_id {
+            Some(amended) => {
+                let amended = fetch(&**c, tenant, company, amended)
+                    .await?
+                    .ok_or(Error::Invalid)?;
+                let previous = snapshot(&**c, tenant, company, &amended, None).await?;
+                Some((amended.tax_return, previous))
+            }
+            None => None,
+        };
+        drop(c);
+
         let (figures, posted_since) = match loaded.status() {
             ReturnStatus::Discarded => (None, None),
             ReturnStatus::Open => {
@@ -765,7 +782,7 @@ impl Sst {
                 (Some(figures), None)
             }
             ReturnStatus::Finalised => {
-                let stored = snapshot(c, tenant, company, &loaded, registration.as_ref()).await?;
+                let stored = stored.ok_or(Error::Invalid)?;
                 let posted_since = match registration.as_ref() {
                     Some(registration) => {
                         self.posted_since(s, company, &loaded, registration, &stored)
@@ -776,25 +793,16 @@ impl Sst {
                 (Some(stored), posted_since)
             }
         };
-        let amends = match loaded.tax_return.amends_return_id {
-            Some(amended) => {
-                let amended = fetch(c, tenant, company, amended)
-                    .await?
-                    .ok_or(Error::Invalid)?;
-                let previous = snapshot(c, tenant, company, &amended, None).await?;
-                Some(Amends {
-                    return_id: amended.tax_return.id,
-                    return_number: amended.tax_return.return_number,
-                    version: amended.tax_return.version,
-                    tax_payable: previous.tax_payable,
-                    boxes: figures
-                        .as_ref()
-                        .map(|f| box_differences(&f.boxes, &previous.boxes))
-                        .unwrap_or_default(),
-                })
-            }
-            None => None,
-        };
+        let amends = amendment.map(|(amended, previous)| Amends {
+            return_id: amended.id,
+            return_number: amended.return_number,
+            version: amended.version,
+            tax_payable: previous.tax_payable,
+            boxes: figures
+                .as_ref()
+                .map(|f| box_differences(&f.boxes, &previous.boxes))
+                .unwrap_or_default(),
+        });
         Ok(ReturnReport {
             registration_number: registration
                 .as_ref()
@@ -1425,7 +1433,7 @@ impl Sst {
         if loaded.status() == ReturnStatus::Discarded {
             return Err(SstError::ReturnDiscarded);
         }
-        Ok((name, self.report(&**c, s, company, loaded).await?))
+        Ok((name, self.report(c, s, company, loaded).await?))
     }
 }
 

@@ -134,7 +134,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let admin = sign_in(db, services, 1, 4).await?;
     let staff = sign_in(db, services, 1, 3).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let c = db.get().await?;
     let book = ledger.get_book(&manager, COMPANY).await?;
     let units = book.minor_units;
     let money = |s| Money::parse(s, units).expect("fixture money");
@@ -307,7 +306,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
     let auth = services.get::<Authentication>("base/tenancy.authentication")?;
     let as_manager = auth
-        .authenticate_session(&**c, 1, 1, Some(4), None, String::new())
+        .authenticate_session(&**db.get().await?, 1, 1, Some(4), None, String::new())
         .await?;
     refused(
         "impersonation approval",
@@ -346,13 +345,15 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )
         .await?
         .len();
-    let audits_before: i64 = c
+    let audits_before: i64 = db
+        .get()
+        .await?
         .query_one("SELECT count(*) FROM base_audit_mutations", &[])
         .await?
         .get(0);
-    c.batch_execute(&format!("CREATE FUNCTION np1_refuse_post() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'NP1 injected document update failure' USING ERRCODE='check_violation'; END $$; CREATE TRIGGER np1_refuse_post BEFORE UPDATE ON finance_payables_documents FOR EACH ROW WHEN (NEW.id={} AND NEW.status='posted') EXECUTE FUNCTION np1_refuse_post()",bill.id)).await?;
+    db.get().await?.batch_execute(&format!("CREATE FUNCTION np1_refuse_post() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'NP1 injected document update failure' USING ERRCODE='check_violation'; END $$; CREATE TRIGGER np1_refuse_post BEFORE UPDATE ON finance_payables_documents FOR EACH ROW WHEN (NEW.id={} AND NEW.status='posted') EXECUTE FUNCTION np1_refuse_post()",bill.id)).await?;
     let failed = p.post_document(&manager, COMPANY, bill.id).await;
-    c.batch_execute("DROP TRIGGER np1_refuse_post ON finance_payables_documents; DROP FUNCTION np1_refuse_post()").await?;
+    db.get().await?.batch_execute("DROP TRIGGER np1_refuse_post ON finance_payables_documents; DROP FUNCTION np1_refuse_post()").await?;
     refused("owner update failure", failed, |e| {
         matches!(e, PayablesError::Failed(_))
     })?;
@@ -371,7 +372,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         entries_before
     );
     assert_eq!(
-        c.query_one("SELECT count(*) FROM base_audit_mutations", &[])
+        db.get()
+            .await?
+            .query_one("SELECT count(*) FROM base_audit_mutations", &[])
             .await?
             .get::<_, i64>(0),
         audits_before
@@ -522,10 +525,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     grants
         .set_direct(&admin, 1, bilibi_finance_payables::POST_DOCUMENTS, None)
         .await?;
-    let (a, b) = tokio::join!(
-        p.post_document(&manager, COMPANY, stale.id),
-        p.post_document(&admin, COMPANY, stale.id)
-    );
+    let competing = {
+        let p = p.clone();
+        let admin = admin.clone();
+        let bill_id = stale.id;
+        tokio::spawn(async move { p.post_document(&admin, COMPANY, bill_id).await })
+    };
+    let a = p.post_document(&manager, COMPANY, stale.id).await;
+    let b = competing.await?;
     assert!(matches!(
         (&a, &b),
         (Ok(_), Err(PayablesError::AlreadyPosted)) | (Err(PayablesError::AlreadyPosted), Ok(_))
@@ -683,6 +690,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "paged reads: newest-first search returned {} documents; keyset cursor advanced",
         page.total
     );
+    let c = db.get().await?;
     db_refuses(
         &c,
         "UPDATE recorded line",
@@ -726,6 +734,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         ),
     )
     .await?;
+    drop(c);
     let mut rounded = draft(vendor, "ROUND-HALF", expense, code.id, units);
     let rounding_code = p
         .create_tax_code(
@@ -778,9 +787,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )
         .await?;
     // A failure after the entry is inserted takes the approval back with it.
-    c.batch_execute(&format!("CREATE FUNCTION np1_refuse_post() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'NP1 injected document update failure' USING ERRCODE='check_violation'; END $$; CREATE TRIGGER np1_refuse_post BEFORE UPDATE ON finance_payables_documents FOR EACH ROW WHEN (NEW.id={} AND NEW.status='posted') EXECUTE FUNCTION np1_refuse_post()",one.id)).await?;
+    db.get().await?.batch_execute(&format!("CREATE FUNCTION np1_refuse_post() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'NP1 injected document update failure' USING ERRCODE='check_violation'; END $$; CREATE TRIGGER np1_refuse_post BEFORE UPDATE ON finance_payables_documents FOR EACH ROW WHEN (NEW.id={} AND NEW.status='posted') EXECUTE FUNCTION np1_refuse_post()",one.id)).await?;
     let failed = p.approve_document(&admin, COMPANY, one.id).await;
-    c.batch_execute("DROP TRIGGER np1_refuse_post ON finance_payables_documents; DROP FUNCTION np1_refuse_post()").await?;
+    db.get().await?.batch_execute("DROP TRIGGER np1_refuse_post ON finance_payables_documents; DROP FUNCTION np1_refuse_post()").await?;
     refused("approve and post is one transaction", failed, |e| {
         matches!(e, PayablesError::Failed(_))
     })?;
@@ -835,6 +844,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .await,
         |e| matches!(e, PayablesError::Ledger(LedgerError::SamePerson)),
     )?;
+    let c = db.get().await?;
     db_refuses(&c,"append to recorded draft",&format!("INSERT INTO finance_payables_document_lines(tenant_id,company_id,document_id,line_number,description,account_id,amount) VALUES(1,1,{},2,'Late draft line',{},1)",stated.id,expense)).await?;
     let header = |company: i64, number: &str| {
         format!(
@@ -849,6 +859,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     .await?;
     db_refuses(&c,"deferred totals mismatch",&format!("BEGIN; WITH d AS ({} RETURNING id) INSERT INTO finance_payables_document_lines(tenant_id,company_id,document_id,line_number,description,account_id,amount) SELECT 1,1,id,1,'Wrong total',{},0.5 FROM d; COMMIT",header(1,"RAW-TOTALS"),expense)).await?;
     db_refuses(&c,"cross-company tax code",&format!("BEGIN; WITH d AS ({} RETURNING id) INSERT INTO finance_payables_document_lines(tenant_id,company_id,document_id,line_number,description,account_id,amount,tax_code_id) SELECT 1,2,id,1,'Foreign tax',{},1,{} FROM d; COMMIT",header(2,"RAW-FOREIGN-TAX"),expense,code.id)).await?;
+    drop(c);
     let history = p.list_settings_changes(&manager, COMPANY, 0, 1).await?;
     assert_eq!(history.rows.len(), 1);
     assert!(history.next_after.is_some());

@@ -80,8 +80,18 @@ fn tolerance(t: &Option<Tolerance>, field: &'static str) -> Result<()> {
 impl Payables {
     pub async fn get_settings(&self, s: &Scope, company: i64) -> Result<Settings> {
         let c = self.db.get().await.map_err(Error::from)?;
-        authorize(&**c, s, company, VIEW).await?;
-        store::settings(&**c, s.tenant(), company)
+        self.get_settings_on(&**c, s, company).await
+    }
+
+    /// Authorized settings read on the caller's connection.
+    pub async fn get_settings_on(
+        &self,
+        c: &(impl tokio_postgres::GenericClient + Sync),
+        s: &Scope,
+        company: i64,
+    ) -> Result<Settings> {
+        authorize(c, s, company, VIEW).await?;
+        store::settings(c, s.tenant(), company)
             .await?
             .map(|(_, s)| s)
             .ok_or(PayablesError::PayablesNotConfigured)

@@ -235,7 +235,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .authenticate_session(&**client, 1, 1, Some(4), None, String::new())
             .await?
     };
-    let client = db.get().await?;
     let book = ledger.get_book(&manager, COMPANY).await?;
     let money = |text: &str| Money::parse(text, book.minor_units).expect("fixture amount");
     let mut ids = Vec::new();
@@ -1222,7 +1221,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await
             .map(|j| journal(&j)),
     );
-    let posted: i64 = client
+    let posted: i64 = db.get().await?
         .query_one(
             "SELECT count(*) FROM finance_ledger_entries WHERE company_id = $1 AND description = 'Ofice rent'",
             &[&COMPANY],
@@ -1282,27 +1281,38 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             bank,
             "2.00",
         );
-        let approve = ledger.approve_journal(&admin, COMPANY, racing.id);
-        let correct = async {
+        let approval_ledger = ledger.clone();
+        let approver = admin.clone();
+        let journal_id = racing.id;
+        let approve = async move {
+            approval_ledger
+                .approve_journal(&approver, COMPANY, journal_id)
+                .await
+        };
+        let correction_ledger = ledger.clone();
+        let preparer = manager.clone();
+        let correct = async move {
             if replace {
-                ledger
-                    .replace_journal(&manager, COMPANY, racing.id, &fixed, None)
+                correction_ledger
+                    .replace_journal(&preparer, COMPANY, journal_id, &fixed, None)
                     .await
             } else {
-                ledger
-                    .withdraw_journal(&manager, COMPANY, racing.id, None)
+                correction_ledger
+                    .withdraw_journal(&preparer, COMPANY, journal_id, None)
                     .await
             }
         };
         let (approval, correction) = if approve_first {
-            tokio::join!(approve, correct)
+            let approval = tokio::spawn(approve);
+            let correction = correct.await;
+            (approval.await?, correction)
         } else {
-            let (correction, approval) = tokio::join!(correct, approve);
-            (approval, correction)
+            let correction = tokio::spawn(correct);
+            (approve.await, correction.await?)
         };
         let settled = ledger.get_journal(&manager, COMPANY, racing.id).await?;
         println!(
-            "approval against {label} (approval asked {}): approval {}, {label} {}; the journal is {} with entry {:?}",
+            "approval against {label} (approval task launched {}): approval {}, {label} {}; the journal is {} with entry {:?}",
             if approve_first { "first" } else { "second" },
             approval
                 .as_ref()
@@ -1317,7 +1327,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             approval.is_ok() != correction.is_ok(),
             "exactly one decides"
         );
-        let stale: i64 = client
+        let stale: i64 = db.get().await?
             .query_one(
                 "SELECT count(*) FROM finance_ledger_entries WHERE company_id = $1 AND description = $2",
                 &[&COMPANY, &name],
@@ -1348,6 +1358,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )
         .await?;
     let (loose_id, later_id) = (loose.id, later.id);
+    let client = db.get().await?;
     raw(
         &client,
         "a withdrawal recorded by someone other than the submitter",
@@ -1378,6 +1389,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )
     .await;
 
+    drop(client);
     println!("\n== Two sessions and an archived company");
     let raced = ledger
         .submit_journal(
@@ -1386,10 +1398,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             &pair(date(2026, 6, 9), "Raced approval", rent, bank, "1.00"),
         )
         .await?;
-    let (one, two) = tokio::join!(
-        ledger.approve_journal(&admin, COMPANY, raced.id),
-        ledger.approve_journal(&admin, COMPANY, raced.id),
-    );
+    let competing = {
+        let ledger = ledger.clone();
+        let admin = admin.clone();
+        let journal_id = raced.id;
+        tokio::spawn(async move { ledger.approve_journal(&admin, COMPANY, journal_id).await })
+    };
+    let one = ledger.approve_journal(&admin, COMPANY, raced.id).await;
+    let two = competing.await?;
     show(
         "two sessions approve the same journal at once: first",
         one.map(|j| journal(&j)),
@@ -1440,6 +1456,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
 
     println!("\n== The database's own refusals (raw SQL, no facade)");
     let (approved_id, rejected_id) = (approved.id, rejected.id);
+    let client = db.get().await?;
     raw(
         &client,
         "UPDATE a journal's description",

@@ -301,10 +301,19 @@ pub async fn prove(
             .document_id,
         invoice
     );
-    let (left, right) = tokio::join!(
-        ar.import_opening_invoices(&approver, company, &finalize_ar),
-        ar.import_opening_invoices(&approver, company, &finalize_ar)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let approver = approver.clone();
+        let finalize_ar = finalize_ar.clone();
+        tokio::spawn(async move {
+            ar.import_opening_invoices(&approver, company, &finalize_ar)
+                .await
+        })
+    };
+    let left = ar
+        .import_opening_invoices(&approver, company, &finalize_ar)
+        .await;
+    let right = competing.await?;
     let replaced_ar = left?;
     assert_eq!(replaced_ar, right?);
     let replaced_ap = ap

@@ -304,8 +304,18 @@ impl Ledger {
         company: i64,
     ) -> Result<Option<OpeningProgress>> {
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
-        crate::authorize(&**client, scope, company, crate::VIEW).await?;
-        progress(&**client, scope, company).await
+        self.opening_progress_on(&**client, scope, company).await
+    }
+
+    /// Authorized opening progress read on the caller's connection.
+    pub async fn opening_progress_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+    ) -> Result<Option<OpeningProgress>> {
+        crate::authorize(client, scope, company, crate::VIEW).await?;
+        progress(client, scope, company).await
     }
 
     /// Submit one opening journal, or return the identical recorded submission.

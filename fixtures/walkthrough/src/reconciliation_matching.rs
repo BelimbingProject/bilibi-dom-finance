@@ -214,7 +214,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .authenticate_session(&**client, 1, 1, Some(4), None, String::new())
             .await?
     };
-    let raw_client = db.get().await?;
     let units = ledger.get_book(&manager, COMPANY).await?.minor_units;
     let money = |text: &str| Money::parse(text, units).expect("fixture amount");
 
@@ -649,17 +648,28 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .map(|ms| ms.iter().map(brief_match).collect::<Vec<_>>()),
     );
 
-    raw(&raw_client, "an unmatched event without a reason", &format!(
+    raw(&**db.get().await?, "an unmatched event without a reason", &format!(
         "INSERT INTO finance_reconciliation_match_events(tenant_id,company_id,event_number,match_id,action,recorded_by_user_id,recorded_at) \
          VALUES(1,{COMPANY},NULL,{},'unmatched',1,NULL)", matched.id
     )).await;
 
     println!("\n== Two sessions match the same line at once");
     let racing = pick(vec![dep], vec![deposit.id]);
-    let (one, two) = tokio::join!(
-        reconciliation.record_match(&manager, COMPANY, collections.id, &racing),
-        reconciliation.record_match(&admin, COMPANY, collections.id, &racing),
-    );
+    let competing = {
+        let reconciliation = reconciliation.clone();
+        let admin = admin.clone();
+        let racing = racing.clone();
+        let account_id = collections.id;
+        tokio::spawn(async move {
+            reconciliation
+                .record_match(&admin, COMPANY, account_id, &racing)
+                .await
+        })
+    };
+    let one = reconciliation
+        .record_match(&manager, COMPANY, collections.id, &racing)
+        .await;
+    let two = competing.await?;
     println!(
         "one matched, the other refused: {}",
         match (&one, &two) {
@@ -720,7 +730,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             )),
         )
         .await?;
-    let before: i64 = raw_client
+    let before: i64 = db
+        .get()
+        .await?
         .query_one("SELECT count(*) FROM finance_reconciliation_matches", &[])
         .await?
         .get(0);
@@ -731,7 +743,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await
             .map(|p| brief_entry(&p.entry)),
     );
-    let after: i64 = raw_client
+    let after: i64 = db
+        .get()
+        .await?
         .query_one("SELECT count(*) FROM finance_reconciliation_matches", &[])
         .await?
         .get(0);
@@ -1251,6 +1265,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
 
     println!("\n== The database's own refusals");
+    let raw_client = db.get().await?;
     raw(&raw_client, "a second standing match of a matched statement line", &format!(
         "BEGIN; WITH m AS (INSERT INTO finance_reconciliation_matches(tenant_id,company_id,bank_account_id,match_number,matched_by_user_id,matched_at) \
          VALUES(1,{COMPANY},{},NULL,1,NULL) RETURNING id) \
@@ -1352,6 +1367,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "the company's match-event numbers, with the refused attempts above leaving no gap: {numbers:?}"
     );
 
+    drop(raw_client);
     println!("\n== Audit and evidence");
     for kind in [
         "match",
@@ -1362,7 +1378,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "reconciliation_event",
         "reconciliation_item",
     ] {
-        let count: i64 = raw_client
+        let count: i64 = db
+            .get()
+            .await?
             .query_one(
                 "SELECT count(*) FROM base_audit_mutations WHERE auditable_type = $1",
                 &[&format!("finance.reconciliation.{kind}")],

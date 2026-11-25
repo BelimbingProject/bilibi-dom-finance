@@ -143,6 +143,7 @@ inventory::submit! {
             ("finance-ledger-012-workflow-approvals", include_str!("../migrations/012-workflow-approvals.sql")),
             ("finance-ledger-013-journal-list", include_str!("../migrations/013-journal-list.sql")),
             ("finance-ledger-014-zero-opening-recognition", include_str!("../migrations/014-zero-opening-recognition.sql")),
+            ("finance-ledger-015-entry-boundary", include_str!("../migrations/015-entry-boundary.sql")),
         ],
         services: &[Service { id: SERVICE, factory: |services| {
             journal_approvals::bind(services.get(bilibi_workflow::SERVICE)?)?;
@@ -2371,8 +2372,19 @@ impl Ledger {
         company_id: i64,
     ) -> Result<DutySeparation> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, VIEW).await?;
-        separation_view(&**client, scope.tenant(), company_id).await
+        self.get_duty_separation_on(&**client, scope, company_id)
+            .await
+    }
+
+    /// Authorized duty separation read on the caller's connection.
+    pub async fn get_duty_separation_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<DutySeparation> {
+        authorize(client, scope, company_id, VIEW).await?;
+        separation_view(client, scope.tenant(), company_id).await
     }
 
     /// Turns the company's separation of duties on or off
@@ -3003,7 +3015,18 @@ impl Ledger {
     /// Count journals awaiting a decision (`finance.ledger.view`).
     pub async fn pending_journal_count(&self, scope: &Scope, company_id: i64) -> Result<i64> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, VIEW).await?;
+        self.pending_journal_count_on(&**client, scope, company_id)
+            .await
+    }
+
+    /// Authorized pending-journal count on the caller's connection.
+    pub async fn pending_journal_count_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<i64> {
+        authorize(client, scope, company_id, VIEW).await?;
         let row = client.query_one("SELECT count(*) FROM finance_ledger_journals j WHERE j.tenant_id=$1 AND j.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_ledger_journal_events e WHERE e.tenant_id=j.tenant_id AND e.company_id=j.company_id AND e.journal_id=j.id)", &[&scope.tenant(), &company_id]).await.map_err(Error::from)?;
         Ok(row.get(0))
     }
@@ -3024,8 +3047,19 @@ impl Ledger {
         company_id: i64,
     ) -> Result<ControlledBookkeeping> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, VIEW).await?;
-        controlled_view(&**client, scope.tenant(), company_id).await
+        self.get_controlled_bookkeeping_on(&**client, scope, company_id)
+            .await
+    }
+
+    /// Authorized controlled bookkeeping read on the caller's connection.
+    pub async fn get_controlled_bookkeeping_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<ControlledBookkeeping> {
+        authorize(client, scope, company_id, VIEW).await?;
+        controlled_view(client, scope.tenant(), company_id).await
     }
 
     /// Turns the company's controlled bookkeeping on or off

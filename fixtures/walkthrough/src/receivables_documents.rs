@@ -38,7 +38,6 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let einvoice =
         services.get::<bilibi_finance_einvoice::Einvoice>(bilibi_finance_einvoice::SERVICE)?;
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
-    let client = db.get().await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let manager = sign_in(db, services, 1, 1).await?;
     let viewer = sign_in(db, services, 1, 2).await?;
@@ -99,7 +98,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     };
     let prefill_input = json!({"company_id":1,"counterparty_id":party.id});
     let agent_prefill = prefill_handler
-        .call(&**client, &admin, &prefill_input)
+        .call(&**db.get().await?, &admin, &prefill_input)
         .await?
         .envelope(key);
     assert_eq!(agent_prefill["result"], serde_json::to_value(&prefill)?);
@@ -135,7 +134,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .date();
     match issue_handler
         .preview(
-            &**client,
+            &**db.get().await?,
             &admin,
             &json!({"company_id":1,"document_id":draft.id}),
         )
@@ -274,7 +273,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             if fields.iter().any(|f| f.field == "buyer" && (f.message.contains("Companies view permission") || f.message.contains("is restricted for you")))
     ));
     assert!(
-        matches!(prefill_handler.call(&**client, &admin, &prefill_input).await,
+        matches!(prefill_handler.call(&**db.get().await?, &admin, &prefill_input).await,
         Err(bilibi_agent_api::Error::InvalidInput(fields)) if fields.contains_key("buyer"))
     );
     field(
@@ -285,11 +284,11 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     grants
         .set_direct(&admin, admin.user(), bilibi_company::VIEW, None)
         .await?;
-    client.execute("INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id) VALUES(1,4,'companies','tax_id') ON CONFLICT DO NOTHING", &[]).await?;
+    db.get().await?.execute("INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id) VALUES(1,4,'companies','tax_id') ON CONFLICT DO NOTHING", &[]).await?;
     assert!(matches!(einvoice.prefill_party(&admin, 1, party.id).await,
         Err(bilibi_finance_einvoice::EinvoiceError::Invalid(fields)) if fields.iter().any(|f| f.field == "buyer" && f.message.contains("tax ID is restricted"))));
     assert!(
-        matches!(prefill_handler.call(&**client, &admin, &prefill_input).await,
+        matches!(prefill_handler.call(&**db.get().await?, &admin, &prefill_input).await,
         Err(bilibi_agent_api::Error::InvalidInput(fields)) if fields.contains_key("buyer"))
     );
     field(
@@ -304,7 +303,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
             .restricted,
         vec!["tax_id".to_owned()]
     );
-    client.execute("DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=4 AND table_id='companies' AND field_id='tax_id'", &[]).await?;
+    db.get().await?.execute("DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=4 AND table_id='companies' AND field_id='tax_id'", &[]).await?;
     ar.update_tax_code(&admin, 1, tax.id, &json!({"name":"R2 renamed tax"}))
         .await?;
     // Direct denial must be checked again even on an already sealed owner scope.
@@ -326,10 +325,14 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         )
         .await?;
     assert!(matches!(denied, Err(R::Unauthorized)));
-    let (a, b) = tokio::join!(
-        ar.issue_document(&admin, 1, draft.id),
-        ar.issue_document(&admin, 1, draft.id)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let admin = admin.clone();
+        let draft_id = draft.id;
+        tokio::spawn(async move { ar.issue_document(&admin, 1, draft_id).await })
+    };
+    let a = ar.issue_document(&admin, 1, draft.id).await;
+    let b = competing.await?;
     assert_ne!(a.is_ok(), b.is_ok());
     let first = match (a, b) {
         (Ok(d), Err(R::NotADraft)) | (Err(R::NotADraft), Ok(d)) => d,
@@ -352,7 +355,8 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .aged_receivables(&admin, 1, date(2026, 9, 1), &AgingOptions::default())
         .await?;
     let before_rename_pins = before_rename.pins();
-    client
+    db.get()
+        .await?
         .execute(
             "UPDATE companies SET legal_name='R2 later party' WHERE tenant_id=1 AND id=20",
             &[],
@@ -602,10 +606,9 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let closed = ar
         .create_draft(&admin, 1, &invoice(Some("2026-01-15"), "1"))
         .await?;
-    let raw = db.get().await?;
-    let before: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    let before: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
     let issue_refusal = ar.issue_document(&admin, 1, closed.id).await;
-    let after: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    let after: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
     assert_eq!(before, after);
     // A payment in a closed month needs a previously issued invoice in that month.
     // The invoice is backdated only after reopening, then the same period is closed.
@@ -643,9 +646,9 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .await?;
     // Bilimbi List.wrap accepts a single allocation object as well as arrays.
     let closed_payment = payment("2026-01-16", "1.10", allocation(closed.id, "1.10"));
-    let before: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    let before: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
     let refused = ar.record_payment(&admin, 1, &closed_payment).await;
-    let after: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    let after: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
     ledger
         .reopen_period(&admin, 1, january, "R2 restore period")
         .await?;
@@ -653,11 +656,11 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     assert_eq!(before, after);
     // Fail after the ledger, payment AND allocation inserts: even audit
     // capture must roll everything back, without consuming a series number.
-    let before_capture: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
-    raw.batch_execute("CREATE FUNCTION nr2_refuse_capture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.allocation' THEN RAISE EXCEPTION 'NR2 capture fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER nr2_capture_fault BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION nr2_refuse_capture()").await?;
+    let before_capture: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    db.get().await?.batch_execute("CREATE FUNCTION nr2_refuse_capture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.allocation' THEN RAISE EXCEPTION 'NR2 capture fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER nr2_capture_fault BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION nr2_refuse_capture()").await?;
     let failed_capture = ar.record_payment(&admin, 1, &closed_payment).await;
-    raw.batch_execute("DROP TRIGGER nr2_capture_fault ON base_audit_mutations; DROP FUNCTION nr2_refuse_capture()").await?;
-    let after_capture: Value = raw.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
+    db.get().await?.batch_execute("DROP TRIGGER nr2_capture_fault ON base_audit_mutations; DROP FUNCTION nr2_refuse_capture()").await?;
+    let after_capture: Value = db.get().await?.query_one("SELECT jsonb_build_array((SELECT count(*) FROM finance_receivables_payments),(SELECT count(*) FROM finance_ledger_entries),(SELECT count(*) FROM base_audit_mutations))", &[]).await?.get(0);
     assert!(matches!(failed_capture, Err(R::Failed(_))));
     assert_eq!(after_capture, before_capture);
     // Settle the auxiliary January invoice, keeping its distinct tax out of later windows.
@@ -1178,10 +1181,14 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .await?;
     let race = ar.issue_document(&admin, 1, race.id).await?;
     let receipt = payment("2026-11-02", "7", allocation(race.id, "7"));
-    let (a, b) = tokio::join!(
-        ar.record_payment(&admin, 1, &receipt),
-        ar.record_payment(&admin, 1, &receipt)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let admin = admin.clone();
+        let receipt = receipt.clone();
+        tokio::spawn(async move { ar.record_payment(&admin, 1, &receipt).await })
+    };
+    let a = ar.record_payment(&admin, 1, &receipt).await;
+    let b = competing.await?;
     let winner = match (a, b) {
         (Ok(p), Err(R::Invalid(_))) | (Err(R::Invalid(_)), Ok(p)) => p,
         other => panic!("competing settlements: {other:?}"),
@@ -1191,10 +1198,15 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         Some(money("4"))
     );
     let reversal = json!({"reversal_date":"2026-11-03", "reason":"R2 concurrent reversal"});
-    let (a, b) = tokio::join!(
-        ar.reverse_payment(&admin, 1, winner.id, &reversal),
-        ar.reverse_payment(&admin, 1, winner.id, &reversal)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let admin = admin.clone();
+        let reversal = reversal.clone();
+        let payment_id = winner.id;
+        tokio::spawn(async move { ar.reverse_payment(&admin, 1, payment_id, &reversal).await })
+    };
+    let a = ar.reverse_payment(&admin, 1, winner.id, &reversal).await;
+    let b = competing.await?;
     assert!(matches!(
         (a, b),
         (Ok(_), Err(R::AlreadyReversed)) | (Err(R::AlreadyReversed), Ok(_))
@@ -1355,17 +1367,22 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         let missing:i64=raw.query_one(&format!("SELECT count(*) FROM {table} r WHERE r.tenant_id=1 AND r.company_id=1 AND NOT EXISTS (SELECT 1 FROM base_audit_mutations a WHERE a.tenant_id=r.tenant_id AND a.auditable_type=$1 AND a.auditable_id=r.id::text)"),&[&format!("finance.receivables.{kind}")]).await?.get(0);
         assert_eq!(missing, 0, "unaudited {table}");
     }
+    drop(raw);
     let waiting = ar
         .create_draft(&admin, 1, &invoice(Some("2026-10-08"), "1"))
         .await?;
     // An archived invoicing company keeps its records readable and refuses
     // every write, issuing included.
-    raw.batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
+    db.get()
+        .await?
+        .batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
         .await?;
     let refused = ar.record_payment(&admin, 1, &valid).await;
     let not_issued = ar.issue_document(&admin, 1, waiting.id).await;
     let readable = ar.get_payment(&admin, 1, paid.id).await;
-    raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
+    db.get()
+        .await?
+        .batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
     assert!(matches!(refused, Err(R::CompanyArchived)));
     assert!(

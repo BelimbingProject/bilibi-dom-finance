@@ -165,6 +165,7 @@ impl Einvoice {
             .record_issue(&mut tx, scope, company_id, prepared)
             .await?;
         tx.commit().await?;
+        drop(client);
         self.view(scope, company_id, document_id).await
     }
 
@@ -1242,6 +1243,7 @@ impl Einvoice {
                     .map_err(|_| retry_database())?;
                 if changed {
                     tx.commit().await.map_err(|_| retry_database())?;
+                    drop(client);
                     self.settle(scope, company_id, document.id, follow_up, writer)
                         .await;
                 }

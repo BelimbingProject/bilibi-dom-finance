@@ -643,16 +643,13 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .rows
         .iter()
         .any(|r| r["payload"]["csv"] == ap_csv));
+    let opening_id = ledger
+        .opening_context_on(&**db.get().await?, &reviewer, company)
+        .await?
+        .entry
+        .id;
     assert!(ledger
-        .get_entry(
-            &reviewer,
-            company,
-            ledger
-                .opening_context_on(&**db.get().await?, &reviewer, company)
-                .await?
-                .entry
-                .id
-        )
+        .get_entry(&reviewer, company, opening_id)
         .await?
         .owner
         .is_none());
@@ -778,7 +775,6 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
     let request = ap.submit_payment(&manager, company, &payment_input).await?;
     let payment = ap.approve_payment(&reviewer, company, request.id).await?;
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
-    let client = db.get().await?;
     let ar_key = "finance.receivables.document.get";
     let bilibi_agent_api::Handler::Read(ar_read) = registry.operations[ar_key].definition.handler
     else {
@@ -786,7 +782,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
     };
     let ar_record = ar_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":ar_id("invoice"),"as_of":"2026-07-31","through_entry_number":old_ar.through_entry_number,"through_opening_batch_id":old_ar.through_opening_batch_id,"through_settlement_number":old_ar.through_settlement_number}),
         )
@@ -835,7 +831,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .await?;
     assert!(ar_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":backdated_ar.id,"as_of":"2026-07-31","through_entry_number":old_ar.through_entry_number,"through_opening_batch_id":old_ar.through_opening_batch_id,"through_settlement_number":old_ar.through_settlement_number}),
         )
@@ -874,7 +870,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
     .await?;
     assert!(ap_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":backdated_ap.id,"as_of":"2026-07-31","through_entry_number":old_ap.through_entry_number,"through_opening_batch_id":old_ap.through_opening_batch_id,"through_settlement_number":old_ap.through_settlement_number}),
         )
@@ -882,7 +878,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .is_err());
     let ap_record = ap_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":ap_id("invoice"),"as_of":"2026-07-31","through_entry_number":old_ap.through_entry_number,"through_opening_batch_id":old_ap.through_opening_batch_id,"through_settlement_number":old_ap.through_settlement_number}),
         )
@@ -1093,10 +1089,14 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         json!({"credit_document_id":ar_id("credit"),"target_document_id":ar_id("invoice"),"effective_date":"2026-07-26","amount":"20","reference":"race-a"}),
         json!({"credit_document_id":ar_id("credit"),"target_document_id":ar_id("invoice"),"effective_date":"2026-07-26","amount":"20","reference":"race-b"}),
     ];
-    let (left, right) = tokio::join!(
-        ar.apply_credit(&manager, company, &race_ar[0]),
-        ar.apply_credit(&manager, company, &race_ar[1])
-    );
+    let competing = {
+        let ar = ar.clone();
+        let manager = manager.clone();
+        let race_ar = race_ar.clone();
+        tokio::spawn(async move { ar.apply_credit(&manager, company, &race_ar[1]).await })
+    };
+    let left = ar.apply_credit(&manager, company, &race_ar[0]).await;
+    let right = competing.await?;
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
     let winner = left.or(right)?;
     ar.reverse_settlement(&manager,company,&json!({"settlement_id":winner["id"],"effective_date":"2026-07-27","reference":"reverse-race"})).await?;
@@ -1104,10 +1104,14 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         json!({"credit_document_id":ap_id("credit"),"target_document_id":ap_id("invoice"),"effective_date":"2026-07-26","amount":"20","reference":"race-a"}),
         json!({"credit_document_id":ap_id("credit"),"target_document_id":ap_id("invoice"),"effective_date":"2026-07-26","amount":"20","reference":"race-b"}),
     ];
-    let (left, right) = tokio::join!(
-        ap.apply_credit(&manager, company, &race_ap[0]),
-        ap.apply_credit(&manager, company, &race_ap[1])
-    );
+    let competing = {
+        let ap = ap.clone();
+        let manager = manager.clone();
+        let race_ap = race_ap.clone();
+        tokio::spawn(async move { ap.apply_credit(&manager, company, &race_ap[1]).await })
+    };
+    let left = ap.apply_credit(&manager, company, &race_ap[0]).await;
+    let right = competing.await?;
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
     let winner = left.or(right)?;
     ap.reverse_settlement(&manager,company,&json!({"settlement_id":winner["id"],"effective_date":"2026-07-27","reference":"reverse-race"})).await?;
@@ -1245,7 +1249,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .expect("replacement supplier opening document");
     assert!(ar_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":replacement_ar_document.id,"as_of":"2026-07-31","through_entry_number":old_ar.through_entry_number,"through_opening_batch_id":old_ar.through_opening_batch_id,"through_settlement_number":old_ar.through_settlement_number}),
         )
@@ -1253,7 +1257,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .is_err());
     assert!(ap_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":replacement_ap_document.id,"as_of":"2026-07-31","through_entry_number":old_ap.through_entry_number,"through_opening_batch_id":old_ap.through_opening_batch_id,"through_settlement_number":old_ap.through_settlement_number}),
         )
@@ -1261,7 +1265,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .is_err());
     assert!(ar_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":ar_id("invoice"),"as_of":"2026-07-31","through_entry_number":old_ar.through_entry_number,"through_opening_batch_id":old_ar.through_opening_batch_id,"through_settlement_number":old_ar.through_settlement_number}),
         )
@@ -1269,7 +1273,7 @@ pub(super) async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         .is_ok());
     assert!(ap_read
         .call(
-            &**client,
+            &**db.get().await?,
             &reviewer,
             &json!({"company_id":company,"document_id":ap_id("invoice"),"as_of":"2026-07-31","through_entry_number":old_ap.through_entry_number,"through_opening_batch_id":old_ap.through_opening_batch_id,"through_settlement_number":old_ap.through_settlement_number}),
         )

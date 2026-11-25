@@ -48,7 +48,6 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     let viewer = sign_in(db, services, 1, 2).await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let client = db.get().await?;
     let grants = services.get::<bilibi_authz::grants::Grants>("base/authz.grants")?;
     grants
         .set_direct(
@@ -454,9 +453,9 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     assert_eq!(ar.get_document(&manager, 1, draft.id).await?, draft);
     // A real capture failure after the SQL replacement must roll back header,
     // children and audit rows together. This trigger exists only in the proof DB.
-    client.batch_execute("CREATE FUNCTION nr1_refuse_capture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.document_line' THEN RAISE EXCEPTION 'NR1 capture fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER nr1_capture_fault BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION nr1_refuse_capture()").await?;
+    db.get().await?.batch_execute("CREATE FUNCTION nr1_refuse_capture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.document_line' THEN RAISE EXCEPTION 'NR1 capture fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER nr1_capture_fault BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION nr1_refuse_capture()").await?;
     let failed = ar.update_draft(&manager, 1, draft.id, &json!({"description":"capture must roll back","lines":[{"description":"Replacement","quantity":"2","unit_price":"7"}]})).await;
-    client.batch_execute("DROP TRIGGER nr1_capture_fault ON base_audit_mutations; DROP FUNCTION nr1_refuse_capture()").await?;
+    db.get().await?.batch_execute("DROP TRIGGER nr1_capture_fault ON base_audit_mutations; DROP FUNCTION nr1_refuse_capture()").await?;
     assert!(matches!(failed, Err(R::Failed(_))));
     assert_eq!(ar.get_document(&manager, 1, draft.id).await?, draft);
     println!(
@@ -494,7 +493,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         .await?;
     ar.configure(&manager, 1, &json!({"income_account_id":next_income.id}))
         .await?;
-    let old_ids: Value = client.query_one("SELECT jsonb_agg(id ORDER BY id) FROM finance_receivables_document_lines WHERE tenant_id=1 AND company_id=1 AND document_id=$1", &[&draft.id]).await?.get(0);
+    let old_ids: Value = db.get().await?.query_one("SELECT jsonb_agg(id ORDER BY id) FROM finance_receivables_document_lines WHERE tenant_id=1 AND company_id=1 AND document_id=$1", &[&draft.id]).await?.get(0);
     let kept = ar
         .update_draft(
             &manager,
@@ -504,14 +503,14 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
         )
         .await?;
     assert_eq!(kept, draft);
-    let new_ids: Value = client.query_one("SELECT jsonb_agg(id ORDER BY id) FROM finance_receivables_document_lines WHERE tenant_id=1 AND company_id=1 AND document_id=$1", &[&draft.id]).await?.get(0);
+    let new_ids: Value = db.get().await?.query_one("SELECT jsonb_agg(id ORDER BY id) FROM finance_receivables_document_lines WHERE tenant_id=1 AND company_id=1 AND document_id=$1", &[&draft.id]).await?.get(0);
     assert_eq!(old_ids, new_ids);
     let replaced = ar
         .update_draft(&manager, 1, draft.id, &json!({"lines":line}))
         .await?;
     assert_eq!(replaced.lines.len(), 1);
     assert_eq!(replaced.lines[0].account_id, next_income.id);
-    let audit = client.query_one("SELECT count(*), count(*) FILTER (WHERE new_values='null'::jsonb), count(*) FILTER (WHERE old_values='null'::jsonb) FROM base_audit_mutations WHERE tenant_id=1 AND trace_id=(SELECT trace_id FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='finance.receivables.document' AND auditable_id=$1 ORDER BY id DESC LIMIT 1)", &[&draft.id.to_string()]).await?;
+    let audit = db.get().await?.query_one("SELECT count(*), count(*) FILTER (WHERE new_values='null'::jsonb), count(*) FILTER (WHERE old_values='null'::jsonb) FROM base_audit_mutations WHERE tenant_id=1 AND trace_id=(SELECT trace_id FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='finance.receivables.document' AND auditable_id=$1 ORDER BY id DESC LIMIT 1)", &[&draft.id.to_string()]).await?;
     assert_eq!(
         (
             audit.get::<_, i64>(0),
@@ -626,12 +625,16 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     ));
     let race_a = json!({"record_kind":"company","record_id":13});
     let race_b = race_a.clone();
-    let (a, b) = tokio::join!(
-        ar.create_customer(&manager, 1, &race_a),
-        ar.create_customer(&manager, 1, &race_b)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let manager = manager.clone();
+        tokio::spawn(async move { ar.create_customer(&manager, 1, &race_b).await })
+    };
+    let a = ar.create_customer(&manager, 1, &race_a).await;
+    let b = competing.await?;
     assert_ne!(a.is_ok(), b.is_ok());
     assert!(matches!(a.err().or(b.err()), Some(R::Invalid(_))));
+    let client = db.get().await?;
     for sql in [
         "UPDATE finance_receivables_setup_changes SET new_value=1 WHERE tenant_id=1 AND company_id=1",
         "DELETE FROM finance_receivables_documents WHERE tenant_id=1 AND company_id=1",
@@ -657,6 +660,7 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     println!(
         "receivables audit mutations: {audit}; concurrent duplicate serialized to one success and one field refusal"
     );
+    drop(client);
     // Uniqueness is per operating company, not per Core counterparty.
     let other_customer = ar
         .create_customer(&admin, 3, &json!({"record_kind":"company","record_id":10}))
@@ -664,7 +668,8 @@ pub async fn run(db: &Db, services: &Services) -> Result<(), Box<dyn std::error:
     assert_eq!(Some(other_customer.party.id), Some(10));
     assert_ne!(other_customer.id, customer.id);
     // Company 3 is disposable and later walkthroughs already expect it archived.
-    client
+    db.get()
+        .await?
         .batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=3")
         .await?;
     assert!(matches!(

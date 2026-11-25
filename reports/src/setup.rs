@@ -108,12 +108,22 @@ impl Reports {
     /// The setup of `company_id` (`finance.ledger.view` and the view or
     /// settings capability of each area).
     pub async fn setup_overview(&self, scope: &Scope, company_id: i64) -> Result<SetupOverview> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        self.setup_overview_on(&**client, scope, company_id).await
+    }
+
+    pub(crate) async fn setup_overview_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<SetupOverview> {
         let s = &self.sources;
         let mut areas = Vec::new();
 
         // The book decides what the next three can say.
         let book = read(
-            self.ledger.get_book(scope, company_id).await,
+            self.ledger.get_book_on(client, scope, company_id).await,
             |e| matches!(e, LedgerError::Unauthorized | LedgerError::CompanyNotFound),
             |e| matches!(e, LedgerError::BookNotOpen),
         );
@@ -173,7 +183,7 @@ impl Reports {
             }
         } else {
             match read(
-                self.ledger.list_accounts(scope, company_id).await,
+                self.ledger.list_accounts_on(client, scope, company_id).await,
                 |e| matches!(e, LedgerError::Unauthorized),
                 |_| false,
             ) {
@@ -239,7 +249,7 @@ impl Reports {
             }
         } else {
             match read(
-                self.ledger.list_fiscal_years(scope, company_id).await,
+                self.ledger.list_fiscal_years_on(client, scope, company_id).await,
                 |e| matches!(e, LedgerError::Unauthorized),
                 |_| false,
             ) {
@@ -300,9 +310,12 @@ impl Reports {
         let controls = async {
             let controlled = self
                 .ledger
-                .get_controlled_bookkeeping(scope, company_id)
+                .get_controlled_bookkeeping_on(client, scope, company_id)
                 .await;
-            let duties = self.ledger.get_duty_separation(scope, company_id).await;
+            let duties = self
+                .ledger
+                .get_duty_separation_on(client, scope, company_id)
+                .await;
             (controlled, duties)
         }
         .await;
@@ -346,7 +359,7 @@ impl Reports {
         });
 
         let (state, summary) = match read(
-            self.ledger.opening_progress(scope, company_id).await,
+            self.ledger.opening_progress_on(client, scope, company_id).await,
             |e| matches!(e, LedgerError::Unauthorized),
             |_| false,
         ) {
@@ -376,7 +389,7 @@ impl Reports {
 
         areas.push(
             match read(
-                s.receivables.get_setup(scope, company_id).await,
+                s.receivables.get_setup_on(client, scope, company_id).await,
                 |e| matches!(e, bilibi_finance_receivables::ReceivableError::Unauthorized),
                 |e| {
                     matches!(
@@ -414,7 +427,7 @@ impl Reports {
 
         areas.push(
             match read(
-                s.payables.get_settings(scope, company_id).await,
+                s.payables.get_settings_on(client, scope, company_id).await,
                 |e| matches!(e, bilibi_finance_payables::PayablesError::Unauthorized),
                 |e| {
                     matches!(
@@ -452,7 +465,7 @@ impl Reports {
 
         areas.push(
             match read(
-                s.sst.list_registrations(scope, company_id).await,
+                s.sst.list_registrations_on(client, scope, company_id).await,
                 |e| matches!(e, bilibi_finance_sst::SstError::Unauthorized),
                 |_| false,
             ) {
@@ -494,7 +507,7 @@ impl Reports {
 
         areas.push(
             match read(
-                s.einvoice.setup(scope, company_id).await,
+                s.einvoice.setup_on(client, scope, company_id).await,
                 |e| matches!(e, bilibi_finance_einvoice::EinvoiceError::Unauthorized),
                 |_| false,
             ) {
@@ -549,7 +562,9 @@ impl Reports {
 
         areas.push(
             match read(
-                s.reconciliation.list_bank_accounts(scope, company_id).await,
+                s.reconciliation
+                    .list_bank_accounts_on(client, scope, company_id)
+                    .await,
                 |e| {
                     matches!(
                         e,
@@ -596,7 +611,7 @@ impl Reports {
 
         areas.push(
             match read(
-                s.payroll.get_settings(scope, company_id).await,
+                s.payroll.get_settings_on(client, scope, company_id).await,
                 |e| matches!(e, bilibi_finance_payroll::PayrollError::Unauthorized),
                 |e| {
                     matches!(
@@ -634,7 +649,9 @@ impl Reports {
 
         areas.push(
             match read(
-                s.fixed_assets.list_categories(scope, company_id).await,
+                s.fixed_assets
+                    .list_categories_on(client, scope, company_id)
+                    .await,
                 |e| {
                     matches!(
                         e,

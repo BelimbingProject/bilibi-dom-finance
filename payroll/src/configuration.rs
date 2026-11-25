@@ -11,9 +11,19 @@ use serde_json::Value;
 impl Payroll {
     pub async fn get_settings(&self, scope: &Scope, company: i64) -> Result<Settings> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company, VIEW).await?;
+        self.get_settings_on(&**client, scope, company).await
+    }
+
+    /// Authorized settings read on the caller's connection.
+    pub async fn get_settings_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+    ) -> Result<Settings> {
+        authorize(client, scope, company, VIEW).await?;
         store::decode(
-            store::settings(&**client, scope.tenant(), company)
+            store::settings(client, scope.tenant(), company)
                 .await?
                 .ok_or(PayrollError::PayrollNotConfigured)?,
         )

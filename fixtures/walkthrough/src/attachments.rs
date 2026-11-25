@@ -180,7 +180,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let staff = sign_in(db, services, 1, 3).await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let raw_client = db.get().await?;
 
     println!("\n== Attachments: storage not configured yet");
     let draft = records::add(db, 1, COMPANY, "open", "Bill 12", date(2026, 3, 15), false).await?;
@@ -271,13 +270,13 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await,
     );
     raw(
-        &raw_client,
+        &**db.get().await?,
         "UPDATE of a retention change",
         "UPDATE finance_attachments_retention_changes SET years = 99",
     )
     .await;
     raw(
-        &raw_client,
+        &**db.get().await?,
         "a shorter retention change inserted raw",
         "INSERT INTO finance_attachments_retention_changes(tenant_id,company_id,change_number,years,reason,changed_by_user_id,changed_at) VALUES(1,1,NULL,3,'raw',1,NULL)",
     )
@@ -814,6 +813,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         result
     });
 
+    drop(client);
     println!("\n== Retention of one attachment: extension and legal hold");
     if let Some(on_posted) = &on_posted {
         show(
@@ -884,13 +884,13 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
                 .map(|a| brief(&a)),
         );
         raw(
-            &raw_client,
+            &**db.get().await?,
             "the artifact's retain-until moved earlier raw",
             &format!("UPDATE base_artifacts SET retain_until = retain_until - interval '1 year' WHERE public_id = '{}'", on_posted.artifact_id),
         )
         .await;
         raw(
-            &raw_client,
+            &**db.get().await?,
             "the held artifact's row deleted raw",
             &format!(
                 "DELETE FROM base_artifacts WHERE public_id = '{}'",
@@ -908,7 +908,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             "-- Base Artifacts changed out of band (an operator extends and holds; the module has no event yet)"
         );
         raw(
-            &raw_client,
+            &**db.get().await?,
             "operator extends the artifact in Base and holds it",
             &format!(
                 "UPDATE base_artifacts SET retain_until = retain_until + interval '2 years', legal_hold_at = clock_timestamp() WHERE public_id = '{id}'; \
@@ -925,7 +925,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
                 .await,
         );
         raw(
-            &raw_client,
+            &**db.get().await?,
             "release it again so the walkthrough's artifacts can age out",
             &format!(
                 "UPDATE base_artifacts SET legal_hold_at = NULL WHERE public_id = '{}'",
@@ -967,7 +967,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "viewer, who finalised the record and holds no attachments grant but reads the ledger, queues the refresh",
         finalise(db, &boundary, &attachments, &viewer, moving).await?,
     );
-    println!("jobs:\n  {}", job_states(&raw_client).await?);
+    println!("jobs:\n  {}", job_states(&**db.get().await?).await?);
     let executor = Executor::from_services(
         services,
         Config {
@@ -982,7 +982,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
     println!(
         "before the tenant granted the principal anything:\n  {}",
-        job_states(&raw_client).await?
+        job_states(&**db.get().await?).await?
     );
     let grants = services.get::<Grants>("base/authz.grants")?;
     grants
@@ -994,7 +994,10 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         finalise(db, &boundary, &attachments, &viewer, moving).await?,
     );
     tokio::time::sleep(Duration::from_secs(3)).await;
-    println!("after the grant:\n  {}", job_states(&raw_client).await?);
+    println!(
+        "after the grant:\n  {}",
+        job_states(&**db.get().await?).await?
+    );
     let _ = stop.send(true);
     let _ = worker.await;
     show(
@@ -1015,7 +1018,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
 
     println!("\n== Revoked grant, archived company, evidence");
     raw(
-        &raw_client,
+        &**db.get().await?,
         "a direct deny of finance.attachments.create for staff",
         "INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,3,'finance.attachments.create',false) ON CONFLICT DO NOTHING",
     )
@@ -1027,7 +1030,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await
             .map(|a| brief(&a)),
     );
-    raw(&raw_client, "the deny removed", "DELETE FROM principal_capabilities WHERE tenant_id=1 AND user_id=3 AND capability='finance.attachments.create'").await;
+    raw(&**db.get().await?, "the deny removed", "DELETE FROM principal_capabilities WHERE tenant_id=1 AND user_id=3 AND capability='finance.attachments.create'").await;
     let archived_record = records::add(
         db,
         1,
@@ -1045,7 +1048,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await,
     );
     raw(
-        &raw_client,
+        &**db.get().await?,
         "company 002 archived",
         "UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=2",
     )
@@ -1072,7 +1075,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .map(|l| l.len()),
     );
     raw(
-        &raw_client,
+        &**db.get().await?,
         "company 002 restored",
         "UPDATE companies SET status='active' WHERE tenant_id=1 AND id=2",
     )
@@ -1120,6 +1123,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
 
     println!("\n== The database's own refusals");
+    let raw_client = db.get().await?;
     raw(
         &raw_client,
         "UPDATE of an attachment",
