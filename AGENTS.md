@@ -107,9 +107,9 @@ they govern this code and are not copied here.
   `<record>-modal`, because the shared dialog owns `{id}-title`,
   `{id}-description` and `{id}-body`, and a `description` field in a dialog
   named `<record>` would share its id and lose its label.
-  The shared `Modal` draws an X in every state, including when a read was
-  refused and renders no form (the three `*/src/web/opening.rs`). Say that
-  refusal in the dialog's own `Alert`, not
+  Keep a Cancel or Close in every state of a dialog, including one whose read
+  was refused and renders no form (the three `*/src/web/opening.rs`): the
+  shared `Modal` draws no X. Say that refusal in the dialog's own `Alert`, not
   its `FlashGroup`, which floats past the dialog's edge on a phone, and link
   the place that clears it (Go to opening balances).
   Let that round trip also drop what a changed field no longer allows (a group

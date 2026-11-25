@@ -735,6 +735,7 @@ impl State {
                     tone: StatusKind::Info,
                     role: instance["environment"].as_str().unwrap_or(""),
                     label: instance["label"].as_str().unwrap_or(""),
+                    message: instance["notice"].as_str().unwrap_or(""),
                     ..bilibi_ui::InstanceBanner::default()
                 })?;
                 if let Some(attestation) = &review.attestation {
