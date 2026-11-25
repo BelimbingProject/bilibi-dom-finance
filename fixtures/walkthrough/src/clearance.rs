@@ -38,6 +38,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 pub(crate) type Outcome<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -123,6 +124,11 @@ struct Held {
     rejection_requested: bool,
 }
 
+struct CancelGate {
+    entered: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+}
+
 /// The stand-in authority's state for the run.
 #[derive(Default)]
 pub(crate) struct StandIn {
@@ -137,6 +143,7 @@ pub(crate) struct StandIn {
     rate_limited: Mutex<Vec<String>>,
     log: Mutex<Vec<String>>,
     counter: AtomicUsize,
+    cancel_gate: Mutex<Option<CancelGate>>,
 }
 
 impl StandIn {
@@ -183,6 +190,16 @@ impl StandIn {
             .find(|held| held.uuid == uuid)
             .cloned()
     }
+    pub(crate) fn pause_next_cancel(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered, wait) = oneshot::channel();
+        let (resume, paused) = oneshot::channel();
+        *self.cancel_gate.lock().expect("cancel gate") = Some(CancelGate {
+            entered,
+            resume: paused,
+        });
+        (wait, resume)
+    }
+
     pub(crate) fn invalidate(&self, code: &str) {
         self.set(code, |held| held.status = "Invalid");
     }
@@ -415,7 +432,7 @@ async fn details(State(standin): Shared, headers: HeaderMap, Path(uuid): Path<St
         "documentStatusReason": Value::Null});
     if matches!(held.status, "Valid" | "Cancelled") {
         body["longId"] = json!(held.long_id);
-        if held.code == "NE5-RECHECK" {
+        if matches!(held.code.as_str(), "NE5-000" | "NE5-RECHECK") {
             if let Some(time) = held.validation_time {
                 body["dateTimeValidated"] = json!(time);
             }
@@ -504,8 +521,19 @@ async fn cancel(
         )
             .into_response();
     }
+    let gate = standin.cancel_gate.lock().expect("cancel gate").take();
+    if let Some(gate) = gate {
+        let _ = gate.entered.send(());
+        if gate.resume.await.is_err() {
+            return unavailable();
+        }
+    }
     standin.set(&held.code, |held| held.status = "Cancelled");
-    Json(json!({"uuid": uuid, "status": "Cancelled"})).into_response()
+    let mut response = json!({"uuid": uuid, "status": "Cancelled"});
+    if held.code == "NE5-000" {
+        response["dateTimeValidated"] = json!("2026-11-06T09:13:00Z");
+    }
+    Json(response).into_response()
 }
 
 /// Serves the stand-in on a free loopback port and answers its base URL.

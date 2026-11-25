@@ -272,7 +272,12 @@ impl Recorded {
     /// The validation instant supplied by the authority.
     pub fn validated_at(&self) -> Option<Timestamp> {
         self.submission_events()
-            .filter(|event| event.authority_status.as_deref() == Some("Valid"))
+            .filter(|event| {
+                matches!(
+                    event.authority_status.as_deref(),
+                    Some("Valid" | "Cancelled")
+                )
+            })
             .find_map(|event| {
                 event
                     .response

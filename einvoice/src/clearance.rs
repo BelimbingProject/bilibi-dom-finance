@@ -1509,8 +1509,14 @@ impl Einvoice {
         if current.status() == "cancelled" {
             return Ok(false);
         }
-        if current.status_evidence_sequence() != recorded.status_evidence_sequence()
-            || !CANCELLABLE.contains(&current.status())
+        let observed_evidence = recorded.status_evidence_sequence();
+        let evidence_changed = current.status_evidence_sequence() != observed_evidence;
+        let lifecycle_changed = current.events.iter().any(|prior| {
+            Some(prior.sequence) > observed_evidence
+                && documents::STATUS_EVENTS.contains(&prior.event.as_str())
+        });
+        if !CANCELLABLE.contains(&current.status())
+            || (evidence_changed && (event.event != "cancelled" || lifecycle_changed))
         {
             return Err(EinvoiceError::NotCancellable);
         }

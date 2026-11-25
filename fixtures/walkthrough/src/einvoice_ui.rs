@@ -445,6 +445,27 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     has(&refreshed, "Sandbox");
     has(&refreshed, "einvoice-document-qr");
     has(&refreshed, "Needs attention");
+    for (field, code) in [
+        ("receivable_account", "1100"),
+        ("revenue_account", "4000"),
+        ("tax_account", "2100"),
+    ] {
+        assert_eq!(
+            save(
+                db,
+                services,
+                &manager,
+                target,
+                &format!("finance.einvoice.posting.{field}"),
+                json!(code)
+            )
+            .await?,
+            "stored"
+        );
+    }
+    let posted = facade.retry_posting(&manager, 1, ids[0]).await?;
+    assert!(posted.ledger_entry_id.is_some());
+    assert!(posted.validated_at.is_none());
     let pdf = event(&mut detail, &manager, json!({"type":"generate_pdf"})).await?;
     has(&pdf, "PDF generated.");
     let d = facade.get_document(&manager, 1, ids[0]).await?;
@@ -585,13 +606,33 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         json!({"type":"review_cancel", "cancel[reason]":reason}),
     )
     .await?;
-    has(
-        &event(&mut detail, &manager, json!({"type":"cancel"})).await?,
-        "The authority cancelled the document.",
+    let (entered, resume) = authority.pause_next_cancel();
+    let refresh_while_cancelling = async {
+        tokio::time::timeout(Duration::from_secs(10), entered).await??;
+        let refreshed = facade.refresh_status(&manager, 1, ids[0]).await?;
+        assert_eq!(refreshed.status, "valid");
+        assert_eq!(
+            refreshed.events.last().map(|event| event.event.as_str()),
+            Some("status_checked")
+        );
+        assert!(refreshed.validated_at.is_none());
+        resume
+            .send(())
+            .map_err(|_| "cancellation reply was not waiting")?;
+        Ok::<_, Box<dyn std::error::Error>>(())
+    };
+    let cancel = event(&mut detail, &manager, json!({"type":"cancel"}));
+    let (cancelled_body, ()) = tokio::try_join!(cancel, refresh_while_cancelling)?;
+    has(&cancelled_body, "The authority cancelled the document.");
+    let cancelled_view = facade.get_document(&manager, 1, ids[0]).await?;
+    assert_eq!(cancelled_view.status, "cancelled");
+    assert_eq!(cancelled_view.ledger_entry_id, posted.ledger_entry_id);
+    assert!(cancelled_view.reversal_entry_id.is_some());
+    assert_eq!(
+        cancelled_view.validated_at,
+        Some("2026-11-06T09:13:00Z".parse()?)
     );
-    assert!(facade
-        .get_document(&manager, 1, ids[0])
-        .await?
+    assert!(cancelled_view
         .events
         .iter()
         .any(|e| e.event == "cancelled" && e.reason.as_deref() == Some(reason)));
@@ -621,6 +662,10 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         })
         .await?;
     check_pdf(&historical.bytes, "Status dokumen", "Dibatalkan", None)?;
+    assert_eq!(
+        printed_field(&pdf_text(&historical.bytes)?, "Masa disahkan"),
+        "6 Nov 2026, 09:13 UTC"
+    );
     let (first, second) = tokio::try_join!(
         facade.generate_pdf(&manager, 1, ids[0]),
         facade.generate_pdf(&manager, 1, ids[0]),
