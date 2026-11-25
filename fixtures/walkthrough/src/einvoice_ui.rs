@@ -565,7 +565,32 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         Err(Error::Forbidden)
     ));
     grants.set_direct(&admin, 1, VIEW, None).await?;
-    let cancelled = facade.generate_pdf(&manager, 1, ids[0]).await?;
+    let historical = downloads
+        .0
+        .serve(DownloadRequest {
+            operation: "pdf",
+            scope: &manager,
+            path: &path,
+            query: &HashMap::new(),
+        })
+        .await?;
+    check_pdf(&historical.bytes, "Status dokumen", "Dibatalkan", None)?;
+    let (first, second) = tokio::try_join!(
+        facade.generate_pdf(&manager, 1, ids[0]),
+        facade.generate_pdf(&manager, 1, ids[0]),
+    )?;
+    assert_eq!(first, second);
+    let cancelled = first;
+    let current = facade.get_document(&manager, 1, ids[0]).await?;
+    assert_eq!(
+        current
+            .events
+            .iter()
+            .rev()
+            .take_while(|event| event.event == "pdf_generated")
+            .count(),
+        1
+    );
     assert_ne!(cancelled.artifact_id, updated.artifact_id);
     let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
     check_pdf(&file.bytes, "Status dokumen", "Dibatalkan", None)?;
@@ -624,7 +649,10 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let file = facade.read_pdf(&manager, 1, &pdf.artifact_id).await?;
     let text = pdf_text(&file.bytes)?;
     assert!(
-        text.contains("Status dokumen") && text.contains("September 2026"),
+        printed_field(&text, "Status dokumen") == "Dikeluarkan, menunggu penghantaran"
+            && text.contains("1 Sep 2026")
+            && text.contains("30 Sep 2026")
+            && !text.contains("September 2026"),
         "{text}"
     );
     println!(

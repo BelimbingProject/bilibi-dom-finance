@@ -239,22 +239,11 @@ pub(super) fn document(
         .billing_period_end
         .as_deref()
         .map(dates::display_text);
-    let consolidation_month = document
-        .details
-        .consolidation_month
-        .as_deref()
-        .and_then(|month| {
-            format!("{month}-01")
-                .parse::<jiff::civil::Date>()
-                .ok()
-                .map(dates::month)
-        });
     let billing = joined(
         [
             billing_start.as_deref(),
             billing_end.as_deref(),
             document.details.billing_period_description.as_deref(),
-            consolidation_month.as_deref(),
         ]
         .into_iter()
         .flatten(),

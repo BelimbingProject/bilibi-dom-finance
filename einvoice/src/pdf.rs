@@ -237,11 +237,15 @@ impl Einvoice {
                 "finance.einvoice.generate_pdf",
             )
             .await?;
-        let (_, current) = self
+        let (current_view, current) = self
             .prepare_document_pdf_on(tx.sql(), scope, company_id, document_id)
             .await?;
         if current.identity != identity {
             return Err(EinvoiceError::Artifacts("print_inputs_changed"));
+        }
+        if let Some(stored) = identity.stored(&current_view.events) {
+            tx.rollback().await?;
+            return Ok(stored);
         }
         let PdfIdentity {
             template_version,
@@ -365,9 +369,8 @@ impl Einvoice {
         })
     }
 
-    /// The bytes of a PDF [`Einvoice::generate_pdf`] stored, for the download
-    /// route (`finance.einvoice.view`, asked again by Base Artifacts, which
-    /// verifies the bytes and records the read).
+    /// The PDF download (`finance.einvoice.view`). A saved link predating
+    /// cancellation returns a copy showing the cancellation.
     pub async fn read_pdf(
         &self,
         scope: &Scope,
@@ -393,14 +396,18 @@ impl Einvoice {
             .and_then(|id| id.parse().ok())
             .ok_or(EinvoiceError::Unauthorized)?;
         let events = documents::events(&**client, scope.tenant(), company_id, document_id).await?;
-        let source_indices: Vec<usize> = events
+        let response = events
             .iter()
             .rev()
             .filter(|event| event.event == "pdf_generated")
             .filter_map(|event| event.response.as_ref())
             .find(|response| response["artifact_id"].as_str() == Some(artifact_id))
-            .and_then(|response| serde_json::from_value(response["source_indices"].clone()).ok())
             .ok_or(EinvoiceError::Unauthorized)?;
+        let rendered_at = response["as_of_sequence"]
+            .as_i64()
+            .ok_or(EinvoiceError::Unauthorized)?;
+        let source_indices: Vec<usize> = serde_json::from_value(response["source_indices"].clone())
+            .map_err(|_| EinvoiceError::Unauthorized)?;
         if !source_indices.is_empty() {
             let links =
                 documents::source_links_of(&**client, scope.tenant(), company_id, &[document_id])
@@ -417,9 +424,25 @@ impl Einvoice {
                 return Err(EinvoiceError::Unauthorized);
             }
         }
+        let status = documents::status(&**client, scope.tenant(), company_id, document_id).await?;
+        let bytes = if status.as_deref() == Some("cancelled")
+            && !events
+                .iter()
+                .any(|event| event.event == "cancelled" && i64::from(event.sequence) <= rendered_at)
+        {
+            let (_, current) = self
+                .prepare_document_pdf_on(&**client, scope, company_id, document_id)
+                .await?;
+            self.artifacts
+                .print_document(&client, current.inline)
+                .await
+                .map_err(artifacts)?
+        } else {
+            document.bytes
+        };
         Ok(PdfFile {
             filename: filename(&document.metadata.reference),
-            bytes: document.bytes,
+            bytes,
         })
     }
 }
