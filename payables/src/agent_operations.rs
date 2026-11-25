@@ -866,7 +866,15 @@ impl ReadHandler for Read {
         Box::pin(async move {
             let result:Result<Value>=async {
                 let company=id(v,"company_id")?;
-                authorize_on(c,s,company,VIEW).await?;
+                let pinned_document = matches!(self, Self::Document)
+                    && (!v["as_of"].is_null()
+                        || ["through_entry_number", "through_opening_batch_id", "through_settlement_number"]
+                            .iter().any(|key| !v[key].is_null()));
+                // A standalone dated read owns its repeatable-read snapshot.
+                let owns_snapshot = (matches!(self, Self::Aging) || pinned_document) && c.detached_read();
+                if !owns_snapshot {
+                    authorize_on(c,s,company,VIEW).await?;
+                }
                 let tenant=s.tenant();
                 let limit=v["page_size"].as_i64().unwrap_or(100);
                 // Requests and payments may list newest first: the cursor is then
@@ -879,12 +887,19 @@ impl ReadHandler for Read {
                         let as_of=v["as_of"].as_str().ok_or(PayablesError::InvalidOption)?.parse().map_err(|_|invalid("as_of","must be YYYY-MM-DD"))?;
                         let mut options=AgingQuery{through_entry_number:v["through_entry_number"].as_i64(),through_opening_batch_id:v["through_opening_batch_id"].as_i64(),through_settlement_number:v["through_settlement_number"].as_i64(),..Default::default()};
                         if let Some(days)=v["bucket_days"].as_array(){options.bucket_days=days.iter().map(|n|n.as_i64().and_then(|n|i32::try_from(n).ok()).ok_or(PayablesError::InvalidOption)).collect::<Result<Vec<_>>>()?;}
-                        // A read has no company write lock; use the same report facade as the page.
-                        json!(owner()?.aged_payables(s,company,as_of,&options).await?)
+                        let owner = owner()?;
+                        let report = if owns_snapshot {
+                            owner.aged_payables(s, company, as_of, &options).await?
+                        } else if let Some(tx) = c.transaction() {
+                            owner.aged_payables_on(tx, s, company, as_of, &options).await?
+                        } else {
+                            owner.aged_payables_on(c.sql_client().await?, s, company, as_of, &options).await?
+                        };
+                        json!(report)
                     },
-                    Self::Vendor=>json!(owner()?.get_vendor(s,company,id(v,"vendor_id")?).await?),
+                    Self::Vendor=>json!(owner()?.vendor_on(c,s,company,id(v,"vendor_id")?).await?),
                     Self::Vendors=>{
-                        let records=owner()?.list_vendors(s,company,after,limit).await?;
+                        let records=owner()?.vendors_on(c,s,company,after,limit).await?;
                         let more=records.len()==limit as usize;
                         let next=if more { records.last().map(|v|v.id) } else { None };
                         json!({"records":records,"next_after_id":next})
@@ -898,8 +913,16 @@ impl ReadHandler for Read {
                     }).await?),
                     Self::DocumentSummary=>json!(owner()?.summarize_documents_on(c,s,company,v.get("as_of").filter(|d|!d.is_null()).map(|_|date(v,"as_of")).transpose()?).await?),
                     Self::Document=>{
-                        if !v["as_of"].is_null()||["through_entry_number","through_opening_batch_id","through_settlement_number"].iter().any(|key|!v[key].is_null()) {
-                            let (document,pins)=owner()?.document_at(s,company,id(v,"document_id")?,v).await?;
+                        if pinned_document {
+                            let owner = owner()?;
+                            let document = id(v,"document_id")?;
+                            let (document, pins) = if owns_snapshot {
+                                owner.document_at(s, company, document, v).await?
+                            } else if let Some(tx) = c.transaction() {
+                                owner.document_at_on(tx, s, company, document, v).await?
+                            } else {
+                                owner.document_at_on(c.sql_client().await?, s, company, document, v).await?
+                            };
                             let mut record=document_value(document);
                             record["balance_pins"]=pins;
                             record

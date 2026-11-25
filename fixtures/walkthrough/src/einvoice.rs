@@ -612,6 +612,7 @@ pub async fn prove(
         )
         .await?
         .get(0);
+    drop(client);
     println!("audit rows that carry a secret in the clear: {audited}");
 
     println!("\n== Setup after configuring");
@@ -672,7 +673,10 @@ pub async fn prove(
         "finance.einvoice.production.portal_url",
     ] {
         let settings = services.get::<Settings>("base/settings.store")?;
-        println!("{key}: {}", settings.get_global(&**client, key).await?);
+        println!(
+            "{key}: {}",
+            settings.get_global(&**db.get().await?, key).await?
+        );
     }
 
     drafts_and_payloads(&einvoice, manager, company, &pems).await?;

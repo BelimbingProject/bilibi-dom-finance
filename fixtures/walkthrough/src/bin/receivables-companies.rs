@@ -207,10 +207,12 @@ async fn main() -> Outcome<()> {
         .envelope(create_key);
     let customer_id = answer["result"]["record"]["id"].as_i64().unwrap();
     tx.commit().await?;
+    drop(raw);
     let customer = ar.get_customer(&manager, 1, customer_id).await?;
     let company = customer.party.id;
     let owner = PartyId::Organisation(OrganisationId::new(company)?);
     let source = OrganisationId::new(1)?;
+    let mut raw = db.get().await?;
     let role = bilibi_company::relationship_role_by_code(&**raw, &manager, "customer")
         .await?
         .unwrap();
@@ -257,6 +259,7 @@ async fn main() -> Outcome<()> {
         .unwrap();
     assert!(candidates.iter().any(|c| c["id"] == company));
     tx.rollback().await?;
+    drop(raw);
     refused(
         ar.create_customer(&manager, 1, &duplicate).await,
         "new_company.create_anyway",
@@ -269,11 +272,13 @@ async fn main() -> Outcome<()> {
 
     // Late audit failure occurs after Core wrote its company and relationship.
     // Every business row and every capture must disappear with the failed write.
+    let raw = db.get().await?;
     let before: (i64, i64, i64, i64) = {
         let r=raw.query_one("SELECT (SELECT count(*) FROM companies),(SELECT count(*) FROM company_relationships),(SELECT count(*) FROM finance_receivables_customers),(SELECT count(*) FROM base_audit_mutations)",&[]).await?;
         (r.get(0), r.get(1), r.get(2), r.get(3))
     };
     raw.batch_execute("CREATE FUNCTION customer_capture_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='finance.receivables.customer' THEN RAISE EXCEPTION 'customer composition audit fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER customer_capture_fault BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION customer_capture_fault()").await?;
+    drop(raw);
     let failed = ar
         .create_customer(
             &manager,
@@ -281,10 +286,12 @@ async fn main() -> Outcome<()> {
             &json!({"new_company":{"name":"Violet Observatory"}}),
         )
         .await;
+    let raw = db.get().await?;
     raw.batch_execute("DROP TRIGGER customer_capture_fault ON base_audit_mutations; DROP FUNCTION customer_capture_fault()").await?;
     assert!(failed.is_err());
     let r=raw.query_one("SELECT (SELECT count(*) FROM companies),(SELECT count(*) FROM company_relationships),(SELECT count(*) FROM finance_receivables_customers),(SELECT count(*) FROM base_audit_mutations)",&[]).await?;
     assert_eq!(before, (r.get(0), r.get(1), r.get(2), r.get(3)));
+    drop(raw);
     println!(
         "PASS: late Finance audit failure rolls back company, relationship, customer and all captures"
     );
@@ -358,6 +365,7 @@ async fn main() -> Outcome<()> {
     let issue_key = "finance.receivables.document.issue";
     let issue = handler(&registry, issue_key);
     let issue_input = json!({"company_id":1,"document_id":draft.id});
+    let mut raw = db.get().await?;
     let mut tx = mutations
         .begin(&mut raw, manager.mutation_context("walkthrough.issue"))
         .await?;
@@ -439,9 +447,11 @@ async fn main() -> Outcome<()> {
         .iter()
         .map(|r| r.get(0))
         .collect();
+    drop(raw);
     for role in roles {
         grants.assign_role(&admin, 3, role, false).await?;
     }
+    let mut raw = db.get().await?;
     let sales_role: i64 = raw
         .query_one(
             "SELECT id FROM roles WHERE tenant_id=1 AND code='sales_workflow'",
@@ -467,8 +477,10 @@ async fn main() -> Outcome<()> {
         )
         .await?;
     tx.commit().await?;
+    drop(raw);
     let sales = sign_in(&db, &app.services, 1, 3).await?;
     assert_eq!(ar.get_document(&sales, 1, draft.id).await?.status, "issued");
+    let mut raw = db.get().await?;
     let mut tx = mutations
         .begin(&mut raw, sales.mutation_context("walkthrough.sales_send"))
         .await?;
@@ -481,10 +493,12 @@ async fn main() -> Outcome<()> {
         Err(bilibi_agent_api::Error::Forbidden)
     ));
     tx.rollback().await?;
+    drop(raw);
     println!("PASS: sales workflow reads the issued invoice but its send is refused");
     let key = statement_cover::SEND;
     let statement = handler(&registry, key);
     let input = statement_cover::draft(&db, &app.services, &admin, &manager, customer.id).await?;
+    let mut raw = db.get().await?;
     let mut tx = mutations
         .begin(&mut raw, manager.mutation_context("walkthrough.statement"))
         .await?;
@@ -513,7 +527,9 @@ async fn main() -> Outcome<()> {
     println!(
         "PASS: statement review names the open invoice and its balance; rollback leaves no email"
     );
+    drop(raw);
     if std::env::var_os("BILIBI_PDF_CHROMIUM").is_some() {
+        let mut raw = db.get().await?;
         let mut tx = mutations
             .begin(&mut raw, manager.mutation_context(key))
             .await?;
@@ -525,6 +541,7 @@ async fn main() -> Outcome<()> {
         assert_eq!(review["result"]["body"], input["body"]);
         statement.commit(&mut tx, &manager, &input).await?;
         tx.commit().await?;
+        drop(raw);
         statement_cover::delivered(&db, &app.services, &input).await?;
         let pdf = ar.print_document(&manager, 1, draft.id).await?;
         assert!(pdf.bytes.starts_with(b"%PDF-"));
@@ -541,6 +558,7 @@ async fn main() -> Outcome<()> {
     println!("PASS: expired billing attachment falls back to primary address");
     let stale_draft = ar.create_draft(&manager, 1, &invoice("2026-08-31")).await?;
     let stale_input = json!({"company_id":1,"document_id":stale_draft.id});
+    let mut raw = db.get().await?;
     let review_tx = mutations
         .begin(
             &mut raw,
@@ -555,6 +573,7 @@ async fn main() -> Outcome<()> {
     // address, then try to commit on a new one. The review is local to the
     // transaction it was taken on, so the old preview cannot authorise it.
     review_tx.rollback().await?;
+    drop(raw);
     addresses
         .update(
             &manager,
@@ -568,6 +587,7 @@ async fn main() -> Outcome<()> {
             },
         )
         .await?;
+    let mut raw = db.get().await?;
     let mut review_tx = mutations
         .begin(
             &mut raw,
@@ -585,6 +605,7 @@ async fn main() -> Outcome<()> {
         "changed billing must require a fresh issue review"
     );
     review_tx.rollback().await?;
+    drop(raw);
     assert_eq!(
         ar.get_document(&manager, 1, stale_draft.id).await?.status,
         "draft"
@@ -597,7 +618,7 @@ async fn main() -> Outcome<()> {
         frozen.party_line1
     );
     assert_eq!(
-        bilibi_address::billing_address(&**raw, &manager, owner, &day("2026-09-01"))
+        bilibi_address::billing_address(&**db.get().await?, &manager, owner, &day("2026-09-01"))
             .await?
             .unwrap()
             .address
@@ -638,7 +659,6 @@ async fn main() -> Outcome<()> {
         "PASS: all customer composition checks completed; invoice {} customer {}",
         draft.id, customer.id
     );
-    drop(raw);
     if std::env::var("CUSTOMERS_BROWSER").as_deref() == Ok("1") {
         bilibi_walkthrough_fixture::set_instance_role(&db, "development").await?;
         let executor =

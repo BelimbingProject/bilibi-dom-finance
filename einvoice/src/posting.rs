@@ -561,6 +561,7 @@ impl Einvoice {
         )
         .await?;
         tx.commit().await?;
+        drop(client);
         match reason {
             Some(reason) => Err(EinvoiceError::LedgerFollowUpFailed(reason)),
             None => self.view(scope, company_id, document_id).await,

@@ -541,9 +541,10 @@ impl Reports {
         periods: &[Period],
         through_entry_number: Option<i64>,
     ) -> Result<ProfitAndLoss> {
-        self.authorize(scope, company_id, VIEW).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
         Ok(self
-            .profit_and_loss_read(scope, company_id, periods, through_entry_number)
+            .profit_and_loss_read(&**client, scope, company_id, periods, through_entry_number)
             .await?
             .0)
     }
@@ -556,9 +557,10 @@ impl Reports {
         dates: &[Date],
         through_entry_number: Option<i64>,
     ) -> Result<BalanceSheet> {
-        self.authorize(scope, company_id, VIEW).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
         Ok(self
-            .balance_sheet_read(scope, company_id, dates, through_entry_number)
+            .balance_sheet_read(&**client, scope, company_id, dates, through_entry_number)
             .await?
             .0)
     }
@@ -573,9 +575,10 @@ impl Reports {
         dates: &[Date],
         through_entry_number: Option<i64>,
     ) -> Result<CashPosition> {
-        self.authorize(scope, company_id, VIEW).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
         Ok(self
-            .cash_position_read(scope, company_id, dates, through_entry_number)
+            .cash_position_read(&**client, scope, company_id, dates, through_entry_number)
             .await?
             .0)
     }
@@ -609,7 +612,8 @@ impl Reports {
         comparison: Period,
         through_entry_number: Option<i64>,
     ) -> Result<Overview> {
-        self.authorize(scope, company_id, VIEW).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, company_id, VIEW).await?;
         let current = periods_checked(&[period])?[0];
         let previous = periods_checked(&[comparison])?[0];
         let windows = vec![
@@ -619,7 +623,7 @@ impl Reports {
             balance(previous.to),
         ];
         let read = self
-            .read(scope, company_id, windows, through_entry_number)
+            .read(&**client, scope, company_id, windows, through_entry_number)
             .await?;
         let (flows, stocks) = read.columns.split_at(2);
         let profit = read.arrange("profit_and_loss");
@@ -771,7 +775,13 @@ impl Reports {
         let (content, chart, layout, membership, through) = match issue {
             Issue::ProfitAndLoss(periods) => {
                 let (report, read, arranged) = self
-                    .profit_and_loss_read(scope, company_id, periods, through_entry_number)
+                    .profit_and_loss_read(
+                        tx.sql(),
+                        scope,
+                        company_id,
+                        periods,
+                        through_entry_number,
+                    )
                     .await?;
                 (
                     json(&report)?,
@@ -783,7 +793,7 @@ impl Reports {
             }
             Issue::BalanceSheet(dates) => {
                 let (report, read, arranged) = self
-                    .balance_sheet_read(scope, company_id, dates, through_entry_number)
+                    .balance_sheet_read(tx.sql(), scope, company_id, dates, through_entry_number)
                     .await?;
                 (
                     json(&report)?,
@@ -795,7 +805,7 @@ impl Reports {
             }
             Issue::CashPosition(dates) => {
                 let (report, read, arranged) = self
-                    .cash_position_read(scope, company_id, dates, through_entry_number)
+                    .cash_position_read(tx.sql(), scope, company_id, dates, through_entry_number)
                     .await?;
                 (
                     json(&report)?,
@@ -808,10 +818,13 @@ impl Reports {
             Issue::TrialBalance(as_of) => {
                 let report = self
                     .ledger
-                    .trial_balance(scope, company_id, *as_of, through_entry_number)
+                    .trial_balance_on(tx.sql(), scope, company_id, *as_of, through_entry_number)
                     .await?;
-                let chart = self.ledger.list_accounts(scope, company_id).await?;
-                let layout = self.layout(scope, company_id).await?;
+                let chart = self
+                    .ledger
+                    .list_accounts_on(tx.sql(), scope, company_id)
+                    .await?;
+                let layout = self.layout(tx.sql(), scope, company_id).await?;
                 let through = report.through_entry_number;
                 (json(&report)?, chart, layout, json!({}), through)
             }
@@ -942,6 +955,7 @@ impl Reports {
 
     async fn profit_and_loss_read(
         &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
         company_id: i64,
         periods: &[Period],
@@ -950,6 +964,7 @@ impl Reports {
         let periods = periods_checked(periods)?;
         let read = self
             .read(
+                client,
                 scope,
                 company_id,
                 periods.iter().map(|p| flow(*p)).collect(),
@@ -982,13 +997,17 @@ impl Reports {
 
     async fn balance_sheet_read(
         &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
         company_id: i64,
         dates: &[Date],
         through: Option<i64>,
     ) -> Result<(BalanceSheet, Read, Arranged)> {
         let dates = dates_checked(dates)?;
-        let years = self.ledger.list_fiscal_years(scope, company_id).await?;
+        let years = self
+            .ledger
+            .list_fiscal_years_on(client, scope, company_id)
+            .await?;
         let starts: Vec<Option<Date>> = dates
             .iter()
             .map(|date| {
@@ -1006,7 +1025,9 @@ impl Reports {
                 ..TotalsQuery::default()
             })
         }));
-        let mut read = self.read(scope, company_id, windows, through).await?;
+        let mut read = self
+            .read(client, scope, company_id, windows, through)
+            .await?;
         let current_columns = read.columns.split_off(dates.len());
         let arranged = read.arrange("balance_sheet");
         let sheet = statement::balance_sheet(
@@ -1053,6 +1074,7 @@ impl Reports {
 
     async fn cash_position_read(
         &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
         company_id: i64,
         dates: &[Date],
@@ -1061,6 +1083,7 @@ impl Reports {
         let dates = dates_checked(dates)?;
         let read = self
             .read(
+                client,
                 scope,
                 company_id,
                 dates.iter().map(|d| balance(*d)).collect(),
@@ -1088,6 +1111,7 @@ impl Reports {
     /// ledger validates the number.
     async fn read(
         &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
         company_id: i64,
         windows: Vec<TotalsQuery>,
@@ -1100,7 +1124,7 @@ impl Reports {
             window.through_entry_number = through;
             let totals = self
                 .ledger
-                .account_totals(scope, company_id, &window)
+                .account_totals_on(client, scope, company_id, &window)
                 .await?;
             through = Some(totals.through_entry_number);
             columns.push(
@@ -1113,8 +1137,11 @@ impl Reports {
             book.get_or_insert((totals.currency_code, totals.minor_units));
         }
         let (currency_code, minor_units) = book.ok_or(ReportsError::InvalidOption)?;
-        let accounts = self.ledger.list_accounts(scope, company_id).await?;
-        let mut layout = self.layout(scope, company_id).await?;
+        let accounts = self
+            .ledger
+            .list_accounts_on(client, scope, company_id)
+            .await?;
+        let mut layout = self.layout(client, scope, company_id).await?;
         // An explicit cash section wins, including an intentionally empty one.
         // The fallback covers exactly the bank accounts, never their descendants.
         let mut cash_defaults = None;
@@ -1122,7 +1149,7 @@ impl Reports {
             let ids = self
                 .sources
                 .reconciliation
-                .cash_account_ids(scope, company_id)
+                .cash_account_ids_on(client, scope, company_id)
                 .await
                 .map_err(|error| match error {
                     bilibi_finance_reconciliation::ReconciliationError::Failed(error) => {
@@ -1166,12 +1193,16 @@ impl Reports {
     /// The company's [`SECTIONS`] value as Base Settings resolves it (company,
     /// then tenant, then the empty default). A stored value that no longer
     /// validates groups nothing rather than grouping wrongly.
-    async fn layout(&self, scope: &Scope, company_id: i64) -> Result<Value> {
+    async fn layout(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Value> {
         let target = Target::Company(
             OrganisationId::new(company_id).map_err(|_| ReportsError::CompanyNotFound)?,
         );
-        let client = self.db.get().await.map_err(Error::from)?;
-        match self.settings.get(&**client, scope, target, SECTIONS).await {
+        match self.settings.get(client, scope, target, SECTIONS).await {
             Ok(resolved) => Ok(resolved.value),
             Err(Error::Invalid) => Ok(Value::Array(Vec::new())),
             Err(error) => Err(refusal(error)),

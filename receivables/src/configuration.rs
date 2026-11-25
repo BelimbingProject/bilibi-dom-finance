@@ -25,9 +25,19 @@ pub(super) struct Prepared {
 impl Receivables {
     pub async fn get_setup(&self, scope: &Scope, company: i64) -> Result<Setup> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company, VIEW).await?;
+        self.get_setup_on(&**client, scope, company).await
+    }
+
+    /// Authorized setup read on the caller's connection.
+    pub async fn get_setup_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+    ) -> Result<Setup> {
+        authorize(client, scope, company, VIEW).await?;
         Ok(store::decode(
-            store::find(&**client, SETUPS, scope.tenant(), company, None)
+            store::find(client, SETUPS, scope.tenant(), company, None)
                 .await?
                 .ok_or(R::NotConfigured)?,
         )?)

@@ -157,7 +157,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let viewer = sign_in(db, services, 1, 2).await?;
     let staff = sign_in(db, services, 1, 3).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let raw_client = db.get().await?;
 
     println!("\n== Reconciliation: the chart a bank account maps");
     for (code, name, account_type) in [
@@ -908,7 +907,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "statements with a kept file / statements: {} / {}",
         kept.len(),
         {
-            raw_client
+            db.get()
+                .await?
                 .query_one(
                     "SELECT count(*) FROM finance_reconciliation_statements",
                     &[],
@@ -921,10 +921,20 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     println!("\n== Two sessions import the same new file at once");
     let racing = "Date,Details,Ref,Amount,Balance\n2026-01-20,Race,,10.00,1061.75\n";
     let (race_a, race_b) = (file("race-a.csv", racing), file("race-b.csv", racing));
-    let (one, two) = tokio::join!(
-        reconciliation.import_statement(&manager, COMPANY, operating.id, &race_a),
-        reconciliation.import_statement(&staff, COMPANY, operating.id, &race_b),
-    );
+    let competing = {
+        let reconciliation = reconciliation.clone();
+        let staff = staff.clone();
+        let account_id = operating.id;
+        tokio::spawn(async move {
+            reconciliation
+                .import_statement(&staff, COMPANY, account_id, &race_b)
+                .await
+        })
+    };
+    let one = reconciliation
+        .import_statement(&manager, COMPANY, operating.id, &race_a)
+        .await;
+    let two = competing.await?;
     println!(
         "one imported, the other refused: {}",
         match (&one, &two) {
@@ -967,6 +977,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
 
     println!("\n== The database's own refusals");
+    let raw_client = db.get().await?;
     raw(
         &raw_client,
         "UPDATE of a statement",
@@ -1037,6 +1048,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .get(0);
         println!("audit mutations recorded for finance.reconciliation.{kind}: {count}");
     }
+    drop(raw_client);
     show(
         "viewer reads the statement evidence page",
         reconciliation
@@ -1080,7 +1092,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .map(|_| ()),
     );
     println!("datasets: {:?}", Reconciliation::evidence_datasets());
-    let lines_held: i64 = raw_client
+    let lines_held: i64 = db
+        .get()
+        .await?
         .query_one(
             "SELECT count(*) FROM finance_reconciliation_statement_lines",
             &[],

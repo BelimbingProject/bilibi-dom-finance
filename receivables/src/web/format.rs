@@ -252,6 +252,7 @@ pub(super) fn modal(
         width,
         description,
         role: "",
+        close_icon: false,
         flash: Some(flash.map()),
         body,
     })

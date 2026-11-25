@@ -616,7 +616,18 @@ impl Payables {
         q: &PaymentRequestPageQuery,
     ) -> Result<PaymentRequestPage> {
         let c = self.db.get().await.map_err(Error::from)?;
-        authorize(&**c, s, company, VIEW).await?;
+        self.page_payment_requests_on(&**c, s, company, q).await
+    }
+
+    /// Authorized payment-request page on the caller's connection.
+    pub async fn page_payment_requests_on(
+        &self,
+        c: &(impl tokio_postgres::GenericClient + Sync),
+        s: &Scope,
+        company: i64,
+        q: &PaymentRequestPageQuery,
+    ) -> Result<PaymentRequestPage> {
+        authorize(c, s, company, VIEW).await?;
         if q.page < 1
             || ![25, 50, 100].contains(&q.page_size)
             || q.search.chars().count() > 255
@@ -631,7 +642,7 @@ impl Payables {
         let rows=c.query("SELECT r.id FROM finance_payables_payment_requests r LEFT JOIN finance_payables_payment_request_events e ON e.tenant_id=r.tenant_id AND e.company_id=r.company_id AND e.request_id=r.id WHERE r.tenant_id=$1 AND r.company_id=$2 AND ($3::text IS NULL OR COALESCE(e.event,'submitted')=$3) AND (strpos(lower(r.party_name),lower($4))>0 OR EXISTS(SELECT 1 FROM finance_payables_payment_request_allocations a JOIN finance_payables_documents d ON d.tenant_id=a.tenant_id AND d.company_id=a.company_id AND d.id=a.document_id WHERE a.tenant_id=r.tenant_id AND a.company_id=r.company_id AND a.request_id=r.id AND strpos(lower(d.party_code),lower($4))>0) OR strpos(lower(COALESCE(r.reference,'')),lower($4))>0 OR strpos(r.request_number::text,$4)>0) ORDER BY r.request_number DESC LIMIT $5 OFFSET $6",&[&s.tenant(),&company,&q.status,&search,&q.page_size,&offset]).await?;
         let mut requests = Vec::new();
         for row in rows {
-            requests.push(request(&**c, s.tenant(), company, row.get(0)).await?);
+            requests.push(request(c, s.tenant(), company, row.get(0)).await?);
         }
         Ok(PaymentRequestPage {
             requests,

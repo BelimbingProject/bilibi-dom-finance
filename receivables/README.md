@@ -224,7 +224,9 @@ A direct import accepts 1–500 invoices and unapplied credits with positive res
 
 Evidence datasets `opening_batch` and `opening_item` retain the exact source export and each imported item's source facts; `opening_stage` and `opening_decision` retain staged batches and each reconciliation or replacement decision. The accountant remains responsible for source completeness, mapping, cut-off, source-period tax, YTD/comparative reporting and reconciliation sign-off.
 
-Aging and control-account reports return `through_entry_number`, `through_opening_batch_id` and `through_settlement_number`. Retain all three with the as-of date; `report.pins()` supplies `BalancePins` for a tie-out. `AgingOptions` accepts all three. Zero excludes that stream. A tuple that splits a settlement from its source item, original event or paired ledger entry is refused. Pool-owning report reads use one repeatable-read snapshot.
+Aging and control-account reports return `through_entry_number`, `through_opening_batch_id` and `through_settlement_number`. Retain all three with the as-of date; `report.pins()` supplies `BalancePins` for a tie-out. `AgingOptions` accepts all three. Zero excludes that stream. A tuple that splits a settlement from its source item, original event or paired ledger entry is refused. Pool-owning dated reads use one repeatable-read transaction. Reads on a caller-supplied connection capture the three boundaries in one SQL statement. Supply a repeatable-read transaction when the rest of the read must share that snapshot.
+
+A dated document read shows zero outstanding for an original opening invoice or opening credit once its replacement is effective on the requested date and included in the opening-batch boundary. The original balance can still be reproduced with the earlier pins.
 
 ### Opening credits and source tax facts
 

@@ -48,7 +48,6 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
     let staff = sign_in(db, services, 1, 3).await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let raw = db.get().await?;
     let jan = date(2026, 1, 1);
     let invoice = |day: &str, code: &str, price: &str| {
         json!({"kind":"invoice","series_id":f.invoice_series,"customer_id":f.customer,"issue_date":day,
@@ -459,11 +458,13 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
             Some("Walkthrough: customer suspended after finalising"),
         )
         .await?;
-    raw.execute(
-        "UPDATE companies SET legal_name='SST later customer' WHERE tenant_id=1 AND id=22",
-        &[],
-    )
-    .await?;
+    db.get()
+        .await?
+        .execute(
+            "UPDATE companies SET legal_name='SST later customer' WHERE tenant_id=1 AND id=22",
+            &[],
+        )
+        .await?;
     let renamed = sst.get_return(&manager, COMPANY, id).await?;
     assert_eq!(renamed.figures.as_ref(), Some(snapshot));
     assert!(
@@ -666,10 +667,14 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
     let service = sst
         .open_return(&manager, COMPANY, TaxType::ServiceTax, jan)
         .await?;
-    let (one, two) = tokio::join!(
-        sst.finalise_return(&manager, COMPANY, service.id),
-        sst.finalise_return(&second, COMPANY, service.id)
-    );
+    let competing = {
+        let sst = sst.clone();
+        let second = second.clone();
+        let return_id = service.id;
+        tokio::spawn(async move { sst.finalise_return(&second, COMPANY, return_id).await })
+    };
+    let one = sst.finalise_return(&manager, COMPANY, service.id).await;
+    let two = competing.await?;
     let outcomes = [one.is_ok(), two.is_ok()];
     assert_eq!(outcomes.iter().filter(|ok| **ok).count(), 1);
     refused(
@@ -891,7 +896,9 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
         sst.get_return(&staff, COMPANY, id).await,
         |e| matches!(e, E::Unauthorized),
     )?;
-    raw.batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
+    db.get()
+        .await?
+        .batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
         .await?;
     let archived = sst
         .add_adjustment(
@@ -902,6 +909,7 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
         )
         .await;
     let readable = sst.get_return(&manager, COMPANY, id).await;
+    let raw = db.get().await?;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
     refused("an archived company", archived, |e| {
@@ -953,6 +961,7 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
     db_refuses(&raw, "discarding a finalised return", &format!("INSERT INTO finance_sst_return_events (tenant_id,company_id,event_number,return_id,action,reason,recorded_by_user_id,recorded_at) VALUES (1,1,0,{id},'discarded','x',1,now())"), "is already closed").await?;
     let foreign = deduction.id;
     db_refuses(&raw, "withdrawing another return's adjustment", &format!("INSERT INTO finance_sst_return_adjustments (tenant_id,company_id,adjustment_number,return_id,action,withdraws_adjustment_id,description,recorded_by_user_id,recorded_at) VALUES (1,1,0,{june_id},'withdrawn',{foreign},'Again',1,now())"), "is not an adjustment added to return").await?;
+    drop(raw);
     let added = sst
         .add_adjustment(
             &manager,
@@ -964,7 +973,7 @@ pub(crate) async fn run(f: Fixture<'_>) -> Outcome<()> {
     sst.withdraw_adjustment(&manager, COMPANY, added.id, Some("Not approved"))
         .await?;
     let twice = added.id;
-    db_refuses(&raw, "a second withdrawal of one adjustment", &format!("INSERT INTO finance_sst_return_adjustments (tenant_id,company_id,adjustment_number,return_id,action,withdraws_adjustment_id,description,recorded_by_user_id,recorded_at) VALUES (1,1,0,{june_id},'withdrawn',{twice},'Again',1,now())"), "finance_sst_return_adjustments_withdraws_unique").await?;
+    db_refuses(&**db.get().await?, "a second withdrawal of one adjustment", &format!("INSERT INTO finance_sst_return_adjustments (tenant_id,company_id,adjustment_number,return_id,action,withdraws_adjustment_id,description,recorded_by_user_id,recorded_at) VALUES (1,1,0,{june_id},'withdrawn',{twice},'Again',1,now())"), "finance_sst_return_adjustments_withdraws_unique").await?;
     println!("NS2: open, adjust, withdraw, finalise, snapshot, reproduce, posted-since, amend, discard, overlap, export, evidence, scope, audit and SQL proofs passed");
     Ok(())
 }

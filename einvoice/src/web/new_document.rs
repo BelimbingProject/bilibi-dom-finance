@@ -789,6 +789,7 @@ impl NewDocument {
             width: ModalWidth::Wide,
             description: "The e-invoice is recorded and sent to the tax authority. It cannot be edited afterwards.",
             role: "",
+            close_icon: false,
             flash: None,
             body: form,
         })

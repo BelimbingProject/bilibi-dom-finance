@@ -368,6 +368,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let c = db.get().await?;
     assert!(c.execute("UPDATE finance_payables_vendors SET record_id='1' WHERE tenant_id=1 AND company_id=1 AND id=$1",&[&id]).await.is_err());
+    drop(c);
     for dataset in ["vendor"] {
         assert!(!p
             .evidence_page(&manager, 1, dataset, Some(500), None)

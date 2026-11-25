@@ -624,8 +624,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await
             .map(|r| r.id),
     );
-    let client = db.get().await?;
-    client
+    db.get()
+        .await?
         .execute(
             "UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1",
             &[],
@@ -665,7 +665,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
                 )
             }),
     );
-    client
+    db.get()
+        .await?
         .execute(
             "UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1",
             &[],
@@ -826,7 +827,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
              content,chart,layout,membership,issued_by_user_id,issued_at) VALUES(1,1,'x','1',-1,'{}','[]','{}','{}',1,now())",
         ),
     ] {
-        match client.execute(sql, &[]).await {
+        match db.get().await?.execute(sql, &[]).await {
             Ok(rows) => println!("the database {step}: {rows} rows"),
             Err(error) => println!(
                 "the database refuses when someone {step}: {}",

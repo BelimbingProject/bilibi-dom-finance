@@ -791,10 +791,9 @@ async fn prove(db: &Db, services: &Services) -> Outcome<()> {
         );
         import.commit(&mut tx, &s, &input).await?;
         tx.commit().await?;
-        let mut retry = db.get().await?;
         let tx = l
             .write(
-                &mut retry,
+                &mut raw,
                 &s,
                 company,
                 &[bilibi_finance_ledger::MANAGE_ACCOUNTS],

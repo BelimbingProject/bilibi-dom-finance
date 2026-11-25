@@ -54,7 +54,17 @@ impl Einvoice {
         q: &DocumentQuery,
     ) -> Result<DocumentPage> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company, VIEW).await?;
+        self.list_documents_on(&**client, scope, company, q).await
+    }
+
+    async fn list_documents_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+        q: &DocumentQuery,
+    ) -> Result<DocumentPage> {
+        authorize(client, scope, company, VIEW).await?;
         let authority = Self::authority();
         if q.page == 0
             || q.page > 1_000_000
@@ -135,8 +145,7 @@ impl Einvoice {
         let ids: Vec<i64> = row.get(1);
         let statuses: Vec<String> = row.get(2);
         // Document snapshots are immutable; only status can move between reads.
-        let mut entries =
-            documents::summaries(&**client, &authority, tenant, company, &ids).await?;
+        let mut entries = documents::summaries(client, &authority, tenant, company, &ids).await?;
         for (entry, status) in entries.iter_mut().zip(statuses) {
             entry.status = status;
         }
@@ -166,15 +175,24 @@ impl Einvoice {
     /// the totals of the documents list with `needs_action`, so the count and
     /// the list it links to agree.
     pub async fn failed_documents(&self, scope: &Scope, company: i64) -> Result<FailedDocuments> {
-        let environment = {
-            let client = self.db.get().await.map_err(Error::from)?;
-            authorize(&**client, scope, company, VIEW).await?;
-            self.environment(&**client, scope, company).await?
-        };
+        let client = self.db.get().await.map_err(Error::from)?;
+        self.failed_documents_on(&**client, scope, company).await
+    }
+
+    /// Authorized failed-document counts on the caller's connection.
+    pub async fn failed_documents_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+    ) -> Result<FailedDocuments> {
+        authorize(client, scope, company, VIEW).await?;
+        let environment = self.environment(client, scope, company).await?;
         let mut counts = [0; 2];
         for (count, status) in counts.iter_mut().zip(["refused", "invalid"]) {
             *count = self
-                .list_documents(
+                .list_documents_on(
+                    client,
                     scope,
                     company,
                     &DocumentQuery {

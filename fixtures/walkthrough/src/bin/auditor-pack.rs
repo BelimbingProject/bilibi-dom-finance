@@ -330,25 +330,28 @@ async fn main() -> Outcome<()> {
         .account_totals_on(&snapshot, &manager, COMPANY, &TotalsQuery::default())
         .await?
         .through_entry_number;
-    ledger
-        .post_entry(
-            &manager,
-            COMPANY,
-            &entry(debit, credit, amount),
-            &PostOptions::default(),
-        )
-        .await?;
-    ledger
-        .update_account(
-            &manager,
-            COMPANY,
-            debit,
-            &bilibi_finance_ledger::AccountChange {
-                name: Some("Changed after snapshot".into()),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let writer = {
+        let ledger = ledger.clone();
+        let manager = manager.clone();
+        let new_entry = entry(debit, credit, amount);
+        tokio::spawn(async move {
+            ledger
+                .post_entry(&manager, COMPANY, &new_entry, &PostOptions::default())
+                .await?;
+            ledger
+                .update_account(
+                    &manager,
+                    COMPANY,
+                    debit,
+                    &bilibi_finance_ledger::AccountChange {
+                        name: Some("Changed after snapshot".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+        })
+    };
+    writer.await??;
     let old_chart = ledger
         .list_accounts_on(&snapshot, &manager, COMPANY)
         .await?;
@@ -443,8 +446,8 @@ async fn main() -> Outcome<()> {
         .await
         .is_err());
     {
-        let client = db.get().await?;
-        client
+        db.get()
+            .await?
             .execute(
                 "UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1",
                 &[],
@@ -471,7 +474,8 @@ async fn main() -> Outcome<()> {
             }
             other => panic!("Expected CompanyArchived for a posting, received {other:?}"),
         }
-        client
+        db.get()
+            .await?
             .execute(
                 "UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1",
                 &[],
