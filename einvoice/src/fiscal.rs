@@ -245,11 +245,27 @@ impl Einvoice {
         bilibi_company::authorize_work_target(&**client, scope, company_id, VIEW)
             .await
             .map_err(crate::refusal)?;
+        self.source_records_on(
+            &**client,
+            scope,
+            company_id,
+            &links[..links.len().min(NAMED_SOURCES)],
+        )
+        .await
+    }
+
+    pub(crate) async fn source_records_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        links: &[SourceLink],
+    ) -> Result<Vec<Option<SourceRecord>>> {
         let mut records = Vec::new();
-        for link in links.iter().take(NAMED_SOURCES) {
+        for link in links {
             let source = self
                 .ledger
-                .fiscal_source_on(&**client, scope, company_id, &link.module, &link.record)
+                .fiscal_source_on(client, scope, company_id, &link.module, &link.record)
                 .await
                 .map_err(ledger_error)?;
             records.push(source.map(|source| SourceRecord {

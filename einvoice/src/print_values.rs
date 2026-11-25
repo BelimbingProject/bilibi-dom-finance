@@ -123,6 +123,7 @@ struct LineText {
 
 pub(super) fn document(
     view: &DocumentView,
+    source: &str,
     compiled: &CompiledPrint<'_>,
     malay: bool,
     accent: bilibi_ui::Accent,
@@ -203,7 +204,7 @@ pub(super) fn document(
     let rows: Vec<PrintFacts<'_>> = rows.iter().map(|row| row.as_slice()).collect();
 
     let document_type = kind(&document.document_type, malay);
-    let issued_at = document.issued_at.to_string();
+    let issued_at = bilibi_finance_ledger::dates::display_utc(document.issued_at);
     let supplier = party(&document.supplier, malay);
     let buyer = party(&document.buyer, malay);
     let mut facts = vec![
@@ -228,12 +229,6 @@ pub(super) fn document(
         .into_iter()
         .flatten(),
     );
-    let source = view
-        .source_links
-        .iter()
-        .map(|link| format!("{} {}", link.module, link.record))
-        .collect::<Vec<_>>()
-        .join("\n");
     let billing = joined(
         [
             document.details.billing_period_start.as_deref(),
@@ -244,24 +239,17 @@ pub(super) fn document(
         .into_iter()
         .flatten(),
     );
-    let payment = joined(
-        [
-            document.details.payment_means_code.as_deref(),
-            document.details.payment_terms.as_deref(),
-        ]
-        .into_iter()
-        .flatten(),
-    );
-    let published = view.validated_at.map(|at| at.to_string());
+    let published = view
+        .validated_at
+        .map(bilibi_finance_ledger::dates::display_utc);
     let exchange = document.exchange_rate.map(|rate| rate.to_string());
     for (id, value) in [
         ("uuid", view.document_uuid.as_deref()),
         ("validated", published.as_deref()),
         ("original", Some(original.as_str())),
-        ("source", Some(source.as_str())),
+        ("source", Some(source)),
         ("exchange", exchange.as_deref()),
         ("billing", Some(billing.as_str())),
-        ("payment", Some(payment.as_str())),
     ] {
         if let Some(value) = value.filter(|text| !text.trim().is_empty()) {
             facts.push((id, PrintValue::Text(value)));

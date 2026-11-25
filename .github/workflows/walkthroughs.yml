@@ -119,8 +119,10 @@ jobs:
       - name: Build the app and every walkthrough
         run: cargo build --locked -p bilibi-web -p bilibi-finance-walkthrough-fixture --bins
 
-      - name: Enable sandboxed Chrome for e-invoice PDFs
+      - name: Prepare e-invoice PDF tools
         run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils zbar-tools
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           echo "WALKTHROUGH_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
 

@@ -149,12 +149,6 @@ pub(crate) static CONTRACT: PrintContract = PrintContract {
             "Tempoh bil",
             "2026-10-01 to 2026-10-30"
         )),
-        optional(text!(
-            "payment",
-            "Payment details",
-            "Butiran bayaran",
-            "Bank transfer"
-        )),
         PrintField {
             id: "lines",
             labels: &[],

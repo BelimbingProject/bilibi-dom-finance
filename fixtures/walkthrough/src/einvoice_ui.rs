@@ -13,7 +13,14 @@ use bilibi_settings::Target;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{download::*, page::*};
 use serde_json::{json, Value};
-use std::{collections::HashMap, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::Write,
+    os::unix::fs::PermissionsExt,
+    process::{Command, Output, Stdio},
+    sync::Arc,
+    time::Duration,
+};
 
 type Outcome<T> = Result<T, Box<dyn std::error::Error>>;
 type State = Box<dyn LiveState<Scope, Error>>;
@@ -54,6 +61,80 @@ async fn mount(services: &Services, scope: &Scope, id: Option<i64>) -> Outcome<S
 }
 fn has(body: &LiveBody, text: &str) {
     assert!(body.html.contains(text), "missing {text}: {}", body.html);
+}
+
+fn pdf_command(program: &str, args: &[&str], input: &[u8]) -> Outcome<Output> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not start {program}: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("missing command input")?
+        .write_all(input)?;
+    Ok(child.wait_with_output()?)
+}
+
+fn check_pdf(bytes: &[u8], status: &str, validation: Option<&str>) -> Outcome<()> {
+    assert!(bytes.starts_with(b"%PDF-"));
+    let text = pdf_command("pdftotext", &["-", "-"], bytes)?;
+    assert!(
+        text.status.success(),
+        "pdftotext: {}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let text = String::from_utf8(text.stdout)?;
+    assert!(
+        text.contains(status),
+        "missing fiscal status {status}: {text}"
+    );
+    let mut urls = Vec::new();
+    for page in 1..=text.split_terminator('\x0c').count() {
+        let page = page.to_string();
+        let raster = pdf_command(
+            "pdftoppm",
+            &[
+                "-f",
+                &page,
+                "-l",
+                &page,
+                "-r",
+                "150",
+                "-png",
+                "-singlefile",
+                "-",
+            ],
+            bytes,
+        )?;
+        assert!(
+            raster.status.success(),
+            "pdftoppm: {}",
+            String::from_utf8_lossy(&raster.stderr)
+        );
+        let scan = pdf_command(
+            "zbarimg",
+            &[
+                "--quiet",
+                "--raw",
+                "--nodbus",
+                "-Sdisable",
+                "-Sqrcode.enable",
+                "-",
+            ],
+            &raster.stdout,
+        )?;
+        match scan.status.code() {
+            Some(0) => urls.extend(String::from_utf8(scan.stdout)?.lines().map(str::to_owned)),
+            Some(4) => assert!(scan.stdout.is_empty()),
+            _ => return Err(format!("zbarimg: {}", String::from_utf8_lossy(&scan.stderr)).into()),
+        }
+    }
+    assert_eq!(urls, validation.into_iter().collect::<Vec<_>>());
+    Ok(())
 }
 
 pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Sender<bool>> {
@@ -279,10 +360,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         1,
         "PDF is not a status transition"
     );
-    let validation_url = d
-        .validation_url
-        .as_deref()
-        .ok_or("no synthetic authority link")?;
+    let validation_url = "https://example.test/DOCUMENT-0001/share/LONGID-0001-WALKTHROUGH";
+    assert_eq!(d.validation_url.as_deref(), Some(validation_url));
     let artifact = d.pdf_artifact_id.ok_or("no rendered e-invoice artifact")?;
     assert_eq!(
         facade.generate_pdf(&manager, 1, ids[0]).await?.artifact_id,
@@ -305,13 +384,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
             query: &HashMap::new(),
         })
         .await?;
-    assert!(file.bytes.starts_with(b"%PDF-"));
+    check_pdf(&file.bytes, "Validated", Some(validation_url))?;
+    publish_malay_letter(db, services, &admin).await?;
+    let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
+    assert_ne!(malay.artifact_id, path["artifact_id"]);
+    let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
+    check_pdf(&translated.bytes, "Disahkan", Some(validation_url))?;
     if let Some(proof_dir) = &proof_dir {
         std::fs::write(format!("{proof_dir}/validated.pdf"), &file.bytes)?;
-        publish_malay_letter(db, services, &admin).await?;
-        let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
-        assert_ne!(malay.artifact_id, path["artifact_id"]);
-        let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
         std::fs::write(
             format!("{proof_dir}/validated-ms-letter.pdf"),
             &translated.bytes,
@@ -327,6 +407,26 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         })
         .await
         .is_err());
+    assert_eq!(
+        save(
+            db,
+            services,
+            &admin,
+            Target::Global,
+            "finance.einvoice.sandbox.portal_url",
+            json!("https://changed.example.test"),
+        )
+        .await?,
+        "stored"
+    );
+    let updated = facade.generate_pdf(&manager, 1, ids[0]).await?;
+    assert_ne!(updated.artifact_id, malay.artifact_id);
+    let file = facade.read_pdf(&manager, 1, &updated.artifact_id).await?;
+    check_pdf(
+        &file.bytes,
+        "Disahkan",
+        Some("https://changed.example.test/DOCUMENT-0001/share/LONGID-0001-WALKTHROUGH"),
+    )?;
     has(
         &event(&mut detail, &manager, json!({"type":"open_cancel"})).await?,
         "einvoice-document-cancel-modal",
@@ -387,10 +487,28 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     ));
     grants.set_direct(&admin, 1, VIEW, None).await?;
     let cancelled = facade.generate_pdf(&manager, 1, ids[0]).await?;
-    assert_ne!(cancelled.artifact_id, path["artifact_id"]);
+    assert_ne!(cancelled.artifact_id, updated.artifact_id);
+    let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
+    check_pdf(&file.bytes, "Dibatalkan", None)?;
     if let Some(proof_dir) = &proof_dir {
-        let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
         std::fs::write(format!("{proof_dir}/cancelled.pdf"), &file.bytes)?;
+    }
+    let invalid = facade
+        .issue_document(&manager, 1, &draft("NE5-INVALID", None))
+        .await?
+        .document
+        .id;
+    facade.submit_document(&manager, 1, invalid).await?;
+    clearance::jobs_settle(&**db.get().await?).await?;
+    assert_eq!(
+        facade.get_document(&manager, 1, invalid).await?.status,
+        "invalid"
+    );
+    let invalid = facade.generate_pdf(&manager, 1, invalid).await?;
+    let file = facade.read_pdf(&manager, 1, &invalid.artifact_id).await?;
+    check_pdf(&file.bytes, "Tidak sah", None)?;
+    if let Some(proof_dir) = &proof_dir {
+        std::fs::write(format!("{proof_dir}/invalid.pdf"), &file.bytes)?;
     }
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))

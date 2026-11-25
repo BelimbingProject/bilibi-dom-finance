@@ -12,6 +12,7 @@ use bilibi_templates::Origin;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use qrcode::render::svg;
 use qrcode::QrCode;
+use rsa::sha2::{Digest, Sha256};
 use serde::Serialize;
 use serde_json::json;
 
@@ -114,9 +115,8 @@ fn source_sequence(events: &[StatusEvent]) -> i32 {
 impl Einvoice {
     /// Renders the document as a PDF through Base Artifacts and records it on
     /// a `pdf_generated` event (`finance.einvoice.view`). The event keeps the
-    /// sequence of the last other event the PDF was rendered from; while the
-    /// document has gained none since, asking again answers that artifact and
-    /// records nothing. Base Artifacts needs a storage root and a retention
+    /// source event and print versions. An unchanged request returns the
+    /// recorded artifact. Base Artifacts needs a storage root and a retention
     /// period first (`Artifacts("policy")`). The audit action is
     /// `finance.einvoice.pdf.generated`.
     pub async fn generate_pdf(
@@ -167,6 +167,36 @@ impl Einvoice {
         drop(client);
         let view = self.view(scope, company_id, document_id).await?;
         let as_of = source_sequence(&view.events);
+        let client = self.db.get().await.map_err(Error::from)?;
+        let records = self
+            .source_records_on(&**client, scope, company_id, &view.source_links)
+            .await?;
+        drop(client);
+        let source_indices: Vec<_> = records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| record.as_ref().map(|_| index))
+            .collect();
+        let source = records
+            .iter()
+            .flatten()
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let compiled = CONTRACT
+            .compile(&resolved.language, &resolved.layout)
+            .map_err(|_| EinvoiceError::Artifacts("invalid_print_layout"))?;
+        let inline = print_values::document(
+            &view,
+            &source,
+            &compiled,
+            resolved.language.split('-').next() == Some("ms"),
+            accent,
+        )?;
+        let mut digest = Sha256::new();
+        digest.update(format!("{:?}:", inline.paper()));
+        digest.update(inline.html().as_bytes());
+        let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
         if let Some(stored) = view
             .events
             .iter()
@@ -174,8 +204,9 @@ impl Einvoice {
             .find(|event| event.event == "pdf_generated")
             .and_then(|event| event.response.as_ref())
             .filter(|response| {
-                response["as_of_sequence"].as_i64() == Some(i64::from(as_of))
+                response["data_version"].as_str() == Some(data_version.as_str())
                     && response["template_version"].as_str() == Some(template_version.as_str())
+                    && response["source_indices"] == json!(source_indices)
             })
             .and_then(|response| {
                 Some(PdfArtifact {
@@ -187,18 +218,9 @@ impl Einvoice {
         {
             return Ok(stored);
         }
-        let compiled = CONTRACT
-            .compile(&resolved.language, &resolved.layout)
-            .map_err(|_| EinvoiceError::Artifacts("invalid_print_layout"))?;
-        let inline = print_values::document(
-            &view,
-            &compiled,
-            resolved.language.split('-').next() == Some("ms"),
-            accent,
-        )?;
         let options = PdfOptions::default()
             .template_version(template_version.clone())
-            .data_version(format!("{}-event-{as_of}", CONTRACT.version));
+            .data_version(data_version.clone());
         let mut client = self.db.get().await.map_err(Error::from)?;
         let owned = self.artifacts.for_owner(scope, company, &ArtifactOwner);
         let stored = Box::pin(owned.render_inline_document(
@@ -231,6 +253,7 @@ impl Einvoice {
         event.response = Some(json!({
             "artifact_id": artifact.artifact_id, "byte_size": artifact.byte_size,
             "sha256": artifact.sha256, "as_of_sequence": as_of, "template_version": template_version,
+            "data_version": data_version, "source_indices": source_indices,
         }));
         documents::record_event(&mut tx, scope, company_id, document_id, event).await?;
         action(
@@ -266,6 +289,38 @@ impl Einvoice {
             .read(&mut client, artifact_id)
             .await
             .map_err(artifacts)?;
+        let document_id = document
+            .metadata
+            .reference
+            .subject
+            .strip_prefix("document-")
+            .and_then(|id| id.parse().ok())
+            .ok_or(EinvoiceError::Unauthorized)?;
+        let events = documents::events(&**client, scope.tenant(), company_id, document_id).await?;
+        let source_indices: Vec<usize> = events
+            .iter()
+            .rev()
+            .filter(|event| event.event == "pdf_generated")
+            .filter_map(|event| event.response.as_ref())
+            .find(|response| response["artifact_id"].as_str() == Some(artifact_id))
+            .and_then(|response| serde_json::from_value(response["source_indices"].clone()).ok())
+            .ok_or(EinvoiceError::Unauthorized)?;
+        if !source_indices.is_empty() {
+            let links =
+                documents::source_links_of(&**client, scope.tenant(), company_id, &[document_id])
+                    .await?;
+            let named = source_indices
+                .into_iter()
+                .map(|index| links.get(index).map(|(_, link)| link.clone()))
+                .collect::<Option<Vec<_>>>()
+                .ok_or(EinvoiceError::Unauthorized)?;
+            let records = self
+                .source_records_on(&**client, scope, company_id, &named)
+                .await?;
+            if records.iter().any(Option::is_none) {
+                return Err(EinvoiceError::Unauthorized);
+            }
+        }
         Ok(PdfFile {
             filename: filename(&document.metadata.reference),
             bytes: document.bytes,

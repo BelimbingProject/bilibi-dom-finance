@@ -57,10 +57,6 @@
       "field": "billing"
     },
     {
-      "type": "field",
-      "field": "payment"
-    },
-    {
       "type": "table",
       "rows": "lines",
       "columns": [

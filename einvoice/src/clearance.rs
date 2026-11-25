@@ -1243,6 +1243,7 @@ impl Einvoice {
                     .map_err(|_| retry_database())?;
                 if changed {
                     tx.commit().await.map_err(|_| retry_database())?;
+                    drop(client);
                     self.settle(scope, company_id, document.id, follow_up, writer)
                         .await;
                 }
