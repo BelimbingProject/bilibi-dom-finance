@@ -157,7 +157,6 @@ pub(crate) static CONTRACT: PrintContract = PrintContract {
             required_output: true,
             sample: PrintValue::Rows(&[SAMPLE]),
         },
-        money!("subtotal", "Subtotal", "Subjumlah"),
         money!("net", "Total excluding tax", "Jumlah tidak termasuk cukai"),
         money!("tax", "Total tax", "Jumlah cukai"),
         money!("gross", "Total including tax", "Jumlah termasuk cukai"),

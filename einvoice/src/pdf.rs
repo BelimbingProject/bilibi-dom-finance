@@ -133,12 +133,17 @@ fn current_pdfs(events: &[StatusEvent]) -> impl Iterator<Item = &Value> {
 
 struct PreparedPdf {
     inline: bilibi_artifacts::InlineDocument,
+    identity: PdfIdentity,
+}
+
+#[derive(PartialEq, Eq)]
+struct PdfIdentity {
     template_version: String,
     data_version: String,
     source_indices: Value,
 }
 
-impl PreparedPdf {
+impl PdfIdentity {
     fn stored(&self, events: &[StatusEvent]) -> Option<PdfArtifact> {
         current_pdfs(events)
             .filter(|response| {
@@ -168,7 +173,10 @@ impl Einvoice {
             return Ok(None);
         }
         match self.prepare_pdf_on(client, scope, company_id, view).await {
-            Ok(prepared) => Ok(prepared.stored(&view.events).map(|pdf| pdf.artifact_id)),
+            Ok(prepared) => Ok(prepared
+                .identity
+                .stored(&view.events)
+                .map(|pdf| pdf.artifact_id)),
             Err(EinvoiceError::Artifacts(_)) => Ok(None),
             Err(error) => Err(error),
         }
@@ -195,29 +203,17 @@ impl Einvoice {
             .map_err(crate::company_write)?;
         let company =
             OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
-        let recorded = documents::fetch(&**client, scope.tenant(), company_id, document_id)
-            .await?
-            .ok_or(EinvoiceError::DocumentNotFound)?;
-        let portal = self
-            .portal_on(&**client, &recorded.document.environment)
+        let (view, prepared) = self
+            .prepare_document_pdf_on(&**client, scope, company_id, document_id)
             .await?;
-        let view = recorded.view(&Self::authority(), &portal, false);
         let as_of = source_sequence(&view.events);
-        let prepared = self
-            .prepare_pdf_on(&**client, scope, company_id, &view)
-            .await?;
-        if let Some(stored) = prepared.stored(&view.events) {
+        let PreparedPdf { inline, identity } = prepared;
+        if let Some(stored) = identity.stored(&view.events) {
             return Ok(stored);
         }
-        let PreparedPdf {
-            inline,
-            template_version,
-            data_version,
-            source_indices,
-        } = prepared;
         let options = PdfOptions::default()
-            .template_version(template_version.clone())
-            .data_version(data_version.clone());
+            .template_version(identity.template_version.clone())
+            .data_version(identity.data_version.clone());
         let owned = self.artifacts.for_owner(scope, company, &ArtifactOwner);
         let stored = Box::pin(owned.render_inline_document(
             &mut client,
@@ -241,10 +237,17 @@ impl Einvoice {
                 "finance.einvoice.generate_pdf",
             )
             .await?;
-        let events = documents::events(tx.sql(), scope.tenant(), company_id, document_id).await?;
-        if source_sequence(&events) != as_of {
-            return Err(EinvoiceError::Artifacts("clearance_changed"));
+        let (_, current) = self
+            .prepare_document_pdf_on(tx.sql(), scope, company_id, document_id)
+            .await?;
+        if current.identity != identity {
+            return Err(EinvoiceError::Artifacts("print_inputs_changed"));
         }
+        let PdfIdentity {
+            template_version,
+            data_version,
+            source_indices,
+        } = identity;
         let mut event = NewEvent::new("pdf_generated");
         event.response = Some(json!({
             "artifact_id": artifact.artifact_id, "byte_size": artifact.byte_size,
@@ -263,6 +266,26 @@ impl Einvoice {
         .await?;
         tx.commit().await?;
         Ok(artifact)
+    }
+
+    async fn prepare_document_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        document_id: i64,
+    ) -> Result<(crate::DocumentView, PreparedPdf)> {
+        let recorded = documents::fetch(client, scope.tenant(), company_id, document_id)
+            .await?
+            .ok_or(EinvoiceError::DocumentNotFound)?;
+        let portal = self
+            .portal_on(client, &recorded.document.environment)
+            .await?;
+        let view = recorded.view(&Self::authority(), &portal, false);
+        let prepared = self
+            .prepare_pdf_on(client, scope, company_id, &view)
+            .await?;
+        Ok((view, prepared))
     }
 
     async fn prepare_pdf_on(
@@ -334,9 +357,11 @@ impl Einvoice {
         let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
         Ok(PreparedPdf {
             inline,
-            template_version,
-            data_version,
-            source_indices,
+            identity: PdfIdentity {
+                template_version,
+                data_version,
+                source_indices,
+            },
         })
     }
 

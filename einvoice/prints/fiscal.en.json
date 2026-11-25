@@ -95,10 +95,6 @@
       "blocks": [
         {
           "type": "field",
-          "field": "subtotal"
-        },
-        {
-          "type": "field",
           "field": "net"
         },
         {

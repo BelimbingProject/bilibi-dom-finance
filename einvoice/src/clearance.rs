@@ -1722,16 +1722,18 @@ impl Einvoice {
 
     pub(crate) async fn portal_on(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn OperationClient,
         environment: &str,
     ) -> Result<String> {
-        let portal = self
-            .settings
-            .get_global(
-                client,
-                &format!("finance.einvoice.{environment}.portal_url"),
-            )
-            .await?;
+        let key = format!("finance.einvoice.{environment}.portal_url");
+        let portal = match client.transaction() {
+            Some(tx) => self.settings.get_global(tx, &key).await?,
+            None => {
+                self.settings
+                    .get_global(client.sql_client().await?, &key)
+                    .await?
+            }
+        };
         Ok(portal.as_str().unwrap_or_default().to_owned())
     }
 

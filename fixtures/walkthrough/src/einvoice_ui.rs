@@ -91,13 +91,16 @@ fn pdf_text(bytes: &[u8]) -> Outcome<String> {
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn check_pdf(bytes: &[u8], status: &str, validation: Option<&str>) -> Outcome<()> {
+fn printed_field<'a>(text: &'a str, label: &str) -> &'a str {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    assert!(lines.any(|line| line == label), "missing {label}: {text}");
+    lines.next().unwrap_or_default()
+}
+
+fn check_pdf(bytes: &[u8], label: &str, status: &str, validation: Option<&str>) -> Outcome<()> {
     assert!(bytes.starts_with(b"%PDF-"));
     let text = pdf_text(bytes)?;
-    assert!(
-        text.contains(status),
-        "missing fiscal status {status}: {text}"
-    );
+    assert_eq!(printed_field(&text, label), status);
     let mut urls = Vec::new();
     for page in 1..=text.split_terminator('\x0c').count() {
         let page = page.to_string();
@@ -143,7 +146,7 @@ fn check_pdf(bytes: &[u8], status: &str, validation: Option<&str>) -> Outcome<()
     Ok(())
 }
 
-fn check_long_pdf(bytes: &[u8], expected: (f64, f64)) -> Outcome<()> {
+fn check_long_pdf(bytes: &[u8], total_label: &str, expected: (f64, f64)) -> Outcome<()> {
     let text = pdf_text(bytes)?;
     let pages: Vec<_> = text.split_terminator('\x0c').collect();
     assert!(pages.len() > 1, "expected a multipage fiscal PDF");
@@ -151,11 +154,13 @@ fn check_long_pdf(bytes: &[u8], expected: (f64, f64)) -> Outcome<()> {
         .iter()
         .skip(1)
         .any(|page| page.contains("Fiscal line 085")));
-    assert!(
-        text.split_whitespace()
-            .zip(text.split_whitespace().skip(1))
-            .any(|(currency, amount)| { currency == "MYR" && amount.parse::<f64>() == Ok(7208.0) }),
-        "85 lines at MYR 80 plus 6% tax should total MYR 7208: {text}"
+    let amount = printed_field(&text, total_label);
+    assert_eq!(
+        amount
+            .strip_prefix("MYR ")
+            .and_then(|value| value.parse::<f64>().ok()),
+        Some(7208.0),
+        "85 lines at MYR 80 plus 6% tax should total MYR 7208"
     );
     let info = pdf_command(
         "pdfinfo",
@@ -434,14 +439,24 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
             query: &HashMap::new(),
         })
         .await?;
-    check_pdf(&file.bytes, "Validated", Some(validation_url))?;
-    check_long_pdf(&file.bytes, (595.28, 841.89))?;
+    check_pdf(
+        &file.bytes,
+        "Document status",
+        "Validated",
+        Some(validation_url),
+    )?;
+    check_long_pdf(&file.bytes, "Total including tax", (595.28, 841.89))?;
     publish_malay_letter(db, services, &admin).await?;
     let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
     assert_ne!(malay.artifact_id, path["artifact_id"]);
     let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
-    check_pdf(&translated.bytes, "Disahkan", Some(validation_url))?;
-    check_long_pdf(&translated.bytes, (612.0, 792.0))?;
+    check_pdf(
+        &translated.bytes,
+        "Status dokumen",
+        "Disahkan",
+        Some(validation_url),
+    )?;
+    check_long_pdf(&translated.bytes, "Jumlah termasuk cukai", (612.0, 792.0))?;
     assert!(downloads
         .0
         .serve(DownloadRequest {
@@ -469,6 +484,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let file = facade.read_pdf(&manager, 1, &updated.artifact_id).await?;
     check_pdf(
         &file.bytes,
+        "Status dokumen",
         "Disahkan",
         Some("https://changed.example.test/DOCUMENT-0001/share/LONGID-0001-WALKTHROUGH"),
     )?;
@@ -552,7 +568,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let cancelled = facade.generate_pdf(&manager, 1, ids[0]).await?;
     assert_ne!(cancelled.artifact_id, updated.artifact_id);
     let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
-    check_pdf(&file.bytes, "Dibatalkan", None)?;
+    check_pdf(&file.bytes, "Status dokumen", "Dibatalkan", None)?;
     let invalid = facade
         .issue_document(&manager, 1, &draft("NE5-INVALID", None))
         .await?
@@ -566,7 +582,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     );
     let invalid = facade.generate_pdf(&manager, 1, invalid).await?;
     let file = facade.read_pdf(&manager, 1, &invalid.artifact_id).await?;
-    check_pdf(&file.bytes, "Tidak sah", None)?;
+    check_pdf(&file.bytes, "Status dokumen", "Tidak sah", None)?;
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
         .await?;

@@ -216,7 +216,6 @@ pub(super) fn document(
         ("supplier", PrintValue::Text(&supplier)),
         ("buyer", PrintValue::Text(&buyer)),
         ("lines", PrintValue::Rows(&rows)),
-        ("subtotal", money(document.line_extension_amount)),
         ("net", money(document.tax_exclusive_amount)),
         ("tax", money(document.tax_amount)),
         ("gross", money(document.tax_inclusive_amount)),
