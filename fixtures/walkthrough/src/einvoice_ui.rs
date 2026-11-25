@@ -143,6 +143,57 @@ fn check_pdf(bytes: &[u8], status: &str, validation: Option<&str>) -> Outcome<()
     Ok(())
 }
 
+fn check_long_pdf(bytes: &[u8], expected: (f64, f64)) -> Outcome<()> {
+    let text = pdf_text(bytes)?;
+    let pages: Vec<_> = text.split_terminator('\x0c').collect();
+    assert!(pages.len() > 1, "expected a multipage fiscal PDF");
+    assert!(pages
+        .iter()
+        .skip(1)
+        .any(|page| page.contains("Fiscal line 085")));
+    assert!(
+        text.split_whitespace()
+            .zip(text.split_whitespace().skip(1))
+            .any(|(currency, amount)| { currency == "MYR" && amount.parse::<f64>() == Ok(7208.0) }),
+        "85 lines at MYR 80 plus 6% tax should total MYR 7208: {text}"
+    );
+    let info = pdf_command(
+        "pdfinfo",
+        &["-f", "1", "-l", &pages.len().to_string(), "-"],
+        bytes,
+    )?;
+    assert!(
+        info.status.success(),
+        "pdfinfo: {}",
+        String::from_utf8_lossy(&info.stderr)
+    );
+    let output = String::from_utf8(info.stdout)?;
+    let sizes: Vec<_> = output
+        .lines()
+        .filter_map(|line| {
+            let (label, dimensions) = line.split_once("size:")?;
+            if !label.starts_with("Page ") {
+                return None;
+            }
+            let mut words = dimensions.split_whitespace();
+            let width: f64 = words.next()?.parse().ok()?;
+            if words.next()? != "x" {
+                return None;
+            }
+            let height: f64 = words.next()?.parse().ok()?;
+            Some((width, height))
+        })
+        .collect();
+    assert_eq!(sizes.len(), pages.len(), "{output}");
+    for (width, height) in sizes {
+        assert!(
+            (width - expected.0).abs() < 2.0 && (height - expected.1).abs() < 2.0,
+            "expected {expected:?} pt, got {width} x {height} pt"
+        );
+    }
+    Ok(())
+}
+
 pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Sender<bool>> {
     let manager = crate::sign_in(db, services, 1, 1).await?;
     let admin = crate::sign_in(db, services, 1, 4).await?;
@@ -384,11 +435,13 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         })
         .await?;
     check_pdf(&file.bytes, "Validated", Some(validation_url))?;
+    check_long_pdf(&file.bytes, (595.28, 841.89))?;
     publish_malay_letter(db, services, &admin).await?;
     let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
     assert_ne!(malay.artifact_id, path["artifact_id"]);
     let translated = facade.read_pdf(&manager, 1, &malay.artifact_id).await?;
     check_pdf(&translated.bytes, "Disahkan", Some(validation_url))?;
+    check_long_pdf(&translated.bytes, (612.0, 792.0))?;
     assert!(downloads
         .0
         .serve(DownloadRequest {
@@ -419,6 +472,24 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "Disahkan",
         Some("https://changed.example.test/DOCUMENT-0001/share/LONGID-0001-WALKTHROUGH"),
     )?;
+    assert_eq!(
+        save(
+            db,
+            services,
+            &admin,
+            Target::Global,
+            "finance.einvoice.sandbox.portal_url",
+            json!("https://example.test"),
+        )
+        .await?,
+        "stored"
+    );
+    let restored = event(&mut detail, &manager, json!({"type":"generate_pdf"})).await?;
+    has(&restored, "PDF generated.");
+    has(&restored, &format!("/pdf/{}", malay.artifact_id));
+    assert!(!restored
+        .html
+        .contains(&format!("/pdf/{}", updated.artifact_id)));
     has(
         &event(&mut detail, &manager, json!({"type":"open_cancel"})).await?,
         "einvoice-document-cancel-modal",

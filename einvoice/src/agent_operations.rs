@@ -186,24 +186,11 @@ impl Einvoice {
                 .await
                 .map_err(|_| Error::Internal)?
                 .map_err(Error::from)?;
-            self.settings
-                .get_global(
-                    &**settings_client,
-                    &format!(
-                        "finance.einvoice.{}.portal_url",
-                        recorded.document.environment
-                    ),
-                )
+            self.portal_on(&**settings_client, &recorded.document.environment)
                 .await?
         };
-        self.view_on(
-            client,
-            scope,
-            company,
-            recorded,
-            portal.as_str().unwrap_or_default(),
-        )
-        .await
+        self.view_on(client, scope, company, recorded, &portal)
+            .await
     }
 
     async fn documents_on(

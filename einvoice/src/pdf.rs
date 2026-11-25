@@ -131,6 +131,31 @@ fn current_pdfs(events: &[StatusEvent]) -> impl Iterator<Item = &Value> {
         .filter(move |response| response["as_of_sequence"].as_i64() == Some(as_of))
 }
 
+struct PreparedPdf {
+    inline: bilibi_artifacts::InlineDocument,
+    template_version: String,
+    data_version: String,
+    source_indices: Value,
+}
+
+impl PreparedPdf {
+    fn stored(&self, events: &[StatusEvent]) -> Option<PdfArtifact> {
+        current_pdfs(events)
+            .filter(|response| {
+                response["data_version"].as_str() == Some(self.data_version.as_str())
+                    && response["template_version"].as_str() == Some(self.template_version.as_str())
+                    && response["source_indices"] == self.source_indices
+            })
+            .find_map(|response| {
+                Some(PdfArtifact {
+                    artifact_id: response["artifact_id"].as_str()?.to_owned(),
+                    byte_size: response["byte_size"].as_i64()?,
+                    sha256: response["sha256"].as_str()?.to_owned(),
+                })
+            })
+    }
+}
+
 impl Einvoice {
     pub(crate) async fn pdf_for_reader_on(
         &self,
@@ -139,17 +164,14 @@ impl Einvoice {
         company_id: i64,
         view: &crate::DocumentView,
     ) -> Result<Option<String>> {
-        let mut pdfs = current_pdfs(&view.events).peekable();
-        if pdfs.peek().is_none() {
+        if current_pdfs(&view.events).next().is_none() {
             return Ok(None);
         }
-        let records = self
-            .source_records_on(client, scope, company_id, &view.source_links)
-            .await?;
-        let indices = source_indices(&records);
-        Ok(pdfs
-            .filter(|response| response["source_indices"] == indices)
-            .find_map(|response| response["artifact_id"].as_str().map(str::to_owned)))
+        match self.prepare_pdf_on(client, scope, company_id, view).await {
+            Ok(prepared) => Ok(prepared.stored(&view.events).map(|pdf| pdf.artifact_id)),
+            Err(EinvoiceError::Artifacts(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Renders the document as a PDF through Base Artifacts and records it on
@@ -164,7 +186,7 @@ impl Einvoice {
         company_id: i64,
         document_id: i64,
     ) -> Result<PdfArtifact> {
-        let client = self.db.get().await.map_err(Error::from)?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, company_id, VIEW).await?;
         // Recording the PDF on the document is a write, refused for an
         // archived company before an artifact is stored.
@@ -173,85 +195,29 @@ impl Einvoice {
             .map_err(crate::company_write)?;
         let company =
             OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
-        let language = self
-            .settings
-            .get(
-                &**client,
-                scope,
-                Target::Company(company),
-                bilibi_templates::LANGUAGE,
-            )
-            .await
-            .map_err(|_| EinvoiceError::Artifacts("print_language_unavailable"))?;
-        let resolved = self
-            .templates
-            .resolve_print(
-                &**client,
-                scope,
-                CONTRACT.key,
-                Some(company),
-                language.value.as_str().unwrap_or("en"),
-                None,
-            )
-            .await
-            .map_err(|_| EinvoiceError::Artifacts("print_layout_unavailable"))?;
-        let revision = match resolved.origin {
-            Origin::Packaged { version } => format!("packaged-{version}"),
-            Origin::Tenant { revision } | Origin::Company { revision, .. } => {
-                format!("revision-{revision}")
-            }
-        };
-        let template_version = format!("{}-{revision}", resolved.language);
-        let accent = self.branding.accent(&**client).await?;
-        drop(client);
-        let view = self.view(scope, company_id, document_id).await?;
-        let as_of = source_sequence(&view.events);
-        let client = self.db.get().await.map_err(Error::from)?;
-        let records = self
-            .source_records_on(&**client, scope, company_id, &view.source_links)
+        let recorded = documents::fetch(&**client, scope.tenant(), company_id, document_id)
+            .await?
+            .ok_or(EinvoiceError::DocumentNotFound)?;
+        let portal = self
+            .portal_on(&**client, &recorded.document.environment)
             .await?;
-        drop(client);
-        let source_indices = source_indices(&records);
-        let source = records
-            .iter()
-            .flatten()
-            .map(|record| record.name.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let compiled = CONTRACT
-            .compile(&resolved.language, &resolved.layout)
-            .map_err(|_| EinvoiceError::Artifacts("invalid_print_layout"))?;
-        let inline = print_values::document(
-            &view,
-            &source,
-            &compiled,
-            resolved.language.split('-').next() == Some("ms"),
-            accent,
-        )?;
-        let mut digest = Sha256::new();
-        digest.update(format!("{:?}:", inline.paper()));
-        digest.update(inline.html().as_bytes());
-        let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
-        if let Some(stored) = current_pdfs(&view.events)
-            .filter(|response| {
-                response["data_version"].as_str() == Some(data_version.as_str())
-                    && response["template_version"].as_str() == Some(template_version.as_str())
-                    && response["source_indices"] == source_indices
-            })
-            .find_map(|response| {
-                Some(PdfArtifact {
-                    artifact_id: response["artifact_id"].as_str()?.to_owned(),
-                    byte_size: response["byte_size"].as_i64()?,
-                    sha256: response["sha256"].as_str()?.to_owned(),
-                })
-            })
-        {
+        let view = recorded.view(&Self::authority(), &portal, false);
+        let as_of = source_sequence(&view.events);
+        let prepared = self
+            .prepare_pdf_on(&**client, scope, company_id, &view)
+            .await?;
+        if let Some(stored) = prepared.stored(&view.events) {
             return Ok(stored);
         }
+        let PreparedPdf {
+            inline,
+            template_version,
+            data_version,
+            source_indices,
+        } = prepared;
         let options = PdfOptions::default()
             .template_version(template_version.clone())
             .data_version(data_version.clone());
-        let mut client = self.db.get().await.map_err(Error::from)?;
         let owned = self.artifacts.for_owner(scope, company, &ArtifactOwner);
         let stored = Box::pin(owned.render_inline_document(
             &mut client,
@@ -297,6 +263,81 @@ impl Einvoice {
         .await?;
         tx.commit().await?;
         Ok(artifact)
+    }
+
+    async fn prepare_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+    ) -> Result<PreparedPdf> {
+        let company =
+            OrganisationId::new(company_id).map_err(|_| EinvoiceError::CompanyNotFound)?;
+        let language = self
+            .settings
+            .get(
+                client,
+                scope,
+                Target::Company(company),
+                bilibi_templates::LANGUAGE,
+            )
+            .await
+            .map_err(|_| EinvoiceError::Artifacts("print_language_unavailable"))?;
+        let resolved = self
+            .templates
+            .resolve_print(
+                client,
+                scope,
+                CONTRACT.key,
+                Some(company),
+                language.value.as_str().unwrap_or("en"),
+                None,
+            )
+            .await
+            .map_err(|_| EinvoiceError::Artifacts("print_layout_unavailable"))?;
+        let revision = match resolved.origin {
+            Origin::Packaged { version } => format!("packaged-{version}"),
+            Origin::Tenant { revision } | Origin::Company { revision, .. } => {
+                format!("revision-{revision}")
+            }
+        };
+        let template_version = format!("{}-{revision}", resolved.language);
+        let accent = match client.transaction() {
+            Some(tx) => self.branding.accent(tx).await?,
+            None => self.branding.accent(client.sql_client().await?).await?,
+        };
+        let as_of = source_sequence(&view.events);
+        let records = self
+            .source_records_on(client, scope, company_id, &view.source_links)
+            .await?;
+        let source_indices = source_indices(&records);
+        let source = records
+            .iter()
+            .flatten()
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let compiled = CONTRACT
+            .compile(&resolved.language, &resolved.layout)
+            .map_err(|_| EinvoiceError::Artifacts("invalid_print_layout"))?;
+        let inline = print_values::document(
+            view,
+            &source,
+            &compiled,
+            resolved.language.split('-').next() == Some("ms"),
+            accent,
+        )?;
+        let mut digest = Sha256::new();
+        digest.update(format!("{:?}:", inline.paper()));
+        digest.update(inline.html().as_bytes());
+        let data_version = format!("{}-{as_of}-{:x}", CONTRACT.version, digest.finalize());
+        Ok(PreparedPdf {
+            inline,
+            template_version,
+            data_version,
+            source_indices,
+        })
     }
 
     /// The bytes of a PDF [`Einvoice::generate_pdf`] stored, for the download

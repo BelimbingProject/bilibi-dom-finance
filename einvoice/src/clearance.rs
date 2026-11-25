@@ -1714,23 +1714,25 @@ impl Einvoice {
         let recorded = self.fetch(scope, company_id, document_id).await?;
         let client = self.db.get().await.map_err(Error::from)?;
         let portal = self
+            .portal_on(&**client, &recorded.document.environment)
+            .await?;
+        self.view_on(&**client, scope, company_id, recorded, &portal)
+            .await
+    }
+
+    pub(crate) async fn portal_on(
+        &self,
+        client: &(impl GenericClient + Sync),
+        environment: &str,
+    ) -> Result<String> {
+        let portal = self
             .settings
             .get_global(
-                &**client,
-                &format!(
-                    "finance.einvoice.{}.portal_url",
-                    recorded.document.environment
-                ),
+                client,
+                &format!("finance.einvoice.{environment}.portal_url"),
             )
             .await?;
-        self.view_on(
-            &**client,
-            scope,
-            company_id,
-            recorded,
-            portal.as_str().unwrap_or_default(),
-        )
-        .await
+        Ok(portal.as_str().unwrap_or_default().to_owned())
     }
 
     pub(crate) async fn view_on(
@@ -1748,7 +1750,9 @@ impl Einvoice {
         let mut view = recorded.view(&Self::authority(), portal, queued);
         view.sources = sources;
         view.consolidated_by = consolidated_by;
-        view.pdf_artifact_id = self.pdf_for_reader_on(client, scope, company_id, &view).await?;
+        view.pdf_artifact_id = self
+            .pdf_for_reader_on(client, scope, company_id, &view)
+            .await?;
         Ok(view)
     }
 
