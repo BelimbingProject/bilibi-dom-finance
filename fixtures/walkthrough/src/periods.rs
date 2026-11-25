@@ -141,7 +141,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let viewer = sign_in(db, services, 1, 2).await?;
     let admin = sign_in(db, services, 1, 4).await?;
     let contractor = sign_in(db, services, 1, 7).await?;
-    let mut client = db.get().await?;
     let book = ledger.get_book(&manager, COMPANY).await?;
     let money = |text: &str| Money::parse(text, book.minor_units).expect("fixture amount");
 
@@ -616,7 +615,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
     let default_month = registry
         .call(
-            &mut **client,
+            &mut **db.get().await?,
             &manager,
             "finance.ledger.book.get",
             &serde_json::json!({"company_id":COMPANY}),
@@ -886,7 +885,9 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             change.change_number, change.controlled, change.reason, change.changed_by_user_id
         );
     }
-    let exceptions = client
+    let exceptions = db
+        .get()
+        .await?
         .query(
             "SELECT exception_number,action,subject_type,subject,reason,approved_by_user_id \
              FROM finance_ledger_approval_exceptions WHERE company_id=$1 ORDER BY exception_number",
@@ -1092,7 +1093,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     }
     println!("six concurrent posts: {outcomes:?}");
     println!("the concurrent close: {:?}", closing.await?);
-    let after = client
+    let after = db.get().await?
         .query_one(
             "SELECT count(*) FROM finance_ledger_entries e WHERE e.company_id=$1 AND e.entry_date=$2::text::date \
              AND e.posted_at > (SELECT recorded_at FROM finance_ledger_closing_events WHERE period_id=$3 \
@@ -1247,7 +1248,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             ),
         ),
     ] {
-        raw(&client, step, &sql).await;
+        raw(&**db.get().await?, step, &sql).await;
     }
     Ok(())
 }

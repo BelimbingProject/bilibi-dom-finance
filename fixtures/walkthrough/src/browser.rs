@@ -346,6 +346,7 @@ async fn prove_invoice_einvoice(
     assert!(href.starts_with("/finance/einvoice/documents/"), "{href}");
     let client = db.get().await?;
     clearance::jobs_settle(&client).await?;
+    drop(client);
     let read = contracts
         .read(
             scope,

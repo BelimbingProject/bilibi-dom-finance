@@ -495,6 +495,7 @@ impl Einvoice {
         )
         .await?;
         tx.commit().await?;
+        drop(client);
         self.view(scope, company_id, document_id).await
     }
 }

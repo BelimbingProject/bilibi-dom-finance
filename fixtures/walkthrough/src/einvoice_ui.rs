@@ -224,8 +224,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         &event(&mut detail, &manager, json!({"type":"submit"})).await?,
         "Submission queued.",
     );
-    let client = db.get().await?;
-    clearance::jobs_settle(&client).await?;
+    clearance::jobs_settle(&**db.get().await?).await?;
     let refreshed = event(&mut detail, &manager, json!({"type":"refresh"})).await?;
     has(&refreshed, "Status read from the authority: valid.");
     has(&refreshed, "Sandbox");
@@ -338,7 +337,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     );
     // Leave a validated document and an issued document for the browser run.
     facade.submit_document(&manager, 1, ids[1]).await?;
-    clearance::jobs_settle(&client).await?;
+    clearance::jobs_settle(&**db.get().await?).await?;
     // Cover two older sales with a consolidated document, without an extra UI.
     let mut covered = Vec::new();
     for n in 0..2 {

@@ -481,10 +481,20 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
     // Concurrent duplicate acquisition is serialized and returns a field refusal.
     let concurrent_source = post(&l, &manager, cost.id, capital, "17").await?;
-    let (one, two) = tokio::join!(
-        f.acquire_from_entry(&manager, COMPANY, concurrent_source.id, 1, &a),
-        f.acquire_from_entry(&manager, COMPANY, concurrent_source.id, 1, &a)
-    );
+    let competing = {
+        let f = f.clone();
+        let manager = manager.clone();
+        let a = a.clone();
+        let entry_id = concurrent_source.id;
+        tokio::spawn(async move {
+            f.acquire_from_entry(&manager, COMPANY, entry_id, 1, &a)
+                .await
+        })
+    };
+    let one = f
+        .acquire_from_entry(&manager, COMPANY, concurrent_source.id, 1, &a)
+        .await;
+    let two = competing.await?;
     assert!(matches!(
         (&one, &two),
         (Ok(_), Err(F::Invalid(_))) | (Err(F::Invalid(_)), Ok(_))

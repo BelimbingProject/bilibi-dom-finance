@@ -445,10 +445,14 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     let candidate = request(vendor, b.id, bank.id, money("60"), date(2026, 12, 21));
     let a = p.submit_payment(&manager, COMPANY, &candidate).await?;
     let z = p.submit_payment(&manager, COMPANY, &candidate).await?;
-    let (a_result, z_result) = tokio::join!(
-        p.approve_payment(&reviewer, COMPANY, a.id),
-        p.approve_payment(&reviewer, COMPANY, z.id)
-    );
+    let competing = {
+        let p = p.clone();
+        let reviewer = reviewer.clone();
+        let request_id = z.id;
+        tokio::spawn(async move { p.approve_payment(&reviewer, COMPANY, request_id).await })
+    };
+    let a_result = p.approve_payment(&reviewer, COMPANY, a.id).await;
+    let z_result = competing.await?;
     let loser = match (a_result, z_result) {
         (Ok(_), Err(PayablesError::Invalid(_))) => z.id,
         (Err(PayablesError::Invalid(_)), Ok(_)) => a.id,

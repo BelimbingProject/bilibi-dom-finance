@@ -144,10 +144,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let attributes = open();
-    let (first, second) = tokio::join!(
-        facade.open_reconciliation(&manager, COMPANY, reserve.id, &attributes),
-        facade.open_reconciliation(&manager, COMPANY, reserve.id, &attributes)
-    );
+    let competing = {
+        let facade = facade.clone();
+        let manager = manager.clone();
+        let attributes = attributes.clone();
+        let bank_id = reserve.id;
+        tokio::spawn(async move {
+            facade
+                .open_reconciliation(&manager, COMPANY, bank_id, &attributes)
+                .await
+        })
+    };
+    let first = facade
+        .open_reconciliation(&manager, COMPANY, reserve.id, &attributes)
+        .await;
+    let second = competing.await?;
     let opened = match (first, second) {
         (Ok(record), Err(ReconciliationError::Invalid(_)))
         | (Err(ReconciliationError::Invalid(_)), Ok(record)) => record,

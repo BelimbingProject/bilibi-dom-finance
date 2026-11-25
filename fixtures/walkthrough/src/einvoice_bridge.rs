@@ -174,13 +174,13 @@ async fn issue(einvoice: &Einvoice, scope: &Scope, company: i64, draft: &Draft) 
 /// Submits a document and waits for its jobs.
 async fn clear(
     einvoice: &Einvoice,
-    raw: &tokio_postgres::Client,
+    db: &Db,
     scope: &Scope,
     company: i64,
     id: i64,
 ) -> Outcome<DocumentView> {
     einvoice.submit_document(scope, company, id).await?;
-    jobs_settle(raw).await?;
+    jobs_settle(&**db.get().await?).await?;
     Ok(einvoice.get_document(scope, company, id).await?)
 }
 
@@ -217,7 +217,6 @@ pub(crate) async fn run(
     println!("\n== E-invoice ledger bridge (slice NE4)");
     let einvoice = services.get::<Einvoice>(SERVICE)?;
     let ledger = services.get::<Ledger>(bilibi_finance_ledger::SERVICE)?;
-    let raw = db.get().await?;
 
     println!(
         "\n-- Company 002 keeps its book in USD: every MYR validation's posting failed and waits"
@@ -319,7 +318,7 @@ pub(crate) async fn run(
         &draft("NE4-INV-0", None),
     )
     .await?;
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, first).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, first).await?;
     println!("NE4-INV-0 after its jobs: {}", ledger_side(&view));
     println!(
         "  its last event: {:?}",
@@ -451,7 +450,7 @@ pub(crate) async fn run(
         &draft("NE4-INV-1", None),
     )
     .await?;
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, sale).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, sale).await?;
     shown("NE4-INV-1 after its jobs", Ok(view.clone()));
     println!("  {}", ledger_side(&view));
     print_entry(&ledger, manager, LINKED_COMPANY, view.ledger_entry_id).await;
@@ -493,7 +492,7 @@ pub(crate) async fn run(
             ),
         ),
     ] {
-        match raw.batch_execute(&sql).await {
+        match db.get().await?.batch_execute(&sql).await {
             Ok(()) => println!("{label}: accepted"),
             Err(error) => println!(
                 "{label}: refused by database — {}",
@@ -510,7 +509,7 @@ pub(crate) async fn run(
         &self_billed(draft("NE4-SB-1", None)),
     )
     .await?;
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, purchase).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, purchase).await?;
     println!(
         "NE4-SB-1 (self-billed {}, counterparty {:?}): {}",
         view.self_billed,
@@ -790,14 +789,7 @@ pub(crate) async fn run(
             .await
             .map(|view| view.document.code_number),
     );
-    let view = clear(
-        &einvoice,
-        &raw,
-        manager,
-        LINKED_COMPANY,
-        refused.document.id,
-    )
-    .await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, refused.document.id).await?;
     shown("NE4-CONS-REFUSE-1 after its jobs", Ok(view.clone()));
     let covered = einvoice
         .get_document(manager, LINKED_COMPANY, source)
@@ -827,7 +819,7 @@ pub(crate) async fn run(
         .await?;
     let view = clear(
         &einvoice,
-        &raw,
+        db,
         manager,
         LINKED_COMPANY,
         consolidated.document.id,
@@ -968,7 +960,7 @@ pub(crate) async fn run(
         view.source_links,
         ledger_side(&view)
     );
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, view.document.id).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, view.document.id).await?;
     println!("NE4-AR-1 after its jobs: {}", ledger_side(&view));
     println!(
         "  its events: {:?}",
@@ -1054,7 +1046,7 @@ pub(crate) async fn run(
         })
     };
     let first = issue(&einvoice, manager, LINKED_COMPANY, &bill("NE4-AP-REFUSE-1")).await?;
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, first).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, first).await?;
     assert_eq!(view.status, "refused");
     let (failed, ids) = still_to_act(&einvoice, manager).await?;
     assert_eq!(failed.refused, before.refused + 1);
@@ -1064,14 +1056,14 @@ pub(crate) async fn run(
     assert_eq!(failed.refused, before.refused + 1);
     assert!(ids.contains(&first) && !ids.contains(&second));
     println!("a newer issued document for the bill leaves the refused one to act on");
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, second).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, second).await?;
     assert_eq!(view.status, "refused");
     let (failed, ids) = still_to_act(&einvoice, manager).await?;
     assert_eq!(failed.refused, before.refused + 1);
     assert!(!ids.contains(&first) && ids.contains(&second));
     println!("a newer refused document for the bill is the one to act on");
     let third = issue(&einvoice, manager, LINKED_COMPANY, &bill("NE4-AP-2")).await?;
-    let view = clear(&einvoice, &raw, manager, LINKED_COMPANY, third).await?;
+    let view = clear(&einvoice, db, manager, LINKED_COMPANY, third).await?;
     assert_eq!(view.status, "valid");
     let (failed, ids) = still_to_act(&einvoice, manager).await?;
     assert_eq!(failed.refused, before.refused);
@@ -1118,7 +1110,7 @@ pub(crate) async fn run(
                 .map(|page| page.rows.len()),
         );
     }
-    let secrets: i64 = raw
+    let secrets: i64 = db.get().await?
         .query_one(
             "SELECT count(*) FROM finance_einvoice_submissions WHERE convert_from(payload, 'UTF8') \
              LIKE '%' || $1 || '%'",

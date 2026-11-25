@@ -178,7 +178,7 @@ impl ReadHandler for Read {
             let company = company(input).map_err(failure)?;
             let result = match self {
                 Self::Categories => {
-                    json!({"records":owner.categories_on(c,s,company).await.map_err(failure)?})
+                    json!({"records":owner.list_categories_on(c,s,company).await.map_err(failure)?})
                 }
                 Self::Register => {
                     let mut report = owner

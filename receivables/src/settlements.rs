@@ -524,10 +524,6 @@ impl Receivables {
         document: i64,
         input: &Value,
     ) -> Result<Value> {
-        let day: Date = input["as_of"]
-            .as_str()
-            .and_then(|v| v.parse().ok())
-            .ok_or_else(|| invalid("as_of", "must be YYYY-MM-DD"))?;
         let mut connection = self.db.get().await.map_err(Error::from)?;
         let client: &mut tokio_postgres::Client = &mut connection;
         let tx = client
@@ -536,7 +532,26 @@ impl Receivables {
             .start()
             .await
             .map_err(Error::from)?;
-        bilibi_company::authorize_work_target(&tx, s, company, VIEW)
+        let result = self
+            .document_at_on(&tx, s, company, document, input)
+            .await?;
+        tx.commit().await.map_err(Error::from)?;
+        Ok(result)
+    }
+
+    pub(super) async fn document_at_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        s: &Scope,
+        company: i64,
+        document: i64,
+        input: &Value,
+    ) -> Result<Value> {
+        let day: Date = input["as_of"]
+            .as_str()
+            .and_then(|v| v.parse().ok())
+            .ok_or_else(|| invalid("as_of", "must be YYYY-MM-DD"))?;
+        bilibi_company::authorize_work_target(client, s, company, VIEW)
             .await
             .map_err(crate::refusal)?;
         complete_pins(
@@ -546,13 +561,17 @@ impl Receivables {
         )?;
         let entry = self
             .ledger
-            .entry_boundary_on(&tx, s, company, input["through_entry_number"].as_i64())
+            .entry_boundary_on(client, s, company, input["through_entry_number"].as_i64())
             .await?;
-        let batch =
-            crate::opening::pin(&tx, s, company, input["through_opening_batch_id"].as_i64())
-                .await?;
+        let batch = crate::opening::pin(
+            client,
+            s,
+            company,
+            input["through_opening_batch_id"].as_i64(),
+        )
+        .await?;
         let settlement = pin(
-            &tx,
+            client,
             s,
             company,
             input["through_settlement_number"].as_i64(),
@@ -562,13 +581,18 @@ impl Receivables {
         )
         .await?;
         let day_text = day.to_string();
-        let amount:rust_decimal::Decimal=tx.query_opt("SELECT CASE WHEN d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.batch_id<=$5 AND x.effective_date<=$3::text::date))) THEN finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) ELSE 0 END FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$7 AND d.kind IN ('invoice','opening_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date)))",&[&s.tenant(),&company,&day_text,&entry,&batch,&settlement,&document]).await.map_err(Error::from)?.ok_or(ReceivableError::DocumentNotFound)?.get(0);
-        let mut record = json!(crate::documents::read(&tx, s.tenant(), company, document).await?);
-        let units = self.ledger.get_book_on(&tx, s, company).await?.minor_units;
+        let amount:rust_decimal::Decimal=client.query_opt("SELECT CASE WHEN d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.batch_id<=$5 AND x.effective_date<=$3::text::date))) THEN finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) ELSE 0 END FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$7 AND d.kind IN ('invoice','opening_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date)))",&[&s.tenant(),&company,&day_text,&entry,&batch,&settlement,&document]).await.map_err(Error::from)?.ok_or(ReceivableError::DocumentNotFound)?.get(0);
+        let mut record =
+            json!(crate::documents::read(client, s.tenant(), company, document).await?);
+        let units = self
+            .ledger
+            .get_book_on(client, s, company)
+            .await?
+            .minor_units;
         let amount =
             Money::new(amount, units).map_err(|e| invalid("document_id", e.to_string()))?;
-        let events:Vec<Value>=tx.query("SELECT to_jsonb(e)-'review' FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=$3 OR e.target_document_id=$3) AND e.effective_date<=$4::text::date AND e.settlement_number<=$5 AND (e.entry_number IS NULL OR e.entry_number<=$6) ORDER BY e.settlement_number",&[&s.tenant(),&company,&document,&day_text,&settlement,&entry]).await.map_err(Error::from)?.iter().map(|r|r.get(0)).collect();
-        let mut receipts: Vec<Payment> = tx
+        let events:Vec<Value>=client.query("SELECT to_jsonb(e)-'review' FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=$3 OR e.target_document_id=$3) AND e.effective_date<=$4::text::date AND e.settlement_number<=$5 AND (e.entry_number IS NULL OR e.entry_number<=$6) ORDER BY e.settlement_number",&[&s.tenant(),&company,&document,&day_text,&settlement,&entry]).await.map_err(Error::from)?.iter().map(|r|r.get(0)).collect();
+        let mut receipts: Vec<Payment> = client
             .query(
                 &format!("{} AND p.payment_date<=$4::text::date AND p.ledger_entry_number<=$5 AND EXISTS(SELECT 1 FROM finance_receivables_allocations a WHERE a.tenant_id=$1 AND a.company_id=$2 AND a.payment_id=p.id AND a.document_id=$3) ORDER BY p.id", crate::posting::PAYMENT_READ),
                 &[&s.tenant(), &company, &document, &day_text, &entry],
@@ -586,7 +610,7 @@ impl Receivables {
                 receipt.reversal = None;
             }
         }
-        let credits: Vec<Document> = tx
+        let credits: Vec<Document> = client
             .query(
                 &format!("{} AND d.credited_document_id=$3 AND d.status='issued' AND d.issue_date<=$4::text::date AND d.ledger_entry_number<=$5 ORDER BY d.id", crate::documents::READ),
                 &[&s.tenant(), &company, &document, &day_text, &entry],
@@ -621,7 +645,7 @@ impl Receivables {
         if record["opening"].is_object() {
             let opening_batch = record["opening"]["batch_id"].as_i64();
             record["opening"]["replaced_by_batch_id"] = match opening_batch {
-                Some(opening_batch) => tx
+                Some(opening_batch) => client
                     .query_opt("SELECT batch_id FROM finance_receivables_opening_decisions WHERE tenant_id=$1 AND company_id=$2 AND replaces_batch_id=$3 AND batch_id<=$4 AND effective_date<=$5::text::date", &[&s.tenant(), &company, &opening_batch, &batch, &day_text])
                     .await
                     .map_err(Error::from)?
@@ -634,7 +658,6 @@ impl Receivables {
         record["receipts"] = json!(receipts);
         record["credits"] = json!(credits);
         record["balance_pins"] = json!({"as_of":day_text,"through_entry_number":entry,"through_opening_batch_id":batch,"through_settlement_number":settlement});
-        tx.commit().await.map_err(Error::from)?;
         Ok(record)
     }
 }

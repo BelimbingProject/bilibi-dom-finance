@@ -93,6 +93,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     );
     save.commit(&mut tx, &manager, &input).await?;
     tx.rollback().await?;
+    drop(client);
     ensure(
         !ledger
             .chart_templates(&manager, 100)
@@ -101,6 +102,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .any(|t| t.key == "saved:practice-chart"),
         "a rolled-back publication is absent",
     )?;
+    let mut client = db.get().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -110,6 +112,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     save.preview(tx.sql(), &manager, &input).await?;
     save.commit(&mut tx, &manager, &input).await?;
     tx.commit().await?;
+    drop(client);
     let account = ledger
         .list_accounts(&manager, 100)
         .await?
@@ -121,6 +124,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         json!({"company_id":100,"account_id":account.id,"name":"Changed after template preview"});
     let mut stale_input = input.clone();
     stale_input["key"] = json!("stale-preview");
+    let mut client = db.get().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -140,6 +144,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         "same-plan source edit refuses unreviewed publication",
     )?;
     tx.rollback().await?;
+    drop(client);
     ensure(
         ledger
             .list_accounts(&manager, 100)
@@ -206,6 +211,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .set_direct(&admin, 1, bilibi_finance_ledger::MANAGE_TEMPLATES, None)
         .await?;
     let settings = services.get::<bilibi_settings::Settings>("base/settings.store")?;
+    let mut client = db.get().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -222,6 +228,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )
         .await?;
     tx.commit().await?;
+    drop(client);
     ensure(
         ledger.chart_template_proposal(&manager, 100).await?["configured"]
             == json!("my-small-business"),
@@ -229,6 +236,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     )?;
     let propose = handler(&registry, "finance.ledger.chart_template.propose")?;
     let proposal = json!({"company_id":100,"template":template.key});
+    let mut client = db.get().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -238,6 +246,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     propose.preview(tx.sql(), &manager, &proposal).await?;
     propose.commit(&mut tx, &manager, &proposal).await?;
     tx.commit().await?;
+    drop(client);
     ensure(
         ledger.chart_template_proposal(&manager, 100).await?["configured"] == json!(template.key),
         "proposal round-trips through the contract",
@@ -294,6 +303,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await?;
         let apply = handler(&registry, "finance.ledger.chart_template.apply")?;
         let input = json!({"company_id":company,"template":template.key,"sections":sections});
+        let mut client = db.get().await?;
         let mut tx = boundary
             .begin(
                 &mut client,
@@ -310,6 +320,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         )?;
         apply.commit(&mut tx, &manager, &input).await?;
         tx.commit().await?;
+        drop(client);
         let chart = ledger.list_accounts(&manager, company).await?;
         ensure(
             chart.len() == preview.template.rows.len(),
@@ -393,10 +404,15 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         optional_group_codes: Vec::new(),
         ..new.clone()
     };
-    let (left, right) = tokio::join!(
-        ledger.save_chart_template(&manager, 100, &racing),
-        ledger.save_chart_template(&manager, targets[0], &racing)
-    );
+    let competing = {
+        let ledger = ledger.clone();
+        let manager = manager.clone();
+        let racing = racing.clone();
+        let target = targets[0];
+        tokio::spawn(async move { ledger.save_chart_template(&manager, target, &racing).await })
+    };
+    let left = ledger.save_chart_template(&manager, 100, &racing).await;
+    let right = competing.await?;
     ensure(
         matches!(
             (&left, &right),
