@@ -150,12 +150,15 @@ impl StandIn {
     }
     fn hold(&self, code: &str) -> Held {
         let n = self.next();
+        let pending_retry = code == "NE5-RECHECK" && self.find_code(code).is_some();
         let held = Held {
             code: code.to_owned(),
             submission_uid: format!("SUBMISSION-{n:04}"),
             uuid: format!("DOCUMENT-{n:04}"),
             long_id: format!("LONGID-{n:04}-WALKTHROUGH"),
-            status: if code.contains("INVALID") {
+            status: if pending_retry {
+                "Submitted"
+            } else if code.contains("INVALID") {
                 "Invalid"
             } else {
                 "Valid"
@@ -176,6 +179,14 @@ impl StandIn {
     }
     pub(crate) fn invalidate(&self, code: &str) {
         self.set(code, |held| held.status = "Invalid");
+    }
+
+    pub(crate) fn finish_retry(&self, uuid: &str) {
+        let mut held = self.held.lock().expect("held");
+        held.iter_mut()
+            .find(|held| held.uuid == uuid)
+            .expect("retry")
+            .status = "Valid";
     }
 
     fn set(&self, code: &str, change: impl Fn(&mut Held)) {
@@ -356,7 +367,7 @@ async fn submission_status(
         *count
     };
     // The first read of each submission finds it still processing.
-    let overall = if reads == 1 {
+    let overall = if reads == 1 || first.status == "Submitted" {
         "In Progress"
     } else {
         first.status
@@ -390,7 +401,7 @@ async fn details(State(standin): Shared, headers: HeaderMap, Path(uuid): Path<St
     let mut body = json!({"uuid": held.uuid, "submissionUid": held.submission_uid,
         "internalId": held.code, "status": held.status, "dateTimeReceived": held.received,
         "documentStatusReason": Value::Null});
-    if held.status != "Invalid" {
+    if matches!(held.status, "Valid" | "Cancelled") {
         body["longId"] = json!(held.long_id);
         body["dateTimeValidated"] = if held.code == "BROWSER-E-EXPIRED" {
             json!((Timestamp::now() - SignedDuration::from_hours(73))
@@ -399,7 +410,7 @@ async fn details(State(standin): Shared, headers: HeaderMap, Path(uuid): Path<St
         } else {
             json!(held.received)
         };
-    } else {
+    } else if held.status == "Invalid" {
         body["validationResults"] = json!({"status": "Invalid", "validationSteps": [
             {"status": "Valid", "name": "Step01-Structure Validator"},
             {"status": "Invalid", "name": "Step03-Codes Validator", "error": {

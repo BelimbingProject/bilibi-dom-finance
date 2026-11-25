@@ -238,23 +238,33 @@ impl Recorded {
     }
 
     pub fn document_uuid(&self) -> Option<&str> {
-        self.events
-            .iter()
-            .rev()
-            .find_map(|event| event.document_uuid.as_deref())
+        self.latest("submitted")?.document_uuid.as_deref()
+    }
+
+    pub(crate) fn submission_sequence(&self) -> Option<i32> {
+        self.latest("submitted").map(|event| event.sequence)
+    }
+
+    fn submission_events(&self) -> impl Iterator<Item = &StatusEvent> {
+        let submission = self.submission_sequence().zip(self.document_uuid());
+        self.events.iter().rev().filter(move |event| {
+            submission.is_some_and(|(sequence, uuid)| {
+                event.sequence >= sequence && event.document_uuid.as_deref() == Some(uuid)
+            })
+        })
     }
 
     fn long_id(&self) -> Option<&str> {
-        self.events
-            .iter()
-            .rev()
+        self.submission_events()
             .find_map(|event| event.long_id.as_deref())
     }
 
     /// When the authority validated it: its own instant, or when the `valid`
     /// event was recorded.
     pub fn validated_at(&self) -> Option<Timestamp> {
-        let valid = self.latest("valid")?;
+        let valid = self
+            .submission_events()
+            .find(|event| event.event == "valid")?;
         Some(
             valid
                 .response
@@ -364,6 +374,7 @@ impl Recorded {
             validation_url: document_uuid
                 .as_deref()
                 .zip(long_id.as_deref())
+                .filter(|_| VALID_STATUSES.contains(&status.as_str()))
                 .map(|(uuid, long_id)| authority.validation_url(portal_url, uuid, long_id)),
             document_uuid,
             long_id,

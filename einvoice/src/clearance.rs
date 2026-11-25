@@ -604,7 +604,7 @@ impl Einvoice {
                     .while_cancellable(
                         scope,
                         company_id,
-                        document_id,
+                        &recorded,
                         event,
                         ("finance.einvoice.cancelled", &base, &answer),
                     )
@@ -631,7 +631,7 @@ impl Einvoice {
                 self.while_cancellable(
                     scope,
                     company_id,
-                    document_id,
+                    &recorded,
                     event,
                     ("finance.einvoice.cancellation.refused", &base, &answer),
                 )
@@ -1237,6 +1237,11 @@ impl Einvoice {
                     .await
                     .map_err(|_| retry_database())?
                     .ok_or(Outcome::Cancel("document_not_found"))?;
+                if current.submission_sequence() != recorded.submission_sequence()
+                    || current.document_uuid() != Some(uuid)
+                {
+                    return Err(Outcome::Completed);
+                }
                 let (status, follow_up, changed) = self
                     .apply_status(&mut tx, scope, company_id, &current, &answer)
                     .await
@@ -1470,7 +1475,7 @@ impl Einvoice {
         &self,
         scope: &Scope,
         company_id: i64,
-        document_id: i64,
+        recorded: &Recorded,
         event: NewEvent,
         (name, base, answer): (&str, &Value, &Answer),
     ) -> Result<bool> {
@@ -1484,11 +1489,16 @@ impl Einvoice {
                 "finance.einvoice.cancel_document",
             )
             .await?;
-        let status = documents::status(tx.sql(), scope.tenant(), company_id, document_id).await?;
-        if !status
-            .as_deref()
-            .is_some_and(|status| CANCELLABLE.contains(&status))
+        let document_id = recorded.document.id;
+        let current = documents::fetch(tx.sql(), scope.tenant(), company_id, document_id)
+            .await?
+            .ok_or(EinvoiceError::DocumentNotFound)?;
+        if current.submission_sequence() != recorded.submission_sequence()
+            || current.document_uuid() != event.document_uuid.as_deref()
         {
+            return Err(EinvoiceError::NotCancellable);
+        }
+        if !CANCELLABLE.contains(&current.status()) {
             return Ok(false);
         }
         documents::record_event(&mut tx, scope, company_id, document_id, event).await?;

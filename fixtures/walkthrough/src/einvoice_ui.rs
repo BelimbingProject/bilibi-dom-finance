@@ -146,22 +146,55 @@ fn check_pdf(bytes: &[u8], label: &str, status: &str, validation: Option<&str>) 
     Ok(())
 }
 
-fn check_long_pdf(bytes: &[u8], total_label: &str, expected: (f64, f64)) -> Outcome<()> {
+fn check_long_pdf(bytes: &[u8], malay: bool, expected: (f64, f64)) -> Outcome<()> {
+    let (headings, tax_label, total_label) = if malay {
+        (
+            ["Klasifikasi", "Perihal", "Kuantiti"],
+            "Jumlah cukai",
+            "Jumlah termasuk cukai",
+        )
+    } else {
+        (
+            ["Classification", "Description", "Quantity"],
+            "Total tax",
+            "Total including tax",
+        )
+    };
     let text = pdf_text(bytes)?;
     let pages: Vec<_> = text.split_terminator('\x0c').collect();
     assert!(pages.len() > 1, "expected a multipage fiscal PDF");
-    assert!(pages
+    let last_lines = pages
         .iter()
         .skip(1)
-        .any(|page| page.contains("Fiscal line 085")));
-    let amount = printed_field(&text, total_label);
-    assert_eq!(
-        amount
-            .strip_prefix("MYR ")
-            .and_then(|value| value.parse::<f64>().ok()),
-        Some(7208.0),
-        "85 lines at MYR 80 plus 6% tax should total MYR 7208"
+        .find(|page| page.contains("Fiscal line 085"))
+        .expect("the final seeded line must be on a continuation page");
+    for heading in headings {
+        assert!(
+            last_lines.split_whitespace().any(|word| word == heading),
+            "missing repeated heading {heading}"
+        );
+    }
+    for tax_fact in ["01", "6%"] {
+        assert!(
+            last_lines.split_whitespace().any(|word| word == tax_fact),
+            "missing line tax fact {tax_fact}"
+        );
+    }
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("2 Jalan Contoh") && words.contains("Buyer Two Sdn Bhd"),
+        "{text}"
     );
+    assert!(!words.contains("99 Jalan Baru"), "{text}");
+    for (label, amount) in [(tax_label, 408.0), (total_label, 7208.0)] {
+        assert_eq!(
+            printed_field(&text, label)
+                .strip_prefix("MYR ")
+                .and_then(|value| value.parse::<f64>().ok()),
+            Some(amount),
+            "85 lines at MYR 80 plus 6% tax should print {label} as MYR {amount}"
+        );
+    }
     let info = pdf_command(
         "pdfinfo",
         &["-f", "1", "-l", &pages.len().to_string(), "-"],
@@ -288,6 +321,18 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         }
         ids.push(facade.issue_document(&manager, 1, &d).await?.document.id);
     }
+    assert_eq!(
+        save(
+            db,
+            services,
+            &manager,
+            target,
+            "finance.einvoice.supplier.address_line1",
+            json!("99 Jalan Baru"),
+        )
+        .await?,
+        "stored"
+    );
     let mut d = draft("NE5-SELF", None);
     d.document_type = Some("11".into());
     let mut supplier = d.buyer.take().unwrap();
@@ -446,7 +491,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "Validated",
         Some(validation_url),
     )?;
-    check_long_pdf(&file.bytes, "Total including tax", (595.28, 841.89))?;
+    check_long_pdf(&file.bytes, false, (595.28, 841.89))?;
     publish_malay_letter(db, services, &admin).await?;
     let malay = facade.generate_pdf(&manager, 1, ids[0]).await?;
     assert_ne!(malay.artifact_id, path["artifact_id"]);
@@ -457,7 +502,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         "Disahkan",
         Some(validation_url),
     )?;
-    check_long_pdf(&translated.bytes, "Jumlah termasuk cukai", (612.0, 792.0))?;
+    check_long_pdf(&translated.bytes, true, (612.0, 792.0))?;
     assert!(downloads
         .0
         .serve(DownloadRequest {
@@ -643,9 +688,49 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
         facade.get_document(&manager, 1, invalid).await?.status,
         "invalid"
     );
-    let invalid = facade.generate_pdf(&manager, 1, invalid).await?;
-    let file = facade.read_pdf(&manager, 1, &invalid.artifact_id).await?;
+    let invalid_pdf = facade.generate_pdf(&manager, 1, invalid).await?;
+    let file = facade
+        .read_pdf(&manager, 1, &invalid_pdf.artifact_id)
+        .await?;
     check_pdf(&file.bytes, "Status dokumen", "Tidak sah", None)?;
+
+    facade.submit_document(&manager, 1, invalid).await?;
+    let pending = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let view = facade.get_document(&manager, 1, invalid).await?;
+            if view.status == "submitted" {
+                break Ok::<_, EinvoiceError>(view);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await??;
+    let retry_uuid = "DOCUMENT-0003";
+    assert_eq!(pending.document_uuid.as_deref(), Some(retry_uuid));
+    assert!(
+        pending.validated_at.is_none()
+            && pending.long_id.is_none()
+            && pending.validation_url.is_none()
+    );
+    let file = facade
+        .read_pdf(&manager, 1, &invalid_pdf.artifact_id)
+        .await?;
+    check_pdf(&file.bytes, "Status dokumen", "Dihantar", None)?;
+    let text = pdf_text(&file.bytes)?;
+    assert_eq!(printed_field(&text, "UUID pihak berkuasa"), retry_uuid);
+    assert!(!text.contains("Masa disahkan"), "{text}");
+
+    authority.finish_retry(retry_uuid);
+    clearance::jobs_settle(&**db.get().await?).await?;
+    let file = facade
+        .read_pdf(&manager, 1, &invalid_pdf.artifact_id)
+        .await?;
+    check_pdf(
+        &file.bytes,
+        "Status dokumen",
+        "Disahkan",
+        Some("https://example.test/DOCUMENT-0003/share/LONGID-0003-WALKTHROUGH"),
+    )?;
     grants
         .set_direct(&admin, 1, SUBMIT, Some(bilibi_authz::grants::Direct::Deny))
         .await?;
