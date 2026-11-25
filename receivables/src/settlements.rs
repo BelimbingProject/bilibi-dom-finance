@@ -62,36 +62,42 @@ pub(crate) async fn lowest(
     .map_err(|_| Error::Internal)?)
 }
 
-pub(crate) fn complete_pins(
-    entry: Option<i64>,
-    batch: Option<i64>,
-    settlement: Option<i64>,
-) -> Result<()> {
-    let supplied = [entry, batch, settlement]
-        .into_iter()
-        .filter(Option::is_some)
-        .count();
-    if supplied != 0 && supplied != 3 {
+pub(crate) async fn report_pins(
+    c: &dyn OperationClient,
+    s: &Scope,
+    company: i64,
+    requested: (Option<i64>, Option<i64>, Option<i64>),
+    day: Date,
+) -> Result<(i64, i64, i64)> {
+    let (entry, batch, settlement) = requested;
+    if !matches!(requested, (None, None, None) | (Some(_), Some(_), Some(_))) {
         return Err(invalid(
             "through_entry_number",
             "the entry, opening-batch and settlement boundaries must be supplied together",
         ));
     }
-    Ok(())
-}
-
-pub(crate) async fn pin(
-    c: &dyn OperationClient,
-    s: &Scope,
-    company: i64,
-    through: Option<i64>,
-    entry: i64,
-    batch: i64,
-    day: Date,
-) -> Result<i64> {
-    let maximum:i64=c.query_opt("SELECT COALESCE(max(settlement_number),0) FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2",&[&s.tenant(),&company]).await?.ok_or(Error::Internal)?.get(0);
-    let pin = through.unwrap_or(maximum);
-    if pin < 0 || pin > maximum {
+    let maxima = c
+        .query_opt(
+            "SELECT finance_ledger_entry_boundary($1,$2),
+                (SELECT COALESCE(max(id),0) FROM finance_receivables_opening_batches WHERE tenant_id=$1 AND company_id=$2),
+                (SELECT COALESCE(max(settlement_number),0) FROM finance_receivables_settlements WHERE tenant_id=$1 AND company_id=$2)",
+            &[&s.tenant(), &company],
+        )
+        .await?
+        .ok_or(Error::Internal)?;
+    let entry_max: i64 = maxima.get(0);
+    let batch_max: i64 = maxima.get(1);
+    let settlement_max: i64 = maxima.get(2);
+    let entry = entry.unwrap_or(entry_max);
+    let batch = batch.unwrap_or(batch_max);
+    let pin = settlement.unwrap_or(settlement_max);
+    if !(0..=entry_max).contains(&entry) {
+        return Err(LedgerError::InvalidOption.into());
+    }
+    if !(0..=batch_max).contains(&batch) {
+        return Err(ReceivableError::InvalidOption);
+    }
+    if !(0..=settlement_max).contains(&pin) {
         return Err(invalid(
             "through_settlement_number",
             "is outside the company's settlement stream",
@@ -109,7 +115,7 @@ pub(crate) async fn pin(
     if incompatible {
         return Err(invalid("through_settlement_number","the report boundaries split a settlement from its entry, source item or original event, or leave an inactive-batch settlement unneutralized"));
     }
-    Ok(pin)
+    Ok((entry, batch, pin))
 }
 
 impl Receivables {
@@ -554,29 +560,20 @@ impl Receivables {
         bilibi_company::authorize_work_target(client, s, company, VIEW)
             .await
             .map_err(crate::refusal)?;
-        complete_pins(
-            input["through_entry_number"].as_i64(),
-            input["through_opening_batch_id"].as_i64(),
-            input["through_settlement_number"].as_i64(),
-        )?;
-        let entry = self
+        let units = self
             .ledger
-            .entry_boundary_on(client, s, company, input["through_entry_number"].as_i64())
-            .await?;
-        let batch = crate::opening::pin(
+            .get_book_on(client, s, company)
+            .await?
+            .minor_units;
+        let (entry, batch, settlement) = report_pins(
             client,
             s,
             company,
-            input["through_opening_batch_id"].as_i64(),
-        )
-        .await?;
-        let settlement = pin(
-            client,
-            s,
-            company,
-            input["through_settlement_number"].as_i64(),
-            entry,
-            batch,
+            (
+                input["through_entry_number"].as_i64(),
+                input["through_opening_batch_id"].as_i64(),
+                input["through_settlement_number"].as_i64(),
+            ),
             day,
         )
         .await?;
@@ -584,11 +581,6 @@ impl Receivables {
         let amount:rust_decimal::Decimal=client.query_opt("SELECT CASE WHEN d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=b.id AND x.batch_id<=$5 AND x.effective_date<=$3::text::date))) THEN finance_receivables_residual($1,$2,d.id,$3::text::date,$4,$6) ELSE 0 END FROM finance_receivables_documents d WHERE d.tenant_id=$1 AND d.company_id=$2 AND d.id=$7 AND d.kind IN ('invoice','opening_credit') AND d.status='issued' AND d.issue_date<=$3::text::date AND d.ledger_entry_number<=$4 AND NOT EXISTS(SELECT 1 FROM finance_receivables_opening_items i JOIN finance_receivables_opening_batches b ON b.tenant_id=$1 AND b.company_id=$2 AND b.id=i.batch_id WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=d.id AND (b.conversion_date>$3::text::date OR b.id>$5 OR EXISTS(SELECT 1 FROM finance_receivables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.batch_id=b.id AND x.effective_date>$3::text::date)))",&[&s.tenant(),&company,&day_text,&entry,&batch,&settlement,&document]).await.map_err(Error::from)?.ok_or(ReceivableError::DocumentNotFound)?.get(0);
         let mut record =
             json!(crate::documents::read(client, s.tenant(), company, document).await?);
-        let units = self
-            .ledger
-            .get_book_on(client, s, company)
-            .await?
-            .minor_units;
         let amount =
             Money::new(amount, units).map_err(|e| invalid("document_id", e.to_string()))?;
         let events:Vec<Value>=client.query("SELECT to_jsonb(e)-'review' FROM finance_receivables_settlements e WHERE e.tenant_id=$1 AND e.company_id=$2 AND (e.credit_document_id=$3 OR e.target_document_id=$3) AND e.effective_date<=$4::text::date AND e.settlement_number<=$5 AND (e.entry_number IS NULL OR e.entry_number<=$6) ORDER BY e.settlement_number",&[&s.tenant(),&company,&document,&day_text,&settlement,&entry]).await.map_err(Error::from)?.iter().map(|r|r.get(0)).collect();

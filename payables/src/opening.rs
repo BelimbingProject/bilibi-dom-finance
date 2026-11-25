@@ -731,25 +731,6 @@ pub(crate) async fn settlement_date(
     Ok(())
 }
 
-/// Opening records add no posting, so a reproduced subledger report also keeps
-/// this independent immutable-register boundary.
-pub(crate) async fn pin(
-    c: &dyn bilibi_agent_api::OperationClient,
-    s: &Scope,
-    company: i64,
-    through: Option<i64>,
-) -> Result<i64> {
-    if through.is_some_and(|id| id < 0) {
-        return Err(PayablesError::InvalidOption);
-    }
-    let maximum:i64=c.query_opt("SELECT COALESCE(max(id),0) FROM finance_payables_opening_batches WHERE tenant_id=$1 AND company_id=$2",&[&s.tenant(),&company]).await?.ok_or(Error::Internal)?.get(0);
-    let pin = through.unwrap_or(maximum);
-    if pin > maximum {
-        return Err(PayablesError::InvalidOption);
-    }
-    Ok(pin)
-}
-
 // Source facts are evidence, never tax lines or a tax calculation on a residual.
 fn source_tax_facts(
     text: &str,

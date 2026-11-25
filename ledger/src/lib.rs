@@ -143,6 +143,7 @@ inventory::submit! {
             ("finance-ledger-012-workflow-approvals", include_str!("../migrations/012-workflow-approvals.sql")),
             ("finance-ledger-013-journal-list", include_str!("../migrations/013-journal-list.sql")),
             ("finance-ledger-014-zero-opening-recognition", include_str!("../migrations/014-zero-opening-recognition.sql")),
+            ("finance-ledger-015-entry-boundary", include_str!("../migrations/015-entry-boundary.sql")),
         ],
         services: &[Service { id: SERVICE, factory: |services| {
             journal_approvals::bind(services.get(bilibi_workflow::SERVICE)?)?;

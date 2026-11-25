@@ -219,11 +219,6 @@ impl Payables {
         q: &AgingQuery,
     ) -> Result<AgedPayables> {
         authorize(c, s, company, VIEW).await?;
-        crate::settlements::complete_pins(
-            q.through_entry_number,
-            q.through_opening_batch_id,
-            q.through_settlement_number,
-        )?;
         fence(q.through_entry_number)?;
         if q.bucket_days.is_empty()
             || q.bucket_days.iter().any(|v| *v <= 0)
@@ -231,22 +226,20 @@ impl Payables {
         {
             return Err(PayablesError::InvalidOption);
         }
-        let opening_pin = crate::opening::pin(c, s, company, q.through_opening_batch_id).await?;
-        let through = self
-            .ledger
-            .trial_balance_on(c, s, company, as_of, q.through_entry_number)
-            .await?
-            .through_entry_number;
-        let settlement_pin = crate::settlements::pin(
+        self.ledger.get_book_on(c, s, company).await?;
+        let (through, opening_pin, settlement_pin) = crate::settlements::report_pins(
             c,
             s,
             company,
-            q.through_settlement_number,
-            through,
-            opening_pin,
+            (
+                q.through_entry_number,
+                q.through_opening_batch_id,
+                q.through_settlement_number,
+            ),
             as_of,
         )
         .await?;
+
         let rows=c.query(&format!("SELECT b.id,b.document_number,b.party_key,b.party_name,b.party_document_number,b.document_date::text,b.due_date::text,b.currency_code,b.total,o.owed,b.party_code,b.document_type,b.payable_account_id FROM ({OWED}) o JOIN finance_payables_documents b ON b.id=o.id AND b.tenant_id=$1 AND b.company_id=$2 WHERE o.owed<>0 AND NOT EXISTS(SELECT 1 FROM finance_payables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=b.id AND (i.batch_id>$5 OR EXISTS(SELECT 1 FROM finance_payables_opening_decisions own WHERE own.tenant_id=$1 AND own.company_id=$2 AND own.batch_id=i.batch_id AND own.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_payables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=i.batch_id AND x.effective_date<=$3::text::date AND x.batch_id<=$5))) ORDER BY b.party_key,b.due_date,b.id"),&[&s.tenant(),&company,&as_of.to_string(),&through,&opening_pin,&settlement_pin]).await?;
         let empty = vec![Money::ZERO; q.bucket_days.len() + 2];
         let mut parties: BTreeMap<String, AgedParty> = BTreeMap::new();
@@ -404,12 +397,20 @@ impl Payables {
         pins: &BalancePins,
     ) -> Result<TieOut> {
         authorize(client, s, company, VIEW).await?;
-        crate::settlements::complete_pins(
-            pins.through_entry_number,
-            pins.through_opening_batch_id,
-            pins.through_settlement_number,
-        )?;
         fence(pins.through_entry_number)?;
+        self.ledger.get_book_on(client, s, company).await?;
+        let (entry_pin, opening_pin, settlement_pin) = crate::settlements::report_pins(
+            client,
+            s,
+            company,
+            (
+                pins.through_entry_number,
+                pins.through_opening_batch_id,
+                pins.through_settlement_number,
+            ),
+            as_of,
+        )
+        .await?;
         let ledger = self
             .ledger
             .account_totals_by_owner_on(
@@ -418,24 +419,12 @@ impl Payables {
                 company,
                 &TotalsQuery {
                     to: Some(as_of),
-                    through_entry_number: pins.through_entry_number,
+                    through_entry_number: Some(entry_pin),
                     ..Default::default()
                 },
             )
             .await?;
         let chart = self.ledger.list_accounts_on(client, s, company).await?;
-        let opening_pin =
-            crate::opening::pin(client, s, company, pins.through_opening_batch_id).await?;
-        let settlement_pin = crate::settlements::pin(
-            client,
-            s,
-            company,
-            pins.through_settlement_number,
-            ledger.through_entry_number,
-            opening_pin,
-            as_of,
-        )
-        .await?;
         let rows=client.query(&format!("SELECT b.payable_account_id,sum(CASE WHEN b.document_type='opening_credit' THEN -o.owed ELSE o.owed END) FROM ({OWED}) o JOIN finance_payables_documents b ON b.id=o.id AND b.tenant_id=$1 AND b.company_id=$2 WHERE NOT EXISTS(SELECT 1 FROM finance_payables_opening_items i WHERE i.tenant_id=$1 AND i.company_id=$2 AND i.document_id=b.id AND (i.batch_id>$5 OR EXISTS(SELECT 1 FROM finance_payables_opening_decisions own WHERE own.tenant_id=$1 AND own.company_id=$2 AND own.batch_id=i.batch_id AND own.effective_date>$3::text::date) OR EXISTS(SELECT 1 FROM finance_payables_opening_decisions x WHERE x.tenant_id=$1 AND x.company_id=$2 AND x.replaces_batch_id=i.batch_id AND x.effective_date<=$3::text::date AND x.batch_id<=$5))) GROUP BY b.payable_account_id"),&[&s.tenant(),&company,&as_of.to_string(),&ledger.through_entry_number,&opening_pin,&settlement_pin]).await?;
         let mut subledger = BTreeMap::new();
         for r in rows {

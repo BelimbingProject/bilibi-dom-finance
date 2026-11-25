@@ -14,23 +14,6 @@ pub struct OpeningContext {
 }
 
 impl Ledger {
-    /// Validate or capture a company's committed posting boundary on the handed snapshot.
-    pub async fn entry_boundary_on(
-        &self,
-        client: &dyn OperationClient,
-        scope: &Scope,
-        company: i64,
-        through: Option<i64>,
-    ) -> Result<i64> {
-        agent_operations::authorize_on(client, scope, company, VIEW).await?;
-        let maximum:i64=client.query_opt("SELECT COALESCE(max(entry_number),0) FROM finance_ledger_entries WHERE tenant_id=$1 AND company_id=$2",&[&scope.tenant(),&company]).await?.ok_or(Error::Internal)?.get(0);
-        let pin = through.unwrap_or(maximum);
-        if pin < 0 || pin > maximum {
-            return Err(LedgerError::InvalidOption);
-        }
-        Ok(pin)
-    }
-
     /// The approved, unreversed conversion journal on the caller's connection.
     /// A waiting journal is not an opening balance against which items can tie.
     pub async fn opening_context_on(
