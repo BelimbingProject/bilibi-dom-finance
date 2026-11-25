@@ -490,8 +490,18 @@ impl Einvoice {
     /// profile and what it still lacks.
     pub async fn setup(&self, scope: &Scope, company_id: i64) -> Result<Setup> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, SETTINGS).await?;
-        let name = bilibi_company::identity(&**client, scope, company_id)
+        self.setup_on(&**client, scope, company_id).await
+    }
+
+    /// Authorized setup read on the caller's connection.
+    pub async fn setup_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Setup> {
+        authorize(client, scope, company_id, SETTINGS).await?;
+        let name = bilibi_company::identity(client, scope, company_id)
             .await?
             .ok_or(EinvoiceError::CompanyNotFound)?
             .display_name;
@@ -501,7 +511,7 @@ impl Einvoice {
         let environment = text(
             &self
                 .settings
-                .get(&**client, scope, target, "finance.einvoice.environment")
+                .get(client, scope, target, "finance.einvoice.environment")
                 .await?
                 .value,
         )
@@ -530,14 +540,14 @@ impl Einvoice {
         keys.extend(supplier.iter().map(String::as_str));
         let values = self
             .settings
-            .resolve_many(&**client, scope, target, &keys)
+            .resolve_many(client, scope, target, &keys)
             .await?;
         // Secrets are read masked: a stored one comes back `null` with its
         // source, which is all the setup needs to know.
         let masked = self
             .settings
             .resolve_masked(
-                &**client,
+                client,
                 scope,
                 target,
                 &[
@@ -556,7 +566,7 @@ impl Einvoice {
 
         let expires_on = value(&expires).filter(|date| date.parse::<Date>().is_ok());
         let days_left = match &expires_on {
-            Some(date) => Some(days_until(&**client, date).await?),
+            Some(date) => Some(days_until(client, date).await?),
             None => None,
         };
         let now = Timestamp::now();
@@ -571,14 +581,14 @@ impl Einvoice {
         } else {
             let pem = self
                 .settings
-                .get(&**client, scope, target, certificate_key)
+                .get(client, scope, target, certificate_key)
                 .await?;
             match text(&pem.value).as_deref().map(Certificate::parse) {
                 Some(Ok(certificate)) => {
                     let key = if is_set(private_key_key) {
                         let pem = self
                             .settings
-                            .get(&**client, scope, target, private_key_key)
+                            .get(client, scope, target, private_key_key)
                             .await?;
                         text(&pem.value).and_then(|pem| PrivateKey::parse(&pem).ok())
                     } else {

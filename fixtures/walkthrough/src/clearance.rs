@@ -753,7 +753,6 @@ pub async fn run(
     let einvoice = services.get::<Einvoice>(SERVICE)?;
     let standin = Arc::new(StandIn::default());
     let url = serve(standin.clone()).await?;
-    let raw = db.get().await?;
     let company = Target::Company(OrganisationId::new(COMPANY)?);
 
     println!("\n-- The sandbox API URL: https, or a stand-in on this machine's loopback");
@@ -920,7 +919,7 @@ pub async fn run(
             .submit_document(viewer, COMPANY, first.document.id)
             .await,
     );
-    let mark = last_job(&raw).await?;
+    let mark = last_job(&**db.get().await?).await?;
     show(
         "manager submits NE3-INV-0001",
         einvoice
@@ -950,8 +949,8 @@ pub async fn run(
     )?;
     let (stop, shutdown) = tokio::sync::watch::channel(false);
     let worker = tokio::spawn(executor.run(shutdown));
-    jobs_settle(&raw).await?;
-    println!("jobs:\n  {}", job_states(&raw, mark).await?);
+    jobs_settle(&**db.get().await?).await?;
+    println!("jobs:\n  {}", job_states(&**db.get().await?, mark).await?);
     println!("stand-in saw:\n  {}", standin.drain().join("\n  "));
     let first = shown(
         "after the jobs",
@@ -968,7 +967,7 @@ pub async fn run(
     );
 
     println!("\n-- Every outcome of a submission");
-    let mark_outcomes = last_job(&raw).await?;
+    let mark_outcomes = last_job(&**db.get().await?).await?;
     let mut documents: BTreeMap<&str, i64> = BTreeMap::new();
     for code in [
         "NE3-REFUSE-1",
@@ -988,8 +987,11 @@ pub async fn run(
             .submit_document(manager, COMPANY, view.document.id)
             .await?;
     }
-    jobs_settle(&raw).await?;
-    println!("jobs:\n  {}", job_states(&raw, mark_outcomes).await?);
+    jobs_settle(&**db.get().await?).await?;
+    println!(
+        "jobs:\n  {}",
+        job_states(&**db.get().await?, mark_outcomes).await?
+    );
     println!("stand-in saw:\n  {}", standin.drain().join("\n  "));
     for (code, id) in &documents {
         shown(code, einvoice.get_document(manager, COMPANY, *id).await);
@@ -1003,7 +1005,7 @@ pub async fn run(
         "a refused document may be submitted again",
         einvoice.submit_document(manager, COMPANY, refused).await,
     );
-    jobs_settle(&raw).await?;
+    jobs_settle(&**db.get().await?).await?;
     shown(
         "NE3-REFUSE-1 after its second refusal",
         einvoice.get_document(manager, COMPANY, refused).await,
@@ -1073,7 +1075,7 @@ pub async fn run(
                 .await,
         ),
     );
-    jobs_settle(&raw).await?;
+    jobs_settle(&**db.get().await?).await?;
     println!("stand-in saw:\n  {}", standin.drain().join("\n  "));
     shown(
         "after the outage",
@@ -1150,7 +1152,7 @@ pub async fn run(
     einvoice
         .submit_document(manager, COMPANY, note.document.id)
         .await?;
-    jobs_settle(&raw).await?;
+    jobs_settle(&**db.get().await?).await?;
     shown(
         "the credit note after its jobs",
         einvoice
@@ -1210,6 +1212,7 @@ pub async fn run(
     let _ = worker.await;
 
     println!("\n-- What the database holds");
+    let raw = db.get().await?;
     let rows = raw
         .query(
             "SELECT d.code_number, s.id, s.document_version, octet_length(s.payload), \

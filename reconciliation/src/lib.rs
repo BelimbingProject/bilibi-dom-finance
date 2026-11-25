@@ -846,8 +846,18 @@ impl Reconciliation {
     /// Only ledger view is required; no bank names, mappings or statements escape.
     pub async fn cash_account_ids(&self, scope: &Scope, company_id: i64) -> Result<Vec<i64>> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, bilibi_finance_ledger::VIEW).await?;
-        Ok(bank_accounts::list(&**client, scope.tenant(), company_id)
+        self.cash_account_ids_on(&**client, scope, company_id).await
+    }
+
+    /// The cash-report account IDs on the caller's connection.
+    pub async fn cash_account_ids_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Vec<i64>> {
+        authorize(client, scope, company_id, bilibi_finance_ledger::VIEW).await?;
+        Ok(bank_accounts::list(client, scope.tenant(), company_id)
             .await?
             .into_iter()
             .map(|account| account.ledger_account_id)
@@ -862,8 +872,19 @@ impl Reconciliation {
         company_id: i64,
     ) -> Result<Vec<BankAccount>> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, VIEW).await?;
-        Ok(bank_accounts::list(&**client, scope.tenant(), company_id).await?)
+        self.list_bank_accounts_on(&**client, scope, company_id)
+            .await
+    }
+
+    /// Authorized bank accounts read on the caller's connection.
+    pub async fn list_bank_accounts_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Vec<BankAccount>> {
+        authorize(client, scope, company_id, VIEW).await?;
+        Ok(bank_accounts::list(client, scope.tenant(), company_id).await?)
     }
 
     /// Unmatched statement lines per bank account, including inactive accounts.
@@ -875,7 +896,18 @@ impl Reconciliation {
         company_id: i64,
     ) -> Result<Vec<UnmatchedStatementCount>> {
         let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, company_id, VIEW).await?;
+        self.unmatched_statement_counts_on(&**client, scope, company_id)
+            .await
+    }
+
+    /// Authorized unmatched statement counts on the caller's connection.
+    pub async fn unmatched_statement_counts_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_id: i64,
+    ) -> Result<Vec<UnmatchedStatementCount>> {
+        authorize(client, scope, company_id, VIEW).await?;
         let rows = client.query("SELECT a.id, a.name, count(l.id)::bigint FROM finance_reconciliation_bank_accounts a JOIN finance_reconciliation_statement_lines l ON l.tenant_id=a.tenant_id AND l.company_id=a.company_id AND l.bank_account_id=a.id WHERE a.tenant_id=$1 AND a.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_reconciliation_match_lines ml JOIN finance_reconciliation_matches m ON m.id=ml.match_id JOIN finance_reconciliation_match_events e ON e.match_id=m.id AND e.action='matched' WHERE ml.statement_line_id=l.id AND m.tenant_id=$1 AND m.company_id=$2 AND NOT EXISTS (SELECT 1 FROM finance_reconciliation_match_events u WHERE u.match_id=m.id AND u.action='unmatched')) GROUP BY a.id,a.name ORDER BY a.name,a.id", &[&scope.tenant(), &company_id]).await.map_err(Error::from)?;
         Ok(rows
             .iter()

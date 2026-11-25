@@ -356,6 +356,7 @@ pub async fn prove(db: &Db, services: &Services, s: &Scope, company: i64) -> Out
         .await
         .is_err());
 
+    drop(client);
     // Reading the bridge and retaining schedules posted nothing.
     assert_eq!(
         trial,

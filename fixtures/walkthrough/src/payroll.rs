@@ -91,18 +91,15 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     assert_eq!(payroll.list_settings_changes(&manager, 1).await?.len(), n);
     // Leave exactly one slot: validation must use its write connection, not
     // wait forever for a second one while holding the company lock.
-    let mut held = Vec::new();
-    let status = db.status();
-    let free = status.max_size - status.size + status.available;
-    for _ in 1..free {
-        held.push(db.get().await?);
-    }
-    tokio::time::timeout(
+    let max_size = db.status().max_size;
+    db.resize(1);
+    let configured = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         payroll.put_settings(&manager, 1, &SettingsChange::default()),
     )
-    .await??;
-    drop(held);
+    .await;
+    db.resize(max_size);
+    configured??;
     println!("configuration completes with all but one pool slot occupied");
     for (direction, exp, liab) in [
         ("earning", Some(expense), None),
@@ -233,7 +230,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         .await?;
     tx.rollback().await?;
     assert!(matches!(
-        ledger.get_entry(&manager, 1, rolled.id).await,
+        ledger.get_entry_on(&**client, &manager, 1, rolled.id).await,
         Err(LedgerError::EntryNotFound)
     ));
     // Owning a view-authorized boundary does not grant ledger posting.
@@ -291,6 +288,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         tx.commit().await?;
         ids.push(id);
     }
+    drop(client);
     let original = payroll.get_posting(&manager, 1, ids[0]).await?;
     assert!(matches!(
         payroll.get_posting(&foreign, 1, ids[0]).await,
@@ -366,10 +364,21 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await,
         Err(PayrollError::AlreadyReversed)
     ));
-    let (a, b) = tokio::join!(
-        payroll.reverse_posting(&manager, 1, ids[1], &reversal),
-        payroll.reverse_posting(&manager, 1, ids[1], &reversal)
-    );
+    let competing = {
+        let payroll = payroll.clone();
+        let manager = manager.clone();
+        let reversal = reversal.clone();
+        let posting_id = ids[1];
+        tokio::spawn(async move {
+            payroll
+                .reverse_posting(&manager, 1, posting_id, &reversal)
+                .await
+        })
+    };
+    let a = payroll
+        .reverse_posting(&manager, 1, ids[1], &reversal)
+        .await;
+    let b = competing.await?;
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     assert!(
         matches!(a, Err(PayrollError::AlreadyReversed))
@@ -427,6 +436,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .await,
         Err(PayrollError::InvalidOption)
     ));
+    let client = db.get().await?;
     for (table, kind) in [
         ("finance_payroll_settings", "settings"),
         ("finance_payroll_mappings", "mapping"),
@@ -467,6 +477,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     println!(
         "Payroll contracts passed: configuration/no-op, isolation, unavailable/no events, owner rollback, independent capability, historical reversal/race/mirror, five evidence datasets, audit and retention guards"
     );
+    drop(client);
     crate::payroll_ui::run(db, services, ids[2]).await?;
     Ok(())
 }

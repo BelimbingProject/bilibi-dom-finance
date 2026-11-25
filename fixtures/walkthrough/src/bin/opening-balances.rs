@@ -80,10 +80,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // The company lock makes two independent retries one source submission.
-    let (a, b) = tokio::join!(
-        ledger.submit_opening_balances(&manager, COMPANY, &source),
-        ledger.submit_opening_balances(&manager, COMPANY, &source)
-    );
+    let competing = {
+        let ledger = ledger.clone();
+        let manager = manager.clone();
+        let source = source.clone();
+        tokio::spawn(async move {
+            ledger
+                .submit_opening_balances(&manager, COMPANY, &source)
+                .await
+        })
+    };
+    let a = ledger
+        .submit_opening_balances(&manager, COMPANY, &source)
+        .await;
+    let b = competing.await?;
     let journal = a?;
     assert_eq!(journal.id, b?.id);
     assert_eq!(

@@ -469,8 +469,9 @@ async fn main() -> Outcome<()> {
         .await?;
     println!("NT3: withheld controls, forged writes and mid-page grant revocation refuse without losing the live page");
 
-    let raw = db.get().await?;
-    raw.batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
+    db.get()
+        .await?
+        .batch_execute("UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=1")
         .await?;
     event(
         book.as_mut(),
@@ -488,6 +489,7 @@ async fn main() -> Outcome<()> {
         &archived,
         "The company is archived; nothing can be changed.",
     );
+    let raw = db.get().await?;
     raw.batch_execute("UPDATE companies SET status='active' WHERE tenant_id=1 AND id=1")
         .await?;
     for statement in ["DELETE FROM finance_ledger_approval_exception_reviews"] {

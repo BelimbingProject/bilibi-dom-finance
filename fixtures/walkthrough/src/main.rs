@@ -198,8 +198,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "tenant 2's manager reads tenant 2's company 100 book",
         ledger.get_book(&other, 100).await,
     );
-    let client = db.get().await?;
-    client
+    db.get()
+        .await?
         .execute(
             "UPDATE companies SET status='archived' WHERE tenant_id=1 AND id=3",
             &[],
@@ -1039,6 +1039,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n== The database's own refusals");
+    let client = db.get().await?;
     for (step, sql) in [
         (
             "UPDATE a book's currency",
@@ -1180,6 +1181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    drop(client);
     println!("\n== Posting notices announce only committed entries");
     let raw_entry = |note: &str| {
         format!(
@@ -1193,6 +1195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut watcher = ledger.subscribe_postings(&manager, COMPANY).await?;
     let mut neighbour = ledger.subscribe_postings(&contractor, 2).await?;
+    let client = db.get().await?;
     client.batch_execute("BEGIN").await?;
     client.batch_execute(&raw_entry("rolled back")).await?;
     println!(
@@ -1211,6 +1214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         heard(&mut watcher, Duration::from_millis(500)).await
     );
     client.batch_execute("COMMIT").await?;
+    drop(client);
     println!(
         "after COMMIT: {}",
         heard(&mut watcher, Duration::from_secs(5)).await
@@ -1253,6 +1257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "company 2's subscriber, meanwhile: {}",
         heard(&mut neighbour, Duration::from_millis(500)).await
     );
+    let client = db.get().await?;
     let changes: Vec<(i64, bool)> = client
         .query(
             "SELECT change_number,controlled FROM finance_ledger_bookkeeping_changes WHERE company_id=1 ORDER BY change_number",
@@ -1271,6 +1276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .get(0);
     println!("audit mutations recorded for finance.ledger.*: {audited}");
+    drop(client);
     bilibi_finance_walkthrough_fixture::attachments::run(&db, &services).await?;
     bilibi_finance_walkthrough_fixture::payables::run(&db, &services).await?;
     bilibi_finance_walkthrough_fixture::payments::run(&db, &services).await?;

@@ -233,7 +233,9 @@ Every application, refund and reversal is an append-only `settlement` evidence r
 
 Keep all three boundaries and the as-of date when replaying aging or a control tie-out. Entry-backed events require their entry within the ledger pin as well as their settlement within the settlement pin. Reversals follow their own date and boundaries. The figures retain other owners' postings as visible differences per control. Pins freeze amounts and membership; issue a frozen report when labels and layout must also remain immutable.
 
-`AgingQuery` and `BalancePins` accept and return the same three accounting boundaries through `report.pins()`. Pool-owning reads capture one repeatable-read snapshot.
+`AgingQuery` and `BalancePins` accept and return the same three accounting boundaries through `report.pins()`. Pool-owning dated reads use one repeatable-read transaction. Reads on a caller-supplied connection capture the three boundaries in one SQL statement. Supply a repeatable-read transaction when the rest of the read must share that snapshot.
+
+A dated document read shows zero outstanding for an original opening bill or opening credit once its replacement is effective on the requested date and included in the opening-batch boundary. The original balance can still be reproduced with the earlier pins.
 
 ## Opening register corrections
 

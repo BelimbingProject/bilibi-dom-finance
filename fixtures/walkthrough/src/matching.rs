@@ -68,7 +68,6 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
     .await?;
     let staff = sign_in(db, services, 1, 3).await?;
     let other = sign_in(db, services, 2, 5).await?;
-    let c = db.get().await?;
     println!("match statuses {MATCH_STATUSES:?}; exception codes {MATCH_EXCEPTION_CODES:?}");
     let source = p.order_source_available();
     println!(
@@ -259,6 +258,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
             "UPDATE finance_payables_documents SET status='posted',posted_by_user_id=1,payable_account_id={payable},entry_id=1,entry_number=1 WHERE party_document_number='{number}'"
         )
     };
+    let c = db.get().await?;
     db_refuses(
         &c,
         "bill naming order lines posted without its match record",

@@ -288,12 +288,16 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
     // held open here): a reader must never make a company write or its review
     // fail. The review lock once asked FOR UPDATE, which that reader refused
     // as "could not obtain lock on row in relation companies".
-    let other = db.get().await?;
+    // This session carries a manual transaction and must never return to the pool.
+    let other = bilibi_database::Connection::take(db.get().await?);
     hold(&other, "KEY SHARE").await?;
-    let (first, second) = tokio::join!(
-        f.depreciate(&s, COMPANY, date(2026, 1, 1)),
-        f.depreciate(&s, COMPANY, date(2026, 1, 1))
-    );
+    let competing = {
+        let f = f.clone();
+        let s = s.clone();
+        tokio::spawn(async move { f.depreciate(&s, COMPANY, date(2026, 1, 1)).await })
+    };
+    let first = f.depreciate(&s, COMPANY, date(2026, 1, 1)).await;
+    let second = competing.await?;
     let jan = first?;
     assert_eq!(second?.id, jan.id);
     let plans = services.get::<Plans>("base/agent_api.plans")?;
@@ -368,10 +372,13 @@ async fn run(db: &Db, services: &Services) -> Outcome<()> {
             .amount,
         m("50")
     );
-    let (r1, r2) = tokio::join!(
-        f.depreciate(&s, COMPANY, date(2026, 1, 1)),
-        f.depreciate(&s, COMPANY, date(2026, 1, 1))
-    );
+    let competing = {
+        let f = f.clone();
+        let s = s.clone();
+        tokio::spawn(async move { f.depreciate(&s, COMPANY, date(2026, 1, 1)).await })
+    };
+    let r1 = f.depreciate(&s, COMPANY, date(2026, 1, 1)).await;
+    let r2 = competing.await?;
     assert_eq!(r1?.id, jan.id);
     assert_eq!(r2?.id, jan.id);
     let historical = report(&f, &s, date(2026, 1, 31)).await?;

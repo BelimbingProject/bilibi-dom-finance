@@ -296,10 +296,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .write_offs[0]
         .events
         .is_empty());
-    let (first, second) = tokio::join!(
-        ar.approve_write_off(&checker, 1, &decision),
-        ar.approve_write_off(&checker, 1, &decision)
-    );
+    let competing = {
+        let ar = ar.clone();
+        let checker = checker.clone();
+        let decision = decision.clone();
+        tokio::spawn(async move { ar.approve_write_off(&checker, 1, &decision).await })
+    };
+    let first = ar.approve_write_off(&checker, 1, &decision).await;
+    let second = competing.await?;
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
     let approved = first.or(second)?;
     println!("Late audit refusal rolled back the journal and decision; competing approvals posted exactly once.");

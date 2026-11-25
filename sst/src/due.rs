@@ -25,7 +25,21 @@ impl Sst {
         today: Date,
         timezone: &str,
     ) -> Result<Vec<DuePeriod>> {
-        let registrations = self.list_registrations(scope, company).await?;
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        self.due_periods_on(&**client, scope, company, today, timezone)
+            .await
+    }
+
+    /// Authorized due periods on the caller's connection.
+    pub async fn due_periods_on(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+        today: Date,
+        timezone: &str,
+    ) -> Result<Vec<DuePeriod>> {
+        let registrations = self.list_registrations_on(client, scope, company).await?;
         let Some(latest) = registrations.last() else {
             return Ok(Vec::new());
         };
@@ -35,17 +49,15 @@ impl Sst {
             .and_then(|r| r.recorded_at.parse::<Timestamp>().ok())
             .map(|at| at.to_zoned(zone).date());
         let periods = self
-            .taxable_periods(scope, company, Some(today), Some(6))
+            .taxable_periods_on(client, scope, company, Some(today), Some(6))
             .await?;
         let Some(oldest) = periods.last() else {
             return Ok(Vec::new());
         };
-        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
-        crate::authorize(&**client, scope, company, crate::VIEW).await?;
         let oldest_start = oldest.period_start;
         let start = oldest_start.to_string();
         let returns = crate::returns::read_returns(
-            &**client,
+            client,
             scope.tenant(),
             company,
             "AND (r.period_start >= $3::text::date OR NOT EXISTS (SELECT 1 FROM finance_sst_return_events e WHERE e.tenant_id=r.tenant_id AND e.company_id=r.company_id AND e.return_id=r.id AND e.action IN ('finalised','discarded'))) ORDER BY r.id",

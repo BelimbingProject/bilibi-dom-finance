@@ -209,7 +209,10 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         tx.rollback().await?;
         println!(
             "contract apply rolled back: {} rows in the chart",
-            ledger.list_accounts(&manager, COMPANY).await?.len()
+            ledger
+                .list_accounts_on(&**client, &manager, COMPANY)
+                .await?
+                .len()
         );
     }
     let unknown = json!({"company_id": COMPANY, "template": TEMPLATE, "sections": ["nope"]});
@@ -244,6 +247,7 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<()> {
         record.envelope("finance.ledger.chart_template.apply")
     );
 
+    drop(client);
     // What exists is exactly what the preview listed.
     let chart = ledger.list_accounts(&manager, COMPANY).await?;
     let expected = ledger

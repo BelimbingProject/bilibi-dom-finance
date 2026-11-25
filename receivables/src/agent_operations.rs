@@ -489,10 +489,23 @@ impl ReadHandler for Read {
         Box::pin(async move {
             let service = owner()?;
             let company = id(input, "company_id").map_err(|e| failure(e, "lines"))?;
-            service
-                .authorize_on(client, scope, company, VIEW)
-                .await
-                .map_err(|e| failure(e, "lines"))?;
+            let pinned_document = matches!(self, Self::Document)
+                && (!input["as_of"].is_null()
+                    || [
+                        "through_entry_number",
+                        "through_opening_batch_id",
+                        "through_settlement_number",
+                    ]
+                    .iter()
+                    .any(|key| !input[key].is_null()));
+            let owns_snapshot =
+                (matches!(self, Self::Aging) || pinned_document) && client.detached_read();
+            if !owns_snapshot {
+                service
+                    .authorize_on(client, scope, company, VIEW)
+                    .await
+                    .map_err(|e| failure(e, "lines"))?;
+            }
             let tenant = scope.tenant();
             let limit = input["page_size"].as_i64().unwrap_or(100).clamp(1, 100);
             let after = input["after"].as_i64().unwrap_or(0);
@@ -524,8 +537,13 @@ impl ReadHandler for Read {
                         if let Some(days) = input["bucket_days"].as_array() {
                             options.bucket_days = days.iter().filter_map(Value::as_i64).collect();
                         }
-                        // A read holds no company lock, so the facade's own connection is safe here.
-                        let report = service.aged_receivables(scope, company, as_of, &options).await?;
+                        let report = if owns_snapshot {
+                            service.aged_receivables(scope, company, as_of, &options).await?
+                        } else if let Some(tx) = client.transaction() {
+                            service.aged_receivables_on(tx, scope, company, as_of, &options).await?
+                        } else {
+                            service.aged_receivables_on(client.sql_client().await?, scope, company, as_of, &options).await?
+                        };
                         let ids: Vec<i64> = report.customers.iter().map(|c| c.customer_id).collect();
                         let rows = client.query("SELECT DISTINCT ON (customer_id) customer_id,status FROM finance_receivables_mail WHERE tenant_id=$1 AND company_id=$2 AND customer_id=ANY($3) ORDER BY customer_id,id DESC", &[&tenant,&company,&ids]).await?;
                         let statuses: BTreeMap<i64, String> = rows.into_iter().map(|row| (row.get(0),row.get(1))).collect();
@@ -535,10 +553,21 @@ impl ReadHandler for Read {
                         }
                         value
                     }
-                    Self::Customer => json!(service.get_customer(scope, company, id(input,"customer_id")?).await?),
+                    Self::Customer => {
+                        let row = store::find(client, CUSTOMERS, tenant, company, Some(id(input,"customer_id")?))
+                            .await?.ok_or(ReceivableError::CustomerNotFound)?;
+                        json!(service.customer(client, scope, row).await?)
+                    },
                     Self::Document => {
-                        if !input["as_of"].is_null()||["through_entry_number","through_opening_batch_id","through_settlement_number"].iter().any(|key|!input[key].is_null()) {
-                            service.document_at(scope,company,id(input,"document_id")?,input).await?
+                        if pinned_document {
+                            let document = id(input,"document_id")?;
+                            if owns_snapshot {
+                                service.document_at(scope, company, document, input).await?
+                            } else if let Some(tx) = client.transaction() {
+                                service.document_at_on(tx, scope, company, document, input).await?
+                            } else {
+                                service.document_at_on(client.sql_client().await?, scope, company, document, input).await?
+                            }
                         } else {
                             let mut document = documents::read(client,tenant,company,id(input,"document_id")?).await?;
                             let asked = [(document.id, document.kind.as_str(), document.status.as_str(), document.opening.is_some())];

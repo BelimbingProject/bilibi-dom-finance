@@ -8,7 +8,7 @@ use bilibi_agent_api::{
 use bilibi_module_registry::{Contribution, Provenance, RegistryError};
 use bilibi_tenancy::OrganisationDirectory;
 use serde_json::json;
-use std::{sync::OnceLock, time::Duration};
+use std::sync::OnceLock;
 
 static OWNER: OnceLock<Arc<Einvoice>> = OnceLock::new();
 pub(super) fn bind(owner: Arc<Einvoice>) -> bilibi_module_registry::Result<()> {
@@ -152,18 +152,9 @@ impl Einvoice {
             return Err(EinvoiceError::CompanyArchived);
         }
         let draft = draft(input)?;
-        // TODO(platform): Settings accepts only GenericClient, not the handed
-        // object-safe read client. Only non-secret settings use this fallback.
-        // Bound acquisition so requests cannot retain every pool slot while
-        // waiting for an extra one. No locks or business reads on this checkout.
-        let (profile, environment) = {
-            let settings_client = tokio::time::timeout(Duration::from_secs(2), self.db.get())
-                .await
-                .map_err(|_| Error::Internal)?
-                .map_err(Error::from)?;
-            self.issue_settings(&**settings_client, scope, company, target.name)
-                .await?
-        };
+        let (profile, environment) = self
+            .issue_settings(client.sql_client().await?, scope, company, target.name)
+            .await?;
         self.prepare_issue(client, scope, company, &draft, profile, environment)
             .await
     }
@@ -438,7 +429,8 @@ impl ReadHandler for Read {
                         .await
                         .map_err(failure)?;
                     json!(service
-                        .prefill_party(
+                        .prefill_party_on(
+                            client.sql_client().await?,
                             scope,
                             company,
                             id(input, "counterparty_id").map_err(failure)?

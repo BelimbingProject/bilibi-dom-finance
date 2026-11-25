@@ -307,14 +307,25 @@ impl Sst {
         date: Option<Date>,
         count: Option<usize>,
     ) -> Result<Vec<TaxablePeriod>> {
-        let count = count.unwrap_or(6);
         let c = self.db.get().await.map_err(Error::from)?;
-        authorize(&**c, s, company, VIEW).await?;
+        self.taxable_periods_on(&**c, s, company, date, count).await
+    }
+
+    async fn taxable_periods_on(
+        &self,
+        c: &(impl tokio_postgres::GenericClient + Sync),
+        s: &Scope,
+        company: i64,
+        date: Option<Date>,
+        count: Option<usize>,
+    ) -> Result<Vec<TaxablePeriod>> {
+        let count = count.unwrap_or(6);
+        authorize(c, s, company, VIEW).await?;
         if !(1..=24).contains(&count) {
             return Err(SstError::InvalidOption);
         }
         let date = date.unwrap_or_else(today);
-        let Some(registration) = registrations::latest(&**c, s.tenant(), company).await? else {
+        let Some(registration) = registrations::latest(c, s.tenant(), company).await? else {
             return Ok(Vec::new());
         };
         let cycle = registration.cycle();

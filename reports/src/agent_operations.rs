@@ -132,11 +132,10 @@ impl ReadHandler for SetupRead {
                 .and_then(|id| OrganisationId::new(id).ok())
                 .ok_or_else(|| bilibi_agent_api::invalid("company_id", "Choose a company."))?;
             bilibi_company::authorize_work_target(client, scope, company.get(), VIEW).await?;
-            // A read holds no company lock, so the facades' own connections are safe here.
             let overview = OWNER
                 .get()
                 .ok_or(Error::Internal)?
-                .setup_overview(scope, company.get())
+                .setup_overview_on(client.sql_client().await?, scope, company.get())
                 .await
                 .map_err(|_| Error::Internal)?;
             Ok(json!(overview).into())
@@ -163,21 +162,23 @@ impl ReadHandler for HomeRead {
             bilibi_company::authorize_work_target(client, scope, company.get(), VIEW).await?;
             let owner = OWNER.get().ok_or(Error::Internal)?;
             let company = company.get();
+            let client = client.sql_client().await?;
             let banks = owner
                 .sources
                 .reconciliation
-                .unmatched_statement_counts(scope, company)
+                .unmatched_statement_counts_on(client, scope, company)
                 .await
                 .ok();
             let journals = owner
                 .ledger
-                .pending_journal_count(scope, company)
+                .pending_journal_count_on(client, scope, company)
                 .await
                 .ok();
             let approvals = owner
                 .sources
                 .payables
-                .page_payment_requests(
+                .page_payment_requests_on(
+                    client,
                     scope,
                     company,
                     &bilibi_finance_payables::PaymentRequestPageQuery {
@@ -191,7 +192,7 @@ impl ReadHandler for HomeRead {
             let failed = owner
                 .sources
                 .einvoice
-                .failed_documents(scope, company)
+                .failed_documents_on(client, scope, company)
                 .await
                 .ok();
             let today = input["as_of"]
@@ -202,7 +203,7 @@ impl ReadHandler for HomeRead {
             let returns = owner
                 .sources
                 .sst
-                .due_periods(scope, company, today, timezone)
+                .due_periods_on(client, scope, company, today, timezone)
                 .await
                 .ok();
             Ok(json!({"bank_accounts":banks,"payment_approvals":approvals,"journal_approvals":journals,"failed_einvoices":failed,"due_periods":returns}).into())

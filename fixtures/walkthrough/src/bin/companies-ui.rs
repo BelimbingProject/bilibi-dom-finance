@@ -205,10 +205,10 @@ async fn prove_setup(
     // Changing the tenant default affects proposals only, never existing books.
     let currencies = services.get::<bilibi_currency::Currencies>(bilibi_currency::SERVICE)?;
     let boundary = services.get::<bilibi_database::MutationBoundary>("base/database.mutations")?;
-    let mut changing = db.get().await?;
+
     let mut tx = boundary
         .begin(
-            &mut changing,
+            &mut client,
             manager.mutation_context("finance.walkthrough.default-change"),
         )
         .await?;
@@ -217,8 +217,10 @@ async fn prove_setup(
         .await?
         .map_err(|e| format!("base: {e:?}"))?;
     tx.commit().await?;
+    drop(client);
     assert_eq!(ledger.get_book(&manager, 1).await?.currency_code, "MYR");
     assert_eq!(ledger.get_book(&manager, 2).await?.minor_units.get(), 0);
+    let mut client = db.get().await?;
     assert_eq!(
         registry
             .call(
@@ -253,7 +255,6 @@ async fn prove_setup(
                 .is_err());
         }
     }
-    assert!(ledger.opening_progress(&contractor, 1).await.is_err());
     assert!(
         registry
             .call(
@@ -268,6 +269,8 @@ async fn prove_setup(
             .len()
             >= 9
     );
+    drop(client);
+    assert!(ledger.opening_progress(&contractor, 1).await.is_err());
     assert_eq!(
         ledger.list_accounts(&manager, 1).await?[0].code,
         ledger.list_accounts(&manager, 2).await?[0].code
@@ -307,7 +310,6 @@ async fn prove_setup(
     println!(
         "Company-only accountant and another tenant refused company 1 chart, conversion progress and setup; same chart codes remain separate records"
     );
-    drop(client);
     if ledger.opening_progress(&manager, 1).await?.is_none() {
         let opening = |overview: bilibi_finance_reports::SetupOverview| {
             overview
