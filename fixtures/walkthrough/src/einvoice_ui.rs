@@ -206,7 +206,8 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     let facade = services.get::<Einvoice>(bilibi_finance_einvoice::SERVICE)?;
     let grants = services.get::<Grants>("base/authz.grants")?;
     let target = Target::Company(OrganisationId::new(1)?);
-    let url = clearance::serve(Arc::new(StandIn::default())).await?;
+    let authority = Arc::new(StandIn::default());
+    let url = clearance::serve(authority.clone()).await?;
     assert_eq!(
         save(
             db,
@@ -594,13 +595,50 @@ pub async fn run(db: &Db, services: &Services) -> Outcome<tokio::sync::watch::Se
     assert_ne!(cancelled.artifact_id, updated.artifact_id);
     let file = facade.read_pdf(&manager, 1, &cancelled.artifact_id).await?;
     check_pdf(&file.bytes, "Status dokumen", "Dibatalkan", None)?;
+    let saved_cancelled = downloads
+        .0
+        .serve(DownloadRequest {
+            operation: "pdf",
+            scope: &manager,
+            path: &path,
+            query: &HashMap::new(),
+        })
+        .await?;
+    assert_eq!(saved_cancelled.bytes, file.bytes);
+    let code = "NE5-RECHECK";
     let invalid = facade
-        .issue_document(&manager, 1, &draft("NE5-INVALID", None))
+        .issue_document(&manager, 1, &draft(code, None))
         .await?
         .document
         .id;
     facade.submit_document(&manager, 1, invalid).await?;
     clearance::jobs_settle(&**db.get().await?).await?;
+    let valid = facade.get_document(&manager, 1, invalid).await?;
+    assert_eq!(valid.status, "valid");
+    let valid_pdf = facade.generate_pdf(&manager, 1, invalid).await?;
+    let file = facade.read_pdf(&manager, 1, &valid_pdf.artifact_id).await?;
+    check_pdf(
+        &file.bytes,
+        "Status dokumen",
+        "Disahkan",
+        Some("https://example.test/DOCUMENT-0002/share/LONGID-0002-WALKTHROUGH"),
+    )?;
+    authority.invalidate(code);
+    facade.refresh_status(&manager, 1, invalid).await?;
+    let saved_path = HashMap::from([
+        ("id".into(), invalid.to_string()),
+        ("artifact_id".into(), valid_pdf.artifact_id),
+    ]);
+    let saved = downloads
+        .0
+        .serve(DownloadRequest {
+            operation: "pdf",
+            scope: &manager,
+            path: &saved_path,
+            query: &HashMap::new(),
+        })
+        .await?;
+    check_pdf(&saved.bytes, "Status dokumen", "Tidak sah", None)?;
     assert_eq!(
         facade.get_document(&manager, 1, invalid).await?.status,
         "invalid"

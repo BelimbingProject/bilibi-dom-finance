@@ -174,6 +174,10 @@ impl StandIn {
             .find(|held| held.uuid == uuid)
             .cloned()
     }
+    pub(crate) fn invalidate(&self, code: &str) {
+        self.set(code, |held| held.status = "Invalid");
+    }
+
     fn set(&self, code: &str, change: impl Fn(&mut Held)) {
         for held in self.held.lock().expect("held").iter_mut() {
             if held.code == code {

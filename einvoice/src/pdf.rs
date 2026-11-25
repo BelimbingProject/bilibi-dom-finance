@@ -144,14 +144,14 @@ struct PdfIdentity {
 }
 
 impl PdfIdentity {
-    fn stored(&self, events: &[StatusEvent]) -> Option<PdfArtifact> {
+    fn matching<'a>(&'a self, events: &'a [StatusEvent]) -> impl Iterator<Item = PdfArtifact> + 'a {
         current_pdfs(events)
-            .filter(|response| {
+            .filter(move |response| {
                 response["data_version"].as_str() == Some(self.data_version.as_str())
                     && response["template_version"].as_str() == Some(self.template_version.as_str())
                     && response["source_indices"] == self.source_indices
             })
-            .find_map(|response| {
+            .filter_map(|response| {
                 Some(PdfArtifact {
                     artifact_id: response["artifact_id"].as_str()?.to_owned(),
                     byte_size: response["byte_size"].as_i64()?,
@@ -162,6 +162,44 @@ impl PdfIdentity {
 }
 
 impl Einvoice {
+    async fn available_pdf_on(
+        &self,
+        client: &dyn OperationClient,
+        scope: &Scope,
+        company_id: i64,
+        view: &crate::DocumentView,
+        identity: &PdfIdentity,
+    ) -> Result<Option<PdfArtifact>> {
+        let mut matching = identity.matching(&view.events).peekable();
+        if matching.peek().is_none() {
+            return Ok(None);
+        }
+        let reference = reference(view.document.id);
+        let documents = self
+            .artifacts
+            .subject_documents(
+                client.sql_client().await?,
+                scope,
+                &ArtifactOwner,
+                &reference.subject,
+            )
+            .await
+            .map_err(artifacts)?;
+        let now = jiff::Timestamp::now();
+        Ok(matching.find(|pdf| {
+            documents.iter().any(|(company, document)| {
+                company.get() == company_id
+                    && document.reference.kind == reference.kind
+                    && document.id == pdf.artifact_id
+                    && document.expires_at.as_deref().is_none_or(|expiry| {
+                        expiry
+                            .parse::<jiff::Timestamp>()
+                            .is_ok_and(|expiry| expiry > now)
+                    })
+            })
+        }))
+    }
+
     pub(crate) async fn pdf_for_reader_on(
         &self,
         client: &dyn OperationClient,
@@ -173,9 +211,9 @@ impl Einvoice {
             return Ok(None);
         }
         match self.prepare_pdf_on(client, scope, company_id, view).await {
-            Ok(prepared) => Ok(prepared
-                .identity
-                .stored(&view.events)
+            Ok(prepared) => Ok(self
+                .available_pdf_on(client, scope, company_id, view, &prepared.identity)
+                .await?
                 .map(|pdf| pdf.artifact_id)),
             Err(EinvoiceError::Artifacts(_)) => Ok(None),
             Err(error) => Err(error),
@@ -208,7 +246,10 @@ impl Einvoice {
             .await?;
         let as_of = source_sequence(&view.events);
         let PreparedPdf { inline, identity } = prepared;
-        if let Some(stored) = identity.stored(&view.events) {
+        if let Some(stored) = self
+            .available_pdf_on(&**client, scope, company_id, &view, &identity)
+            .await?
+        {
             return Ok(stored);
         }
         let options = PdfOptions::default()
@@ -243,7 +284,10 @@ impl Einvoice {
         if current.identity != identity {
             return Err(EinvoiceError::Artifacts("print_inputs_changed"));
         }
-        if let Some(stored) = identity.stored(&current_view.events) {
+        if let Some(stored) = self
+            .available_pdf_on(tx.sql(), scope, company_id, &current_view, &identity)
+            .await?
+        {
             tx.rollback().await?;
             return Ok(stored);
         }
@@ -369,8 +413,7 @@ impl Einvoice {
         })
     }
 
-    /// The PDF download (`finance.einvoice.view`). A saved link predating
-    /// cancellation returns a copy showing the cancellation.
+    /// The PDF download (`finance.einvoice.view`) for the current document state.
     pub async fn read_pdf(
         &self,
         scope: &Scope,
@@ -403,9 +446,6 @@ impl Einvoice {
             .filter_map(|event| event.response.as_ref())
             .find(|response| response["artifact_id"].as_str() == Some(artifact_id))
             .ok_or(EinvoiceError::Unauthorized)?;
-        let rendered_at = response["as_of_sequence"]
-            .as_i64()
-            .ok_or(EinvoiceError::Unauthorized)?;
         let source_indices: Vec<usize> = serde_json::from_value(response["source_indices"].clone())
             .map_err(|_| EinvoiceError::Unauthorized)?;
         if !source_indices.is_empty() {
@@ -424,22 +464,38 @@ impl Einvoice {
                 return Err(EinvoiceError::Unauthorized);
             }
         }
-        let status = documents::status(&**client, scope.tenant(), company_id, document_id).await?;
-        let bytes = if status.as_deref() == Some("cancelled")
-            && !events
-                .iter()
-                .any(|event| event.event == "cancelled" && i64::from(event.sequence) <= rendered_at)
-        {
-            let (_, current) = self
-                .prepare_document_pdf_on(&**client, scope, company_id, document_id)
-                .await?;
-            self.artifacts
+        let (view, current) = self
+            .prepare_document_pdf_on(&**client, scope, company_id, document_id)
+            .await?;
+        let selected = self
+            .available_pdf_on(&**client, scope, company_id, &view, &current.identity)
+            .await?;
+        let stored_bytes = match selected {
+            Some(pdf) if pdf.artifact_id == artifact_id => Some(document.bytes),
+            Some(pdf) => match self
+                .artifacts
+                .for_owner(scope, company, &owner)
+                .read(&mut client, &pdf.artifact_id)
+                .await
+            {
+                Ok(copy) => Some(copy.bytes),
+                Err(bilibi_artifacts::Error::NotFound) => None,
+                Err(error) => return Err(artifacts(error)),
+            },
+            None => None,
+        };
+        let bytes = match stored_bytes {
+            Some(bytes) => bytes,
+            None => self
+                .artifacts
                 .print_document(&client, current.inline)
                 .await
-                .map_err(artifacts)?
-        } else {
-            document.bytes
+                .map_err(artifacts)?,
         };
+        let latest = documents::events(&**client, scope.tenant(), company_id, document_id).await?;
+        if source_sequence(&latest) != source_sequence(&view.events) {
+            return Err(EinvoiceError::Artifacts("print_inputs_changed"));
+        }
         Ok(PdfFile {
             filename: filename(&document.metadata.reference),
             bytes,
